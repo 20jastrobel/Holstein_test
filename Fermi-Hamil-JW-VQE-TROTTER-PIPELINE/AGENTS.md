@@ -44,17 +44,19 @@ The following modules are “operator algebra core”:
 
 Agents should avoid adding algorithm logic here (VQE, QPE, optimizers, simulators).
 
-### Avoid mixing PauliTerm classes
-There are two `PauliTerm` definitions:
-- `pydephasing.quantum.qubitization_module.PauliTerm`
+### PauliTerm canonical source (mandatory)
+Canonical `PauliTerm` source:
+- `src.quantum.qubitization_module.PauliTerm`
+
+Compatibility aliases (same class, not separate definitions):
+- `src.quantum.pauli_words.PauliTerm`
 - `pydephasing.quantum.pauli_words.PauliTerm`
 
-Mixing them can create subtle issues (type checks, multiplication dispatch, shared references).
-Rule:
-- Inside the package, prefer **one** canonical PauliTerm class and use it everywhere.
-- If a standalone script needs fallback logging, it can import `pauli_words.PauliTerm`, but then it should not intermix with `PauliPolynomial` that expects the other type.
-
-If a refactor is needed, consolidate to a single PauliTerm source.
+Rules:
+- Core package code **must** import `PauliTerm` from `qubitization_module.py`.
+- Compatibility scripts may import `pauli_words.PauliTerm` only when required by existing interfaces; they must not introduce a new `PauliTerm` implementation.
+- Base operator files **must remain unchanged**: `pauli_letters_module.py`, `pauli_words.py`, `qubitization_module.py`.
+- Repo integration changes **must** be implemented with wrappers/shims around base files.
 
 ---
 
@@ -91,12 +93,59 @@ Do not hardcode an ansatz that cannot be decomposed into Pauli exponentials.
 ## 4) Time-dynamics readiness (Suzuki–Trotter / QPE)
 
 When implementing primitives, favor ones reusable for time evolution:
-- Implement “apply exp(-i θ * PauliTerm)” and “apply exp(-i θ * PauliPolynomial)” as first-class utilities.
+- Implement "apply exp(-i θ * PauliTerm)" and "apply exp(-i θ * PauliPolynomial)" as first-class utilities.
 - Keep functions that return **term lists** (coeff, pauli_string) available for later grouping/ordering.
 - Avoid architectures that require opaque circuit objects.
 
 If adding higher-order Suzuki–Trotter later:
 - do it by composition on top of the same primitive exp(PauliTerm) backend.
+
+## 4a) Time-dependent drive implementation rules
+
+The repo supports a **time-dependent onsite density drive** with a Gaussian-envelope sinusoidal waveform:
+
+```
+v(t) = A · sin(ω t + φ) · exp(-(t - t₀)² / (2 t̄²))
+```
+
+### Drive architecture
+- The drive waveform and spatial patterns are defined in `src/quantum/drives_time_potential.py` (if present) or inline in the pipeline files.
+- The compare pipeline forwards drive flags verbatim to both sub-pipelines via `_build_drive_args()` and `_build_drive_args_with_amplitude()`.
+- All drive parameters are pass-through CLI flags; the compare pipeline does **not** interpret drive physics, only routes them.
+
+### Drive reference propagator
+- When drive is enabled, the **reference (exact) propagator** uses `scipy.sparse.linalg.expm_multiply` with piecewise-constant H(t) at each time step.
+- The `--exact-steps-multiplier` flag controls refinement: `N_ref = multiplier × trotter_steps`.
+- The `reference_method_name` in JSON output records which method was used (`expm_multiply_sparse_timedep` vs `eigendecomposition`).
+- When drive is disabled, the static reference uses exact eigendecomposition — no changes.
+
+### Spatial patterns
+Three built-in patterns (`--drive-pattern`):
+| Pattern | Weights s_j per site j |
+|---------|------------------------|
+| `staggered` | `(-1)^j` alternating sign |
+| `dimer_bias` | `[+1, -1, +1, -1, ...]` (same as staggered for even L) |
+| `custom` | User-supplied JSON array via `--drive-custom-s` |
+
+### Rules for agents modifying drive code
+- Do **not** add new drive parameters without also updating: (1) both pipeline `parse_args()`, (2) the compare pipeline's `_build_drive_args()` and `_build_drive_args_with_amplitude()`, (3) `PIPELINE_RUN_GUIDE.md`.
+- Drive must be **opt-in** (`--enable-drive`). Default behaviour (no flag) must be bit-for-bit identical to the static case.
+- All drive-related CLI args must have the `--drive-` prefix (except `--enable-drive` and `--exact-steps-multiplier`).
+- The safe-test (`_safe_test_check`) must remain: A=0 drive must produce trajectories identical to the no-drive case within `_SAFE_TEST_THRESHOLD = 1e-10`.
+
+## 4b) Drive amplitude comparison PDF
+
+The compare pipeline supports `--with-drive-amplitude-comparison-pdf` which:
+1. Runs both pipelines 3× per L: drive-disabled, A0-enabled, A1-enabled (6 sub-runs total per L).
+2. Generates a 5-page PDF per L with safe-test semilogy plots, VQE bar charts, and text summary.
+3. Writes `json/amp_{tag}_metrics.json` with `safe_test`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1`.
+
+### Rules for agents modifying amplitude comparison
+- All artifacts go to `json/` or `pdf/` subdirectories. Filenames use the tag convention `L{L}_{vt|static}_t{t}_U{u}_S{steps}`.
+- Intermediate JSON files use the `amp_H_` / `amp_Q_` prefix: `json/amp_H_L2_static_t1.0_U4.0_S32_disabled.json`, `json/amp_Q_L2_static_t1.0_U4.0_S32_A0.json`, etc.
+- The safe-test page must always be included. It validates that the drive machinery does not perturb results when amplitude is zero.
+- VQE delta is defined as `ΔE = VQE_hardcoded − VQE_qiskit` (the sector-filtered energy, not full-Hilbert).
+- New amplitude comparison CLI args: `--drive-amplitudes A0,A1` and `--with-drive-amplitude-comparison-pdf`.
 
 ---
 
@@ -130,7 +179,9 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
 - Do not change Pauli-string ordering conventions.
 - Do not introduce Qiskit into core algorithm modules.
 - Do not add heavy dependencies without a strong reason.
-- Do not “optimize” by rewriting algebra rules unless correctness is proven with regression tests.
+- Do not "optimize" by rewriting algebra rules unless correctness is proven with regression tests.
+- Do not add new drive parameters without updating all three pipelines' `parse_args()`, `_build_drive_args()`, `_build_drive_args_with_amplitude()`, and `PIPELINE_RUN_GUIDE.md`.
+- Do not break the safe-test invariant (A=0 drive must equal no-drive to machine precision).
 
 ---
 
@@ -141,3 +192,10 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
    - builds H for L=2,3 (blocked & interleaved)
    - compares canonical Pauli dictionaries vs existing JSON references
    - runs hardcoded VQE and compares energy to exact filtered diagonalization for small sizes.
+4. Extend `regression_L2_L3.sh` to also exercise the amplitude comparison mode:
+   ```bash
+   --enable-drive --drive-pattern dimer_bias --drive-amplitudes '0.0,0.2' \
+   --with-drive-amplitude-comparison-pdf
+   ```
+5. Add higher-order Suzuki–Trotter (4th order) by composition on the existing primitive `exp(PauliTerm)` backend.
+6. Add convergence-study scripts: sweep `--trotter-steps` and `--exact-steps-multiplier` to validate Trotter-error scaling under the drive.

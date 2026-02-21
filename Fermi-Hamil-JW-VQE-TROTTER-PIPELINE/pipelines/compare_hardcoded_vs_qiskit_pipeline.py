@@ -65,12 +65,28 @@ EXACT_METHOD = "python_matrix_eigendecomposition"
 @dataclass
 class RunArtifacts:
     L: int
-    hardcoded_json: Path
-    hardcoded_pdf: Path
-    qiskit_json: Path
-    qiskit_pdf: Path
-    compare_metrics_json: Path
+    hc_json: Path
+    hc_pdf: Path
+    qk_json: Path
+    qk_pdf: Path
+    metrics_json: Path
     compare_pdf: Path
+
+
+def _artifact_tag(args: argparse.Namespace, L: int) -> str:
+    """Build a compact, human-readable tag for artifact filenames.
+
+    Format: ``L{L}_{vt|static}_t{t}_U{u}_S{trotter_steps}``
+
+    Examples:
+        ``L2_static_t1.0_U4.0_S32``
+        ``L3_vt_t1.0_U4.0_S64``
+    """
+    mode = "vt" if getattr(args, "enable_drive", False) else "static"
+    t_val = getattr(args, "t", 1.0)
+    u_val = getattr(args, "u", 4.0)
+    steps = getattr(args, "trotter_steps", 64)
+    return f"L{L}_{mode}_t{t_val}_U{u_val}_S{steps}"
 
 
 def _ai_log(event: str, **fields: Any) -> None:
@@ -1018,6 +1034,557 @@ def _run_command(cmd: list[str]) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+# ---------------------------------------------------------------------------
+# Drive flag passthrough
+# ---------------------------------------------------------------------------
+
+# Default values kept in sync with individual pipeline parse_args().
+_DRIVE_FLAG_DEFAULTS: dict[str, Any] = {
+    "enable_drive": False,
+    "drive_A": 1.0,
+    "drive_omega": 1.0,
+    "drive_tbar": 5.0,
+    "drive_phi": 0.0,
+    "drive_pattern": "staggered",
+    "drive_custom_s": None,
+    "drive_include_identity": False,
+    "drive_time_sampling": "midpoint",
+    "drive_t0": 0.0,
+    "exact_steps_multiplier": 1,
+}
+
+
+def _build_drive_args(args: argparse.Namespace) -> list[str]:
+    """Return CLI token list to forward drive settings to a sub-pipeline.
+
+    Returns an empty list when ``--enable-drive`` is not set, preserving
+    bit-for-bit backward compatibility with drive-free runs.
+    """
+    if not bool(getattr(args, "enable_drive", False)):
+        return []
+
+    tokens: list[str] = ["--enable-drive"]
+    tokens += ["--drive-A", str(float(args.drive_A))]
+    tokens += ["--drive-omega", str(float(args.drive_omega))]
+    tokens += ["--drive-tbar", str(float(args.drive_tbar))]
+    tokens += ["--drive-phi", str(float(args.drive_phi))]
+    tokens += ["--drive-pattern", str(args.drive_pattern)]
+    if args.drive_custom_s is not None:
+        tokens += ["--drive-custom-s", str(args.drive_custom_s)]
+    if bool(args.drive_include_identity):
+        tokens.append("--drive-include-identity")
+    tokens += ["--drive-time-sampling", str(args.drive_time_sampling)]
+    tokens += ["--drive-t0", str(float(args.drive_t0))]
+    tokens += ["--exact-steps-multiplier", str(int(args.exact_steps_multiplier))]
+    return tokens
+
+
+# ---------------------------------------------------------------------------
+# Amplitude-comparison helpers
+# ---------------------------------------------------------------------------
+
+# Threshold for the safe-test: drive-disabled vs drive-enabled-A0=0 must agree
+# to this tolerance (they are mathematically identical waveforms).
+_SAFE_TEST_THRESHOLD: float = 1e-10
+
+
+def _build_drive_args_with_amplitude(args: argparse.Namespace, amplitude: float) -> list[str]:
+    """Return CLI tokens that force-enable the drive and override --drive-A.
+
+    All other drive knobs are taken from *args* unchanged.  This is used by
+    the amplitude-comparison flow, which always enables the drive regardless
+    of whether ``--enable-drive`` was passed on the compare-pipeline command
+    line.
+    """
+    tokens: list[str] = ["--enable-drive"]
+    tokens += ["--drive-A", str(float(amplitude))]
+    tokens += ["--drive-omega", str(float(args.drive_omega))]
+    tokens += ["--drive-tbar", str(float(args.drive_tbar))]
+    tokens += ["--drive-phi", str(float(args.drive_phi))]
+    tokens += ["--drive-pattern", str(args.drive_pattern)]
+    if args.drive_custom_s is not None:
+        tokens += ["--drive-custom-s", str(args.drive_custom_s)]
+    if bool(args.drive_include_identity):
+        tokens.append("--drive-include-identity")
+    tokens += ["--drive-time-sampling", str(args.drive_time_sampling)]
+    tokens += ["--drive-t0", str(float(args.drive_t0))]
+    tokens += ["--exact-steps-multiplier", str(int(args.exact_steps_multiplier))]
+    return tokens
+
+
+def _safe_test_check(
+    no_drive_hc: dict[str, Any],
+    no_drive_qk: dict[str, Any],
+    zero_amp_hc: dict[str, Any],
+    zero_amp_qk: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare drive-disabled trajectories against drive-enabled-A0=0 trajectories.
+
+    A zero-amplitude drive is mathematically a no-op: v(t)=0 for all t.
+    Both pipelines must therefore produce numerically identical trajectories.
+    If they diverge beyond *_SAFE_TEST_THRESHOLD* the drive implementation
+    has a bug.
+
+    Returns a dict::
+
+        {
+            "passed": bool,
+            "threshold": float,
+            "hc": {"max_fidelity_delta": float, "max_energy_delta": float},
+            "qk": {"max_fidelity_delta": float, "max_energy_delta": float},
+        }
+    """
+    def _max_abs(rows_a: list[dict], rows_b: list[dict], key: str) -> float:
+        a = _arr(rows_a, key)
+        b = _arr(rows_b, key)
+        if a.size == 0 or b.size == 0 or a.size != b.size:
+            return float("nan")
+        return float(np.max(np.abs(a - b)))
+
+    nd_hc = no_drive_hc.get("trajectory", [])
+    za_hc = zero_amp_hc.get("trajectory", [])
+    nd_qk = no_drive_qk.get("trajectory", [])
+    za_qk = zero_amp_qk.get("trajectory", [])
+
+    hc_fid = _max_abs(nd_hc, za_hc, "fidelity")
+    hc_ene = _max_abs(nd_hc, za_hc, "energy_trotter")
+    qk_fid = _max_abs(nd_qk, za_qk, "fidelity")
+    qk_ene = _max_abs(nd_qk, za_qk, "energy_trotter")
+
+    all_vals = [v for v in (hc_fid, hc_ene, qk_fid, qk_ene) if np.isfinite(v)]
+    passed = bool(all_vals) and max(all_vals) < _SAFE_TEST_THRESHOLD
+
+    return {
+        "passed": passed,
+        "threshold": _SAFE_TEST_THRESHOLD,
+        "hc": {"max_fidelity_delta": hc_fid, "max_energy_delta": hc_ene},
+        "qk": {"max_fidelity_delta": qk_fid, "max_energy_delta": qk_ene},
+    }
+
+
+def _run_amplitude_comparison_for_l(
+    args: argparse.Namespace,
+    L: int,
+    A0: float,
+    A1: float,
+    json_dir: Path,
+) -> dict[str, Any]:
+    """Run hardcoded + qiskit pipelines three times for *L*: disabled, A0, A1.
+
+    Returns::
+
+        {
+            "disabled": {"hc": payload_dict, "qk": payload_dict},
+            "A0":       {"hc": payload_dict, "qk": payload_dict},
+            "A1":       {"hc": payload_dict, "qk": payload_dict},
+        }
+
+    All intermediate JSONs are written under *json_dir* with an
+    ``amp_H_`` / ``amp_Q_`` prefix so they do not overwrite the main
+    pipeline outputs.
+    """
+    tag = _artifact_tag(args, L)
+
+    def _base_cmd(pipeline_file: str, json_out: Path) -> list[str]:
+        return [
+            sys.executable,
+            f"pipelines/{pipeline_file}",
+            "--L", str(L),
+            "--t", str(args.t),
+            "--u", str(args.u),
+            "--dv", str(args.dv),
+            "--boundary", str(args.boundary),
+            "--ordering", str(args.ordering),
+            "--t-final", str(args.t_final),
+            "--num-times", str(args.num_times),
+            "--suzuki-order", str(args.suzuki_order),
+            "--trotter-steps", str(args.trotter_steps),
+            "--term-order", "sorted",
+            "--vqe-reps", str(args.hardcoded_vqe_reps),
+            "--vqe-restarts", str(args.hardcoded_vqe_restarts),
+            "--vqe-seed", str(args.hardcoded_vqe_seed),
+            "--vqe-maxiter", str(args.hardcoded_vqe_maxiter),
+            "--initial-state-source", str(args.initial_state_source),
+            "--output-json", str(json_out),
+            "--output-pdf", str(json_out).replace(".json", ".pdf"),
+            "--skip-pdf",
+            "--skip-qpe",
+        ]
+
+    def _base_cmd_qk(json_out: Path) -> list[str]:
+        cmd = _base_cmd("qiskit_hubbard_baseline_pipeline.py", json_out)
+        # Replace hardcoded VQE args with qiskit-specific ones at the right positions
+        for flag in ["--vqe-reps", "--vqe-restarts", "--vqe-seed", "--vqe-maxiter"]:
+            idx = cmd.index(flag)
+            if flag == "--vqe-reps":
+                cmd[idx + 1] = str(args.qiskit_vqe_reps)
+            elif flag == "--vqe-restarts":
+                cmd[idx + 1] = str(args.qiskit_vqe_restarts)
+            elif flag == "--vqe-seed":
+                cmd[idx + 1] = str(args.qiskit_vqe_seed)
+            elif flag == "--vqe-maxiter":
+                cmd[idx + 1] = str(args.qiskit_vqe_maxiter)
+        return cmd
+
+    results: dict[str, Any] = {}
+    for label, drive_tokens in [
+        ("disabled", []),
+        ("A0", _build_drive_args_with_amplitude(args, A0)),
+        ("A1", _build_drive_args_with_amplitude(args, A1)),
+    ]:
+        slug = label.replace(".", "p")
+        hc_json = json_dir / f"amp_H_{tag}_{slug}.json"
+        qk_json = json_dir / f"amp_Q_{tag}_{slug}.json"
+
+        hc_cmd = _base_cmd("hardcoded_hubbard_pipeline.py", hc_json) + drive_tokens
+        _ai_log("amp_cmp_run_start", L=int(L), label=label, pipeline="hardcoded")
+        code, out, err = _run_command(hc_cmd)
+        if code != 0:
+            raise RuntimeError(
+                f"Amplitude-comparison hardcoded pipeline failed L={L} label={label}.\n"
+                f"STDOUT:\n{out}\nSTDERR:\n{err}"
+            )
+
+        qk_cmd = _base_cmd_qk(qk_json) + drive_tokens
+        _ai_log("amp_cmp_run_start", L=int(L), label=label, pipeline="qiskit")
+        code, out, err = _run_command(qk_cmd)
+        if code != 0:
+            raise RuntimeError(
+                f"Amplitude-comparison qiskit pipeline failed L={L} label={label}.\n"
+                f"STDOUT:\n{out}\nSTDERR:\n{err}"
+            )
+
+        hc_payload = json.loads(hc_json.read_text(encoding="utf-8"))
+        qk_payload = json.loads(qk_json.read_text(encoding="utf-8"))
+        results[label] = {"hc": hc_payload, "qk": qk_payload}
+        _ai_log("amp_cmp_run_done", L=int(L), label=label)
+
+    return results
+
+
+def _write_amplitude_comparison_pdf(
+    pdf_path: Path,
+    L: int,
+    amp_data: dict[str, Any],
+    A0: float,
+    A1: float,
+    args: argparse.Namespace,
+    run_command: str,
+) -> dict[str, Any]:
+    """Write the amplitude-comparison PDF for a single *L* value.
+
+    Pages
+    -----
+    1. Command page
+    2. Settings & knobs data page
+    3. Safe-test page (no-drive vs A0 = 0 trajectories must be identical)
+    4. VQE comparison page (bars + ΔE = HC_VQE − QK_VQE at A0 and A1)
+    5. Trajectory overlay — HC: A0 vs A1 (fidelity, energy, n↑₀, double occ)
+    6. Trajectory overlay — QK: A0 vs A1 (fidelity, energy, n↑₀, double occ)
+    7. Text summary (safe-test result + delta_vqe values)
+
+    Returns the metrics dict::
+
+        {
+            "safe_test": {...},
+            "delta_vqe_hc_minus_qk_at_A0": float,
+            "delta_vqe_hc_minus_qk_at_A1": float,
+        }
+    """
+    disabled_hc = amp_data["disabled"]["hc"]
+    disabled_qk = amp_data["disabled"]["qk"]
+    a0_hc = amp_data["A0"]["hc"]
+    a0_qk = amp_data["A0"]["qk"]
+    a1_hc = amp_data["A1"]["hc"]
+    a1_qk = amp_data["A1"]["qk"]
+
+    safe = _safe_test_check(disabled_hc, disabled_qk, a0_hc, a0_qk)
+
+    def _vqe_energy(payload: dict, name: str) -> float:
+        val = payload.get("vqe", {}).get("energy")
+        if val is None:
+            val = payload.get("ground_state", {}).get("vqe_energy")
+        return float(val) if val is not None else float("nan")
+
+    hc_vqe_a0 = _vqe_energy(a0_hc, "hc_A0")
+    qk_vqe_a0 = _vqe_energy(a0_qk, "qk_A0")
+    hc_vqe_a1 = _vqe_energy(a1_hc, "hc_A1")
+    qk_vqe_a1 = _vqe_energy(a1_qk, "qk_A1")
+
+    exact_filtered_a0 = float("nan")
+    try:
+        exact_filtered_a0 = _require_exact_filtered_energy(a0_qk, L=L)
+    except Exception:
+        pass
+    exact_filtered_a1 = float("nan")
+    try:
+        exact_filtered_a1 = _require_exact_filtered_energy(a1_qk, L=L)
+    except Exception:
+        pass
+
+    delta_vqe_a0 = float(hc_vqe_a0 - qk_vqe_a0) if (np.isfinite(hc_vqe_a0) and np.isfinite(qk_vqe_a0)) else float("nan")
+    delta_vqe_a1 = float(hc_vqe_a1 - qk_vqe_a1) if (np.isfinite(hc_vqe_a1) and np.isfinite(qk_vqe_a1)) else float("nan")
+
+    metrics: dict[str, Any] = {
+        "safe_test": safe,
+        "delta_vqe_hc_minus_qk_at_A0": delta_vqe_a0,
+        "delta_vqe_hc_minus_qk_at_A1": delta_vqe_a1,
+    }
+
+    with PdfPages(str(pdf_path)) as pdf:
+        # --- Page 1: command ---
+        _render_command_page(pdf, run_command)
+
+        # --- Page 2: settings / knobs ---
+        settings_lines = [
+            f"Amplitude Comparison Settings  (L={L})",
+            "",
+            f"  A0 (trivial / safe-test amplitude) : {A0}",
+            f"  A1 (active amplitude)               : {A1}",
+            "",
+            "  Drive knobs forwarded to sub-pipelines:",
+            f"    drive_pattern          : {args.drive_pattern}",
+            f"    drive_omega            : {args.drive_omega}",
+            f"    drive_tbar             : {args.drive_tbar}",
+            f"    drive_phi              : {args.drive_phi}",
+            f"    drive_include_identity : {bool(args.drive_include_identity)}",
+            f"    drive_time_sampling    : {args.drive_time_sampling}",
+            f"    drive_t0               : {args.drive_t0}",
+            f"    exact_steps_multiplier : {args.exact_steps_multiplier}",
+            "",
+            "  Common knobs:",
+            f"    ordering               : {args.ordering}",
+            f"    t_final                : {args.t_final}",
+            f"    num_times              : {args.num_times}",
+            f"    trotter_steps          : {args.trotter_steps}",
+            f"    suzuki_order           : {args.suzuki_order}",
+            f"    initial_state_source   : {args.initial_state_source}",
+            "",
+            "  Safe-test threshold : {:.2e}".format(_SAFE_TEST_THRESHOLD),
+            "",
+            "  Three runs per pipeline per L:",
+            "    1. drive DISABLED   (baseline)",
+            f"   2. --drive-A {A0}  (trivial amplitude; safe-test reference)",
+            f"   3. --drive-A {A1}  (active amplitude)",
+        ]
+        _render_text_page(pdf, settings_lines)
+
+        # --- Page 3: safe-test ---
+        fig_st, axes_st = plt.subplots(2, 2, figsize=(11.0, 8.5))
+        ax_hcf, ax_qkf = axes_st[0, 0], axes_st[0, 1]
+        ax_hce, ax_qke = axes_st[1, 0], axes_st[1, 1]
+
+        nd_rows = disabled_hc.get("trajectory", [])
+        za_rows = a0_hc.get("trajectory", [])
+        nd_times = _arr(nd_rows, "time")
+        za_times = _arr(za_rows, "time")
+
+        def _safe_delta(rows_a: list, rows_b: list, key: str) -> np.ndarray:
+            a = _arr(rows_a, key)
+            b = _arr(rows_b, key)
+            if a.size == 0 or b.size != a.size:
+                return np.array([])
+            return np.abs(a - b)
+
+        hc_fid_delta = _safe_delta(nd_rows, za_rows, "fidelity")
+        hc_ene_delta = _safe_delta(nd_rows, za_rows, "energy_trotter")
+
+        nd_qk_rows = disabled_qk.get("trajectory", [])
+        za_qk_rows = a0_qk.get("trajectory", [])
+        qk_fid_delta = _safe_delta(nd_qk_rows, za_qk_rows, "fidelity")
+        qk_ene_delta = _safe_delta(nd_qk_rows, za_qk_rows, "energy_trotter")
+
+        t_ref = nd_times if nd_times.size > 0 else za_times
+
+        for ax, delta, title in [
+            (ax_hcf, hc_fid_delta, f"HC |ΔFidelity| (no-drive vs A0={A0})"),
+            (ax_qkf, qk_fid_delta, f"QK |ΔFidelity| (no-drive vs A0={A0})"),
+            (ax_hce, hc_ene_delta, f"HC |ΔE_trot| (no-drive vs A0={A0})"),
+            (ax_qke, qk_ene_delta, f"QK |ΔE_trot| (no-drive vs A0={A0})"),
+        ]:
+            if delta.size > 0:
+                ax.semilogy(t_ref[: delta.size], delta + 1e-20, color="#1f77b4")
+                ax.axhline(_SAFE_TEST_THRESHOLD, color="red", linestyle="--", linewidth=0.8,
+                           label=f"threshold {_SAFE_TEST_THRESHOLD:.0e}")
+                ax.legend(fontsize=7)
+            else:
+                ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(title, fontsize=9)
+            ax.set_xlabel("Time", fontsize=8)
+            ax.grid(alpha=0.25)
+
+        verdict = "✓ PASSED" if safe["passed"] else "✗ FAILED"
+        verdict_color = "green" if safe["passed"] else "red"
+        fig_st.suptitle(
+            f"Safe-test L={L}: drive-disabled vs drive-enabled A0={A0}  —  {verdict}\n"
+            f"HC max|ΔF|={safe['hc']['max_fidelity_delta']:.2e}  "
+            f"HC max|ΔE|={safe['hc']['max_energy_delta']:.2e}  "
+            f"QK max|ΔF|={safe['qk']['max_fidelity_delta']:.2e}  "
+            f"QK max|ΔE|={safe['qk']['max_energy_delta']:.2e}",
+            fontsize=11,
+            color=verdict_color,
+        )
+        fig_st.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
+        pdf.savefig(fig_st)
+        plt.close(fig_st)
+
+        # --- Page 4: VQE comparison bars at A0 and A1 ---
+        fig_vqe, axes_vqe = plt.subplots(1, 2, figsize=(11.0, 8.5))
+        ax_a0, ax_a1 = axes_vqe
+
+        for ax, label_amp, ef, hc_e, qk_e, dv in [
+            (ax_a0, f"A0={A0}", exact_filtered_a0, hc_vqe_a0, qk_vqe_a0, delta_vqe_a0),
+            (ax_a1, f"A1={A1}", exact_filtered_a1, hc_vqe_a1, qk_vqe_a1, delta_vqe_a1),
+        ]:
+            bar_labels = ["Exact (filtered)", "HC VQE", "QK VQE"]
+            bar_vals = [ef, hc_e, qk_e]
+            bar_colors = ["#111111", "#2ca02c", "#ff7f0e"]
+            finite_vals = [v for v in bar_vals if np.isfinite(v)]
+            if finite_vals:
+                ymin = min(finite_vals) - 0.05 * abs(min(finite_vals))
+                ymax = max(finite_vals) + 0.05 * abs(max(finite_vals))
+            else:
+                ymin, ymax = -1.0, 0.0
+
+            xs = np.arange(3)
+            bars = ax.bar(xs, bar_vals, color=bar_colors, edgecolor="black", linewidth=0.4)
+            ax.set_xticks(xs)
+            ax.set_xticklabels(bar_labels, rotation=18, ha="right", fontsize=8)
+            ax.set_ylabel("Energy")
+            ax.set_title(f"L={L}  {label_amp}  VQE Energies", fontsize=10)
+            ax.grid(axis="y", alpha=0.25)
+            if np.isfinite(ymin) and np.isfinite(ymax) and ymax > ymin:
+                ax.set_ylim(ymin, ymax)
+
+            dv_str = f"{dv:.6e}" if np.isfinite(dv) else "N/A"
+            ax.text(
+                0.5, 0.02,
+                f"ΔE = HC_VQE − QK_VQE = {dv_str}",
+                transform=ax.transAxes,
+                ha="center", va="bottom",
+                fontsize=9, style="italic",
+            )
+
+        fig_vqe.suptitle(
+            f"VQE Energy Comparison  L={L}\n"
+            "ΔE = VQE_hardcoded − VQE_qiskit  (shown below each bar chart)",
+            fontsize=11,
+        )
+        fig_vqe.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+        pdf.savefig(fig_vqe)
+        plt.close(fig_vqe)
+
+        # --- Pages 5–6: trajectory overlay  A0 vs A1 (HC then QK) ----
+        # Each page has 4 subplots.  For energy / n_up / doublon we plot
+        # both the Trotter curve and the exact (reference) curve at each
+        # amplitude so the user can see both the physics and the Trotter
+        # error.  Fidelity has no separate exact curve.
+        #
+        # Tuple: (trotter_key, exact_key_or_None, y-axis label)
+        _traj_keys = [
+            ("fidelity",            None,                "Fidelity"),
+            ("energy_trotter",      "energy_exact",      "Energy"),
+            ("n_up_site0_trotter",  "n_up_site0_exact",  "⟨n↑₀⟩"),
+            ("doublon_trotter",     "doublon_exact",     "Double Occupancy"),
+        ]
+
+        def _safe_arr(rows: list, key: str) -> np.ndarray:
+            """Like _arr but returns empty array when key is absent."""
+            vals = [float(r[key]) for r in rows if key in r]
+            return np.array(vals, dtype=float) if vals else np.array([], dtype=float)
+
+        for tag_label, payload_a0, payload_a1 in [
+            ("Hardcoded (HC)", a0_hc, a1_hc),
+            ("Qiskit (QK)",    a0_qk, a1_qk),
+        ]:
+            traj_a0 = payload_a0.get("trajectory", [])
+            traj_a1 = payload_a1.get("trajectory", [])
+            times_a0 = _arr(traj_a0, "time")
+            times_a1 = _arr(traj_a1, "time")
+
+            fig_ov, axes_ov = plt.subplots(2, 2, figsize=(11.0, 8.5))
+            axes_flat = axes_ov.ravel()
+            for idx, (tkey, ekey, nice) in enumerate(_traj_keys):
+                ax = axes_flat[idx]
+                has_data = False
+
+                # -- Trotter curves --
+                yt0 = _safe_arr(traj_a0, tkey)
+                yt1 = _safe_arr(traj_a1, tkey)
+                if yt0.size > 0:
+                    ax.plot(times_a0[: yt0.size], yt0,
+                            label=f"Trotter A={A0}", linewidth=1.4, color="#1f77b4")
+                    has_data = True
+                if yt1.size > 0:
+                    ax.plot(times_a1[: yt1.size], yt1,
+                            label=f"Trotter A={A1}", linewidth=1.4, color="#d62728")
+                    has_data = True
+
+                # -- Exact curves (thin dashed, same colour family) --
+                if ekey is not None:
+                    ye0 = _safe_arr(traj_a0, ekey)
+                    ye1 = _safe_arr(traj_a1, ekey)
+                    if ye0.size > 0:
+                        ax.plot(times_a0[: ye0.size], ye0,
+                                label=f"Exact A={A0}", linewidth=1.0,
+                                color="#1f77b4", linestyle="--", alpha=0.7)
+                        has_data = True
+                    if ye1.size > 0:
+                        ax.plot(times_a1[: ye1.size], ye1,
+                                label=f"Exact A={A1}", linewidth=1.0,
+                                color="#d62728", linestyle="--", alpha=0.7)
+                        has_data = True
+
+                if not has_data:
+                    ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                            transform=ax.transAxes)
+                ax.set_title(f"{nice}", fontsize=10)
+                ax.set_xlabel("Time", fontsize=8)
+                ax.set_ylabel(nice, fontsize=8)
+                ax.legend(fontsize=7, loc="best")
+                ax.grid(alpha=0.25)
+            fig_ov.suptitle(
+                f"Trajectory Overlay  L={L}  —  {tag_label}\n"
+                f"Solid = Trotter,  Dashed = Exact   |   "
+                f"Blue = A={A0},  Red = A={A1}",
+                fontsize=11,
+            )
+            fig_ov.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
+            pdf.savefig(fig_ov)
+            plt.close(fig_ov)
+
+        # --- Page 7: text summary ---
+        summary_lines = [
+            f"Amplitude Comparison Summary  L={L}",
+            "",
+            f"  A0 = {A0}   (trivial / safe-test amplitude)",
+            f"  A1 = {A1}   (active amplitude)",
+            "",
+            "Safe-test (no-drive vs drive-enabled A0=0):",
+            f"  passed          : {safe['passed']}",
+            f"  threshold       : {safe['threshold']:.2e}",
+            f"  HC max|ΔFid|    : {safe['hc']['max_fidelity_delta']:.6e}",
+            f"  HC max|ΔE_trot| : {safe['hc']['max_energy_delta']:.6e}",
+            f"  QK max|ΔFid|    : {safe['qk']['max_fidelity_delta']:.6e}",
+            f"  QK max|ΔE_trot| : {safe['qk']['max_energy_delta']:.6e}",
+            "",
+            "VQE energies at A0:",
+            f"  exact_filtered  : {exact_filtered_a0:.10f}" if np.isfinite(exact_filtered_a0) else "  exact_filtered  : N/A",
+            f"  HC VQE energy   : {hc_vqe_a0:.10f}" if np.isfinite(hc_vqe_a0) else "  HC VQE energy   : N/A",
+            f"  QK VQE energy   : {qk_vqe_a0:.10f}" if np.isfinite(qk_vqe_a0) else "  QK VQE energy   : N/A",
+            f"  delta_vqe_hc_minus_qk_at_A0 : {delta_vqe_a0:.6e}" if np.isfinite(delta_vqe_a0) else "  delta_vqe_hc_minus_qk_at_A0 : N/A",
+            "",
+            "VQE energies at A1:",
+            f"  exact_filtered  : {exact_filtered_a1:.10f}" if np.isfinite(exact_filtered_a1) else "  exact_filtered  : N/A",
+            f"  HC VQE energy   : {hc_vqe_a1:.10f}" if np.isfinite(hc_vqe_a1) else "  HC VQE energy   : N/A",
+            f"  QK VQE energy   : {qk_vqe_a1:.10f}" if np.isfinite(qk_vqe_a1) else "  QK VQE energy   : N/A",
+            f"  delta_vqe_hc_minus_qk_at_A1 : {delta_vqe_a1:.6e}" if np.isfinite(delta_vqe_a1) else "  delta_vqe_hc_minus_qk_at_A1 : N/A",
+        ]
+        _render_text_page(pdf, summary_lines)
+
+    return metrics
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare hardcoded and Qiskit Hubbard pipeline outputs.")
     parser.add_argument("--l-values", type=str, default="2,3,4,5")
@@ -1054,7 +1621,98 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qpe-seed", type=int, default=11)
     parser.add_argument("--skip-qpe", action="store_true", help="Pass --skip-qpe to both pipeline runners.")
 
+    # ------------------------------------------------------------------
+    # Drive passthrough (forwarded verbatim to both sub-pipelines).
+    # Defaults mirror pipelines/hardcoded_hubbard_pipeline.py parse_args().
+    # When --enable-drive is absent, no drive flags are forwarded and
+    # behaviour is bit-for-bit identical to before this feature was added.
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--enable-drive",
+        action="store_true",
+        default=False,
+        help="Enable the time-dependent onsite density drive in both pipelines.",
+    )
+    parser.add_argument("--drive-A", type=float, default=1.0,
+                        help="Drive amplitude A (Gaussian-sinusoid waveform).")
+    parser.add_argument("--drive-omega", type=float, default=1.0,
+                        help="Drive angular frequency ω.")
+    parser.add_argument("--drive-tbar", type=float, default=5.0,
+                        help="Drive Gaussian half-width t̄.")
+    parser.add_argument("--drive-phi", type=float, default=0.0,
+                        help="Drive phase offset φ.")
+    parser.add_argument(
+        "--drive-pattern",
+        type=str,
+        default="staggered",
+        choices=["staggered", "dimer_bias", "custom"],
+        help="Spatial weight pattern for the drive.",
+    )
+    parser.add_argument(
+        "--drive-custom-s",
+        type=str,
+        default=None,
+        metavar="JSON_ARRAY",
+        help="JSON-encoded list of custom spatial weights, e.g. '[1.0,-0.5]'. "
+             "Required when --drive-pattern=custom.",
+    )
+    parser.add_argument(
+        "--drive-include-identity",
+        action="store_true",
+        default=False,
+        help="Include the identity (global-phase) term in the drive Hamiltonian.",
+    )
+    parser.add_argument(
+        "--drive-time-sampling",
+        type=str,
+        default="midpoint",
+        choices=["midpoint", "left", "right"],
+        help="Time-sampling rule for drive coefficients within each Trotter slice.",
+    )
+    parser.add_argument("--drive-t0", type=float, default=0.0,
+                        help="Drive start time t₀ (offset added to each Trotter slice time).")
+    parser.add_argument(
+        "--exact-steps-multiplier",
+        type=int,
+        default=1,
+        help=(
+            "Reference-propagator refinement factor forwarded to both pipelines. "
+            "When drive is enabled, the reference runs at "
+            "N_ref = exact_steps_multiplier * trotter_steps steps. "
+            "Default 1 (reference and Trotter use the same step count)."
+        ),
+    )
+
     parser.add_argument("--initial-state-source", choices=["exact", "vqe", "hf"], default="vqe")
+
+    # ------------------------------------------------------------------
+    # Drive amplitude comparison (additive — does not affect existing runs)
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--drive-amplitudes",
+        type=str,
+        default="0.0,0.2",
+        metavar="A0,A1",
+        help=(
+            "Comma-separated pair of drive amplitudes used by "
+            "--with-drive-amplitude-comparison-pdf.  "
+            "A0 is the trivial (zero) amplitude for the safe-test; "
+            "A1 is the active amplitude.  Default: '0.0,0.2'."
+        ),
+    )
+    parser.add_argument(
+        "--with-drive-amplitude-comparison-pdf",
+        action="store_true",
+        default=False,
+        help=(
+            "Generate an amplitude-comparison PDF for each L value.  "
+            "Runs both pipelines three times per L: drive disabled, "
+            "--drive-A A0, and --drive-A A1.  "
+            "Includes a safe-test page (no-drive vs A0=0 must be identical) "
+            "and a VQE delta page (ΔE = HC_VQE − QK_VQE at each amplitude).  "
+            "Requires --enable-drive (or any drive flags) to be meaningful."
+        ),
+    )
 
     parser.add_argument("--artifacts-dir", type=Path, default=ROOT / "artifacts")
     return parser.parse_args()
@@ -1064,24 +1722,31 @@ def main() -> None:
     args = parse_args()
     _ai_log("compare_main_start", settings=vars(args))
     run_command = _current_command_string()
-    artifacts_dir = args.artifacts_dir
+    # Resolve to absolute so that paths are consistent between the main
+    # process (CWD may differ) and subprocesses (cwd=ROOT).
+    artifacts_dir = args.artifacts_dir.resolve()
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    json_dir = artifacts_dir / "json"
+    pdf_dir = artifacts_dir / "pdf"
+    json_dir.mkdir(parents=True, exist_ok=True)
+    pdf_dir.mkdir(parents=True, exist_ok=True)
 
     l_values = [int(x.strip()) for x in str(args.l_values).split(",") if x.strip()]
     _ai_log("compare_l_values", l_values=l_values)
 
-    command_log_path = artifacts_dir / "pipeline_commands_run.txt"
+    command_log_path = artifacts_dir / "commands.txt"
     command_log: list[str] = []
 
     run_artifacts: list[RunArtifacts] = []
     for L in l_values:
         _ai_log("compare_l_start", L=int(L))
-        hardcoded_json = artifacts_dir / f"hardcoded_pipeline_L{L}.json"
-        hardcoded_pdf = artifacts_dir / f"hardcoded_pipeline_L{L}.pdf"
-        qiskit_json = artifacts_dir / f"qiskit_pipeline_L{L}.json"
-        qiskit_pdf = artifacts_dir / f"qiskit_pipeline_L{L}.pdf"
-        compare_metrics_json = artifacts_dir / f"hardcoded_vs_qiskit_pipeline_L{L}_metrics.json"
-        compare_pdf = artifacts_dir / f"hardcoded_vs_qiskit_pipeline_L{L}_comparison.pdf"
+        tag = _artifact_tag(args, L)
+        hc_json = json_dir / f"H_{tag}.json"
+        hc_pdf = pdf_dir / f"H_{tag}.pdf"
+        qk_json = json_dir / f"Q_{tag}.json"
+        qk_pdf = pdf_dir / f"Q_{tag}.pdf"
+        metrics_json = json_dir / f"HvQ_{tag}_metrics.json"
+        compare_pdf = pdf_dir / f"HvQ_{tag}.pdf"
 
         if args.run_pipelines:
             hc_cmd = [
@@ -1106,17 +1771,18 @@ def main() -> None:
                 "--qpe-shots", str(args.qpe_shots),
                 "--qpe-seed", str(args.qpe_seed),
                 "--initial-state-source", str(args.initial_state_source),
-                "--output-json", str(hardcoded_json),
-                "--output-pdf", str(hardcoded_pdf),
+                "--output-json", str(hc_json),
+                "--output-pdf", str(hc_pdf),
                 "--skip-pdf",
             ]
             if args.skip_qpe:
                 hc_cmd.append("--skip-qpe")
+            hc_cmd.extend(_build_drive_args(args))
             command_log.append(" ".join(hc_cmd))
             code, out, err = _run_command(hc_cmd)
             if code != 0:
                 raise RuntimeError(f"Hardcoded pipeline failed for L={L}.\nSTDOUT:\n{out}\nSTDERR:\n{err}")
-            _ai_log("compare_l_hardcoded_done", L=int(L), json_path=str(hardcoded_json))
+            _ai_log("compare_l_hardcoded_done", L=int(L), json_path=str(hc_json))
 
             qk_cmd = [
                 sys.executable,
@@ -1140,26 +1806,27 @@ def main() -> None:
                 "--qpe-shots", str(args.qpe_shots),
                 "--qpe-seed", str(args.qpe_seed),
                 "--initial-state-source", str(args.initial_state_source),
-                "--output-json", str(qiskit_json),
-                "--output-pdf", str(qiskit_pdf),
+                "--output-json", str(qk_json),
+                "--output-pdf", str(qk_pdf),
                 "--skip-pdf",
             ]
             if args.skip_qpe:
                 qk_cmd.append("--skip-qpe")
+            qk_cmd.extend(_build_drive_args(args))
             command_log.append(" ".join(qk_cmd))
             code, out, err = _run_command(qk_cmd)
             if code != 0:
                 raise RuntimeError(f"Qiskit pipeline failed for L={L}.\nSTDOUT:\n{out}\nSTDERR:\n{err}")
-            _ai_log("compare_l_qiskit_done", L=int(L), json_path=str(qiskit_json))
+            _ai_log("compare_l_qiskit_done", L=int(L), json_path=str(qk_json))
 
         run_artifacts.append(
             RunArtifacts(
                 L=L,
-                hardcoded_json=hardcoded_json,
-                hardcoded_pdf=hardcoded_pdf,
-                qiskit_json=qiskit_json,
-                qiskit_pdf=qiskit_pdf,
-                compare_metrics_json=compare_metrics_json,
+                hc_json=hc_json,
+                hc_pdf=hc_pdf,
+                qk_json=qk_json,
+                qk_pdf=qk_pdf,
+                metrics_json=metrics_json,
                 compare_pdf=compare_pdf,
             )
         )
@@ -1174,13 +1841,13 @@ def main() -> None:
     results_rows: list[dict[str, Any]] = []
 
     for row in run_artifacts:
-        if not row.hardcoded_json.exists():
-            raise FileNotFoundError(f"Missing hardcoded JSON for L={row.L}: {row.hardcoded_json}")
-        if not row.qiskit_json.exists():
-            raise FileNotFoundError(f"Missing qiskit JSON for L={row.L}: {row.qiskit_json}")
+        if not row.hc_json.exists():
+            raise FileNotFoundError(f"Missing hardcoded JSON for L={row.L}: {row.hc_json}")
+        if not row.qk_json.exists():
+            raise FileNotFoundError(f"Missing qiskit JSON for L={row.L}: {row.qk_json}")
 
-        hardcoded = json.loads(row.hardcoded_json.read_text(encoding="utf-8"))
-        qiskit = json.loads(row.qiskit_json.read_text(encoding="utf-8"))
+        hardcoded = json.loads(row.hc_json.read_text(encoding="utf-8"))
+        qiskit = json.loads(row.qk_json.read_text(encoding="utf-8"))
         metrics = _compare_payloads(hardcoded, qiskit)
         _ai_log(
             "compare_l_metrics",
@@ -1194,13 +1861,13 @@ def main() -> None:
         metrics_payload = {
             "generated_utc": datetime.now(timezone.utc).isoformat(),
             "L": int(row.L),
-            "hardcoded_json": str(row.hardcoded_json),
-            "qiskit_json": str(row.qiskit_json),
+            "hc_json": str(row.hc_json),
+            "qk_json": str(row.qk_json),
             "metrics": metrics,
         }
         print(f"Delta metric definitions (L={row.L}):")
         print(_delta_metric_definition_text())
-        row.compare_metrics_json.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
+        row.metrics_json.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
         if args.with_per_l_pdfs:
             _write_comparison_pdf(
@@ -1217,7 +1884,7 @@ def main() -> None:
             {
                 "L": int(row.L),
                 "pass": bool(metrics["acceptance"]["pass"]),
-                "metrics_json": str(row.compare_metrics_json),
+                "metrics_json": str(row.metrics_json),
                 "comparison_pdf": (str(row.compare_pdf) if args.with_per_l_pdfs else None),
                 "hardcoded_settings": hardcoded.get("settings", {}),
                 "qiskit_settings": qiskit.get("settings", {}),
@@ -1247,18 +1914,37 @@ def main() -> None:
             "trotter_steps": int(args.trotter_steps),
             "initial_state_source": str(args.initial_state_source),
             "skip_qpe": bool(args.skip_qpe),
+            **(
+                {
+                    "drive": {
+                        "enabled": True,
+                        "A": float(args.drive_A),
+                        "omega": float(args.drive_omega),
+                        "tbar": float(args.drive_tbar),
+                        "phi": float(args.drive_phi),
+                        "pattern": str(args.drive_pattern),
+                        "custom_s": (str(args.drive_custom_s) if args.drive_custom_s is not None else None),
+                        "include_identity": bool(args.drive_include_identity),
+                        "time_sampling": str(args.drive_time_sampling),
+                        "t0": float(args.drive_t0),
+                        "reference_steps_multiplier": int(args.exact_steps_multiplier),
+                    }
+                }
+                if bool(args.enable_drive)
+                else {}
+            ),
         },
         "hardcoded_qiskit_import_isolation": isolation_check,
         "results": results_rows,
         "all_pass": bool(all(r["pass"] for r in results_rows) and isolation_check.get("pass", False)),
     }
 
-    summary_json = artifacts_dir / "hardcoded_vs_qiskit_pipeline_summary.json"
-    summary_json.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    summary_json_path = json_dir / "HvQ_summary.json"
+    summary_json_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
-    bundle_pdf = artifacts_dir / "hardcoded_vs_qiskit_all_results_bundle.pdf"
+    bundle_pdf_path = pdf_dir / "HvQ_bundle.pdf"
     _write_bundle_pdf(
-        bundle_path=bundle_pdf,
+        bundle_path=bundle_pdf_path,
         per_l_data=per_l_data,
         overall_summary=summary,
         isolation_check=isolation_check,
@@ -1267,17 +1953,77 @@ def main() -> None:
     )
     _ai_log(
         "compare_main_done",
-        summary_json=str(summary_json),
-        bundle_pdf=str(bundle_pdf),
+        summary_json=str(summary_json_path),
+        bundle_pdf=str(bundle_pdf_path),
         all_pass=bool(summary["all_pass"]),
     )
 
-    print(f"Wrote summary JSON: {summary_json}")
-    print(f"Wrote bundle PDF:   {bundle_pdf}")
+    print(f"Wrote summary JSON: {summary_json_path}")
+    print(f"Wrote bundle PDF:   {bundle_pdf_path}")
     if command_log:
         print(f"Wrote command log:  {command_log_path}")
     for row in results_rows:
         print(f"L={row['L']}: pass={row['pass']} metrics={row['metrics_json']} pdf={row['comparison_pdf']}")
+
+    # ------------------------------------------------------------------
+    # Amplitude-comparison PDFs (additive, opt-in via CLI flag)
+    # ------------------------------------------------------------------
+    if bool(getattr(args, "with_drive_amplitude_comparison_pdf", False)):
+        raw_amps = str(args.drive_amplitudes).split(",")
+        if len(raw_amps) != 2:
+            raise ValueError(
+                f"--drive-amplitudes must be a comma-separated pair, got: {args.drive_amplitudes!r}"
+            )
+        A0 = float(raw_amps[0].strip())
+        A1 = float(raw_amps[1].strip())
+        _ai_log("amp_cmp_start", A0=A0, A1=A1, l_values=l_values)
+
+        for L in l_values:
+            _ai_log("amp_cmp_l_start", L=int(L), A0=A0, A1=A1)
+            amp_data = _run_amplitude_comparison_for_l(args, L, A0, A1, json_dir)
+            tag = _artifact_tag(args, L)
+            amp_pdf_path = pdf_dir / f"amp_{tag}.pdf"
+            amp_metrics = _write_amplitude_comparison_pdf(
+                pdf_path=amp_pdf_path,
+                L=L,
+                amp_data=amp_data,
+                A0=A0,
+                A1=A1,
+                args=args,
+                run_command=run_command,
+            )
+            amp_metrics_path = json_dir / f"amp_{tag}_metrics.json"
+            amp_metrics_path.write_text(
+                json.dumps(
+                    {
+                        "generated_utc": datetime.now(timezone.utc).isoformat(),
+                        "L": int(L),
+                        "A0": A0,
+                        "A1": A1,
+                        "safe_test": amp_metrics["safe_test"],
+                        "delta_vqe_hc_minus_qk_at_A0": amp_metrics["delta_vqe_hc_minus_qk_at_A0"],
+                        "delta_vqe_hc_minus_qk_at_A1": amp_metrics["delta_vqe_hc_minus_qk_at_A1"],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            _ai_log(
+                "amp_cmp_l_done",
+                L=int(L),
+                safe_test_passed=bool(amp_metrics["safe_test"]["passed"]),
+                delta_vqe_A0=amp_metrics["delta_vqe_hc_minus_qk_at_A0"],
+                delta_vqe_A1=amp_metrics["delta_vqe_hc_minus_qk_at_A1"],
+                pdf=str(amp_pdf_path),
+            )
+            print(
+                f"Amplitude comparison L={L}: "
+                f"safe_test={'PASS' if amp_metrics['safe_test']['passed'] else 'FAIL'}  "
+                f"ΔE(A0)={amp_metrics['delta_vqe_hc_minus_qk_at_A0']:.4e}  "
+                f"ΔE(A1)={amp_metrics['delta_vqe_hc_minus_qk_at_A1']:.4e}  "
+                f"pdf={amp_pdf_path}"
+            )
+        _ai_log("amp_cmp_done", l_values=l_values)
 
 
 if __name__ == "__main__":

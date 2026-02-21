@@ -1,6 +1,4 @@
 import numpy as np
-from src.set_param_object import p
-from src.utilities.log import log
 from src.quantum.qubitization_module import PauliTerm
 
 #
@@ -18,7 +16,7 @@ class PauliPolynomial:
         if len(self._pol) > 0:
             nq = self._pol[0].nqubit()
         else:
-            log.error("Cannot add a constant to empty PauliPolynomial without qubit count")
+            raise ValueError("Cannot add a constant to empty PauliPolynomial without qubit count")
         return nq
     def return_polynomial(self):
         return self._pol
@@ -116,7 +114,7 @@ class PauliPolynomial:
                 result = result * self
             return result
         else:
-            log.error("Only non-negative integer powers are supported for PauliPolynomial")
+            raise ValueError("Only non-negative integer powers are supported for PauliPolynomial")
     def _reduce(self):
         pol_temp = list(np.copy(self._pol))
         self._pol = []
@@ -135,14 +133,15 @@ class PauliPolynomial:
                 self._pol.append(pt)
     def visualize_polynomial(self):
         n = self.count_number_terms()
-        log.info("\t " + p.sep)
+        sep = "*" * 94
+        print("\t " + sep)
         for i in range(n):
             pt = self._pol[i]
             strng = "\t " + str(i) + " -> " + str(pt.p_coeff) + " "
             for iq in range(len(pt.pw)):
                 strng += pt.pw[iq].symbol
-            log.info(strng)
-        log.info("\t " + p.sep)
+            print(strng)
+        print("\t " + sep)
 
 #
 #   Define cj^+ fermionic operator
@@ -152,7 +151,7 @@ class fermion_plus_operator(PauliPolynomial):
     def __init__(self, repr_mode, nq, j):
         super().__init__(repr_mode)
         if j < 0 or j >= nq:
-            log.error("index j out of range -> 0 <= j < nq")
+            raise ValueError("index j out of range -> 0 <= j < nq")
         if self._repr_mode == "JW":
             self.__set_JW_operator(nq, j)
     def __set_JW_operator(self, nq, j):
@@ -180,7 +179,7 @@ class fermion_minus_operator(PauliPolynomial):
     def __init__(self, repr_mode, nq, j):
         super().__init__(repr_mode)
         if j < 0 or j >= nq:
-            log.error("index j out of range -> 0 <= j < nq")
+            raise ValueError("index j out of range -> 0 <= j < nq")
         if self._repr_mode == "JW":
             self.__set_JW_operator(nq, j)
     def __set_JW_operator(self, nq, j):

@@ -1,7 +1,7 @@
 # Auto-generated from vqe_latex_python_pairs_test.ipynb (benchmark cell removed)
 # Do not edit by hand unless you also update the notebook conversion logic.
 
-# pydephasing/quantum/vqe_latex_python_pairs.py
+# src/quantum/vqe_latex_python_pairs.py
 from __future__ import annotations
 
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 # Ensure repo root is importable when notebook is run from nested CWDs.
 _cwd = Path.cwd().resolve()
 for _candidate in (_cwd, *_cwd.parents):
-    if (_candidate / 'pydephasing' / 'quantum' / 'pauli_polynomial_class.py').exists():
+    if (_candidate / 'src' / 'quantum' / 'pauli_polynomial_class.py').exists():
         if str(_candidate) not in sys.path:
             sys.path.insert(0, str(_candidate))
         break
@@ -29,33 +29,31 @@ except Exception:  # pragma: no cover
     IPyMath = None
     display = None
 
-try:
-    from pydephasing.utilities.log import log
-except Exception:  # pragma: no cover
-    class _FallbackLog:
-        @staticmethod
-        def error(msg: str):
-            raise RuntimeError(msg)
+class _FallbackLog:
+    @staticmethod
+    def error(msg: str):
+        raise RuntimeError(msg)
 
-        @staticmethod
-        def info(msg: str):
-            print(msg)
+    @staticmethod
+    def info(msg: str):
+        print(msg)
 
-    log = _FallbackLog()
+
+log = _FallbackLog()
 
 try:
-    from pydephasing.quantum.pauli_polynomial_class import (
+    from src.quantum.pauli_polynomial_class import (
         PauliPolynomial,
         fermion_minus_operator,
         fermion_plus_operator,
     )
-    from pydephasing.quantum.pauli_words import PauliTerm
+    from src.quantum.pauli_words import PauliTerm
 except Exception as _dep_exc:  # pragma: no cover
     PauliPolynomial = Any  # type: ignore[assignment]
 
     def _missing_dep(*_args, **_kwargs):
         raise ImportError(
-            "pydephasing quantum dependencies are unavailable in this environment"
+            "src.quantum dependencies are unavailable in this environment"
         ) from _dep_exc
 
     fermion_minus_operator = _missing_dep  # type: ignore[assignment]
@@ -64,7 +62,7 @@ except Exception as _dep_exc:  # pragma: no cover
 
 try:
     # Reuse your canonical Hubbard lattice helpers for consistent indexing/edges.
-    from pydephasing.quantum.hubbard_latex_python_pairs import (
+    from src.quantum.hubbard_latex_python_pairs import (
         Dims,
         SPIN_DN,
         SPIN_UP,
@@ -298,7 +296,7 @@ def half_filled_num_particles(num_sites: int) -> Tuple[int, int]:
 try:
     from hartree_fock_reference_state import hartree_fock_bitstring
 except Exception:
-    from pydephasing.quantum.hartree_fock_reference_state import hartree_fock_bitstring
+    from src.quantum.hartree_fock_reference_state import hartree_fock_bitstring
 
 def jw_number_operator(repr_mode: str, nq: int, p_mode: int) -> PauliPolynomial:
     if repr_mode != "JW":
@@ -914,7 +912,6 @@ def show_vqe_latex_python_pairs() -> None:
 if __name__ == "__main__":
     print(
         "Use this in Jupyter for rendered LaTeX:\n"
-        "from pydephasing.quantum.vqe_latex_python_pairs import show_vqe_latex_python_pairs\n"
+        "from src.quantum.vqe_latex_python_pairs import show_vqe_latex_python_pairs\n"
         "show_vqe_latex_python_pairs()"
     )
-

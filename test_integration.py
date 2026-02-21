@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone integration smoke test for core pydephasing primitives."""
+"""Standalone integration smoke test for core Hubbard quantum primitives."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import numpy as np
 
 
 def _add_repo_paths() -> Path:
-    """Add repo root and available pydephasing-containing roots to sys.path."""
+    """Add repo root and available project roots to sys.path."""
     repo_root = Path(__file__).resolve().parent
     candidate_roots = [
         repo_root,
@@ -42,7 +42,7 @@ def _run_import_check(
 
 
 def _import_pauli_letters() -> Dict[str, object]:
-    from pydephasing.quantum.pauli_letters_module import PauliLetter, symbol_product_map
+    from src.quantum.pauli_letters_module import PauliLetter, symbol_product_map
 
     return {
         "PauliLetter": PauliLetter,
@@ -51,13 +51,13 @@ def _import_pauli_letters() -> Dict[str, object]:
 
 
 def _import_pauli_term() -> Dict[str, object]:
-    from pydephasing.quantum.pauli_words import PauliTerm
+    from src.quantum.pauli_words import PauliTerm
 
     return {"PauliTerm": PauliTerm}
 
 
 def _import_pauli_polynomial() -> Dict[str, object]:
-    from pydephasing.quantum.pauli_polynomial_class import (
+    from src.quantum.pauli_polynomial_class import (
         PauliPolynomial,
         fermion_minus_operator,
         fermion_plus_operator,
@@ -71,7 +71,7 @@ def _import_pauli_polynomial() -> Dict[str, object]:
 
 
 def _import_hubbard_helpers() -> Dict[str, object]:
-    from pydephasing.quantum.hubbard_latex_python_pairs import (
+    from src.quantum.hubbard_latex_python_pairs import (
         build_hubbard_hamiltonian,
         jw_number_operator,
         mode_index,
@@ -85,7 +85,7 @@ def _import_hubbard_helpers() -> Dict[str, object]:
 
 
 def _import_hf_helpers() -> Dict[str, object]:
-    from pydephasing.quantum.hartree_fock_reference_state import (
+    from src.quantum.hartree_fock_reference_state import (
         hartree_fock_bitstring,
         hartree_fock_statevector,
     )
