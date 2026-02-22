@@ -128,6 +128,72 @@ def _sector_basis_indices(
     return sector_indices
 
 
+def _ground_manifold_basis_sector_filtered(
+    hmat: np.ndarray,
+    *,
+    num_sites: int,
+    num_particles: tuple[int, int],
+    ordering: str,
+    energy_tol: float,
+) -> tuple[float, np.ndarray]:
+    """Return (ground_energy, embedded_ground_manifold_basis) in a fixed sector.
+
+    The returned basis matrix has orthonormal columns spanning the filtered
+    sector states with energies satisfying E <= E0 + tol.
+    """
+    tol = float(energy_tol)
+    if tol < 0.0:
+        raise ValueError(f"fidelity_subspace_energy_tol must be >= 0, got {tol}.")
+
+    sector_indices = _sector_basis_indices(num_sites, num_particles, ordering)
+    h_sector = hmat[np.ix_(sector_indices, sector_indices)]
+    evals_sector, evecs_sector = np.linalg.eigh(h_sector)
+    evals_real = np.real(evals_sector)
+    gs_energy = float(np.min(evals_real))
+    mask = evals_real <= (gs_energy + tol)
+    if not bool(np.any(mask)):
+        mask[int(np.argmin(evals_real))] = True
+
+    basis_sector = np.asarray(evecs_sector[:, mask], dtype=complex)
+    basis_full = np.zeros((hmat.shape[0], basis_sector.shape[1]), dtype=complex)
+    basis_full[sector_indices, :] = basis_sector
+    basis_full, _ = np.linalg.qr(basis_full)
+    if basis_full.shape[1] == 0:
+        raise RuntimeError("Filtered ground manifold basis is empty.")
+    return gs_energy, basis_full
+
+
+def _orthonormalize_basis_columns(
+    basis: np.ndarray,
+    *,
+    rank_tol: float = 1e-12,
+) -> np.ndarray:
+    """QR-orthonormalize columns and drop near-null columns by rank threshold."""
+    if basis.ndim != 2 or basis.shape[1] == 0:
+        raise ValueError("Basis matrix must have shape (dim, k) with k>=1.")
+    qmat, rmat = np.linalg.qr(basis)
+    diag = np.abs(np.diag(rmat))
+    rank = int(np.sum(diag > float(rank_tol)))
+    if rank <= 0:
+        raise RuntimeError("Ground-manifold basis lost rank during orthonormalization.")
+    return qmat[:, :rank]
+
+
+def _projector_fidelity_from_basis(
+    basis_orthonormal: np.ndarray,
+    psi: np.ndarray,
+) -> float:
+    """Return <psi|P|psi> for P projecting onto span(basis_orthonormal)."""
+    amps = np.conjugate(basis_orthonormal).T @ psi
+    raw = np.vdot(amps, amps)
+    val = float(np.real(raw))
+    if val < 0.0 and val > -1e-12:
+        val = 0.0
+    if val > 1.0 and val < 1.0 + 1e-12:
+        val = 1.0
+    return float(min(1.0, max(0.0, val)))
+
+
 def _exact_ground_state_sector_filtered(
     hmat: np.ndarray,
     num_sites: int,
@@ -135,17 +201,15 @@ def _exact_ground_state_sector_filtered(
     ordering: str,
 ) -> tuple[float, np.ndarray]:
     """Return (ground_energy, embedded_ground_statevector) in a fixed sector."""
-    sector_indices = _sector_basis_indices(num_sites, num_particles, ordering)
-    h_sector = hmat[np.ix_(sector_indices, sector_indices)]
-    evals_sector, evecs_sector = np.linalg.eigh(h_sector)
-    gs_idx = int(np.argmin(evals_sector))
-    gs_energy = float(np.real(evals_sector[gs_idx]))
-
-    psi_sector = np.asarray(evecs_sector[:, gs_idx], dtype=complex).reshape(-1)
-    psi_full = np.zeros(hmat.shape[0], dtype=complex)
-    psi_full[sector_indices] = psi_sector
-    psi_full = _normalize_state(psi_full)
-    return gs_energy, psi_full
+    gs_energy, basis_full = _ground_manifold_basis_sector_filtered(
+        hmat=hmat,
+        num_sites=num_sites,
+        num_particles=num_particles,
+        ordering=ordering,
+        energy_tol=0.0,
+    )
+    psi_full = _normalize_state(np.asarray(basis_full[:, 0], dtype=complex).reshape(-1))
+    return float(gs_energy), psi_full
 
 
 def _exact_energy_sector_filtered(
@@ -975,6 +1039,8 @@ def _simulate_trajectory(
     ordering: str,
     psi0_ansatz_trot: np.ndarray,
     psi0_exact_ref: np.ndarray,
+    fidelity_subspace_basis_v0: np.ndarray,
+    fidelity_subspace_energy_tol: float,
     hmat: np.ndarray,
     ordered_labels_exyz: list[str],
     coeff_map_exyz: dict[str, complex],
@@ -999,12 +1065,18 @@ def _simulate_trajectory(
     n_times = int(times.size)
     stride = max(1, n_times // 20)
     t0 = time.perf_counter()
+    basis_v0 = np.asarray(fidelity_subspace_basis_v0, dtype=complex)
+    if basis_v0.ndim != 2 or basis_v0.shape[0] != psi0_ansatz_trot.size:
+        raise ValueError("fidelity_subspace_basis_v0 must have shape (dim, k) with matching dim.")
+    if basis_v0.shape[1] <= 0:
+        raise ValueError("fidelity_subspace_basis_v0 must contain at least one basis vector.")
 
     has_drive = drive_coeff_provider_exyz is not None
 
     # When drive is enabled the reference propagator may use a finer step count
     # to improve its quality independently of the Trotter discretization.
     reference_steps = int(trotter_steps) * max(1, int(exact_steps_multiplier))
+    static_basis_eig = evecs_dag @ basis_v0
 
     _ai_log(
         "hardcoded_trajectory_start",
@@ -1016,6 +1088,9 @@ def _simulate_trajectory(
         exact_steps_multiplier=int(exact_steps_multiplier),
         suzuki_order=int(suzuki_order),
         drive_enabled=has_drive,
+        ground_subspace_dimension=int(basis_v0.shape[1]),
+        fidelity_subspace_energy_tol=float(fidelity_subspace_energy_tol),
+        fidelity_selection_rule="E <= E0 + tol",
     )
 
     rows: list[dict[str, float]] = []
@@ -1024,7 +1099,7 @@ def _simulate_trajectory(
     for idx, time_val in enumerate(times):
         t = float(time_val)
 
-        # --- exact / reference propagation ---
+        # --- exact / reference propagation (filtered-sector GS branch) ---
         if not has_drive:
             # Time-independent: eigendecomposition shortcut (exact to machine
             # precision — does not depend on exact_steps_multiplier).
@@ -1038,6 +1113,21 @@ def _simulate_trajectory(
             # Trotter circuit discretization.
             psi_exact = _evolve_piecewise_exact(
                 psi0=psi0_exact_ref,
+                hmat_static=hmat,
+                drive_coeff_provider_exyz=drive_coeff_provider_exyz,
+                time_value=t,
+                trotter_steps=reference_steps,
+                t0=float(drive_t0),
+                time_sampling=str(drive_time_sampling),
+            )
+
+        # --- exact propagation from the same ansatz initial state ---
+        if not has_drive:
+            psi_exact_ansatz = evecs @ (np.exp(-1j * evals * t) * (evecs_dag @ psi0_ansatz_trot))
+            psi_exact_ansatz = _normalize_state(psi_exact_ansatz)
+        else:
+            psi_exact_ansatz = _evolve_piecewise_exact(
+                psi0=psi0_ansatz_trot,
                 hmat_static=hmat,
                 drive_coeff_provider_exyz=drive_coeff_provider_exyz,
                 time_value=t,
@@ -1069,12 +1159,38 @@ def _simulate_trajectory(
                 norm_drift=norm_drift,
             )
 
-        # Benchmark fidelity:
-        # exact reference starts from |psi_gs(H_static)> while trotter state
-        # starts from the ansatz/reference state selected in main().
-        fidelity = float(abs(np.vdot(psi_exact, psi_trot)) ** 2)
+        if not has_drive:
+            phases = np.exp(-1j * evals * t).reshape(-1, 1)
+            basis_t = evecs @ (phases * static_basis_eig)
+        else:
+            basis_t = np.zeros((psi_trot.size, basis_v0.shape[1]), dtype=complex)
+            for col in range(basis_v0.shape[1]):
+                basis_t[:, col] = _evolve_piecewise_exact(
+                    psi0=basis_v0[:, col],
+                    hmat_static=hmat,
+                    drive_coeff_provider_exyz=drive_coeff_provider_exyz,
+                    time_value=t,
+                    trotter_steps=reference_steps,
+                    t0=float(drive_t0),
+                    time_sampling=str(drive_time_sampling),
+                )
+
+        basis_t_orth = _orthonormalize_basis_columns(basis_t)
+        if basis_t_orth.shape[1] < basis_v0.shape[1]:
+            _ai_log(
+                "hardcoded_fidelity_subspace_rank_reduced",
+                time=float(t),
+                original_dimension=int(basis_v0.shape[1]),
+                effective_dimension=int(basis_t_orth.shape[1]),
+            )
+        fidelity = _projector_fidelity_from_basis(basis_t_orth, psi_trot)
         n_up_exact_site, n_dn_exact_site, doublon_exact = _site_resolved_number_observables(
             psi_exact,
+            num_sites,
+            ordering,
+        )
+        n_up_exact_ansatz_site, n_dn_exact_ansatz_site, doublon_exact_ansatz = _site_resolved_number_observables(
+            psi_exact_ansatz,
             num_sites,
             ordering,
         )
@@ -1084,12 +1200,16 @@ def _simulate_trajectory(
             ordering,
         )
         n_exact_site = n_up_exact_site + n_dn_exact_site
+        n_exact_ansatz_site = n_up_exact_ansatz_site + n_dn_exact_ansatz_site
         n_trot_site = n_up_trot_site + n_dn_trot_site
         n_up_exact = float(n_up_exact_site[0]) if n_up_exact_site.size > 0 else float("nan")
         n_dn_exact = float(n_dn_exact_site[0]) if n_dn_exact_site.size > 0 else float("nan")
+        n_up_exact_ansatz = float(n_up_exact_ansatz_site[0]) if n_up_exact_ansatz_site.size > 0 else float("nan")
+        n_dn_exact_ansatz = float(n_dn_exact_ansatz_site[0]) if n_dn_exact_ansatz_site.size > 0 else float("nan")
         n_up_trot = float(n_up_trot_site[0]) if n_up_trot_site.size > 0 else float("nan")
         n_dn_trot = float(n_dn_trot_site[0]) if n_dn_trot_site.size > 0 else float("nan")
         energy_static_exact = _expectation_hamiltonian(psi_exact, hmat)
+        energy_static_exact_ansatz = _expectation_hamiltonian(psi_exact_ansatz, hmat)
         energy_static_trotter = _expectation_hamiltonian(psi_trot, hmat)
 
         # --- total (instantaneous) energy: H_static + H_drive(t) ---
@@ -1102,9 +1222,11 @@ def _simulate_trajectory(
             )
             hmat_total_t = hmat + hmat_drive_t
             energy_total_exact = _expectation_hamiltonian(psi_exact, hmat_total_t)
+            energy_total_exact_ansatz = _expectation_hamiltonian(psi_exact_ansatz, hmat_total_t)
             energy_total_trotter = _expectation_hamiltonian(psi_trot, hmat_total_t)
         else:
             energy_total_exact = energy_static_exact
+            energy_total_exact_ansatz = energy_static_exact_ansatz
             energy_total_trotter = energy_static_trotter
 
         rows.append(
@@ -1112,21 +1234,35 @@ def _simulate_trajectory(
                 "time": t,
                 "fidelity": fidelity,
                 "energy_static_exact": energy_static_exact,
+                "energy_static_exact_ansatz": energy_static_exact_ansatz,
                 "energy_static_trotter": energy_static_trotter,
                 "energy_total_exact": energy_total_exact,
+                "energy_total_exact_ansatz": energy_total_exact_ansatz,
                 "energy_total_trotter": energy_total_trotter,
                 "n_up_site0_exact": n_up_exact,
+                "n_up_site0_exact_ansatz": n_up_exact_ansatz,
                 "n_up_site0_trotter": n_up_trot,
                 "n_dn_site0_exact": n_dn_exact,
+                "n_dn_site0_exact_ansatz": n_dn_exact_ansatz,
                 "n_dn_site0_trotter": n_dn_trot,
                 "n_site_exact": [float(x) for x in n_exact_site.tolist()],
+                "n_site_exact_ansatz": [float(x) for x in n_exact_ansatz_site.tolist()],
                 "n_site_trotter": [float(x) for x in n_trot_site.tolist()],
                 "staggered_exact": _staggered_order(n_exact_site),
+                "staggered_exact_ansatz": _staggered_order(n_exact_ansatz_site),
                 "staggered_trotter": _staggered_order(n_trot_site),
                 "doublon_exact": doublon_exact,
+                "doublon_exact_ansatz": doublon_exact_ansatz,
                 "doublon_trotter": doublon_trot,
                 "doublon_avg_exact": float(doublon_exact / float(num_sites)),
+                "doublon_avg_exact_ansatz": float(doublon_exact_ansatz / float(num_sites)),
                 "doublon_avg_trotter": float(doublon_trot / float(num_sites)),
+                "n_up_site_exact": [float(x) for x in n_up_exact_site.tolist()],
+                "n_up_site_exact_ansatz": [float(x) for x in n_up_exact_ansatz_site.tolist()],
+                "n_up_site_trotter": [float(x) for x in n_up_trot_site.tolist()],
+                "n_dn_site_exact": [float(x) for x in n_dn_exact_site.tolist()],
+                "n_dn_site_exact_ansatz": [float(x) for x in n_dn_exact_ansatz_site.tolist()],
+                "n_dn_site_trotter": [float(x) for x in n_dn_trot_site.tolist()],
                 "norm_before_renorm": norm_before,
             }
         )
@@ -1138,7 +1274,7 @@ def _simulate_trajectory(
                 total_steps=n_times,
                 frac=round(float((idx + 1) / n_times), 6),
                 time=float(t),
-                fidelity=float(fidelity),
+                subspace_fidelity=float(fidelity),
                 elapsed_sec=round(time.perf_counter() - t0, 6),
             )
 
@@ -1146,7 +1282,7 @@ def _simulate_trajectory(
         "hardcoded_trajectory_done",
         total_steps=n_times,
         elapsed_sec=round(time.perf_counter() - t0, 6),
-        final_fidelity=float(rows[-1]["fidelity"]) if rows else None,
+        final_subspace_fidelity=float(rows[-1]["fidelity"]) if rows else None,
         final_energy_static_trotter=float(rows[-1]["energy_static_trotter"]) if rows else None,
     )
 
@@ -1177,21 +1313,154 @@ def _render_command_page(pdf: PdfPages, command: str) -> None:
 
 def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: str) -> None:
     traj = payload["trajectory"]
+    if len(traj) == 0:
+        raise ValueError("Cannot render pipeline PDF: trajectory is empty.")
     times = np.array([float(r["time"]) for r in traj], dtype=float)
     markevery = max(1, times.size // 25)
 
     def arr(key: str) -> np.ndarray:
         return np.array([float(r[key]) for r in traj], dtype=float)
 
+    def arr_optional(key: str, fallback: np.ndarray | None = None) -> np.ndarray:
+        vals: list[float] = []
+        for row in traj:
+            if key in row:
+                vals.append(float(row[key]))
+            elif fallback is not None:
+                vals.append(float(fallback[len(vals)]))
+            else:
+                vals.append(float("nan"))
+        return np.array(vals, dtype=float)
+
+    def mat(key: str) -> np.ndarray:
+        out: list[list[float]] = []
+        for i, row in enumerate(traj):
+            if key not in row:
+                raise KeyError(f"Missing key '{key}' at trajectory row {i}.")
+            raw = row[key]
+            if not isinstance(raw, list):
+                raise TypeError(f"Expected list-valued key '{key}' at row {i}.")
+            out.append([float(x) for x in raw])
+        return np.array(out, dtype=float)
+
+    def mat_optional(key: str, fallback: np.ndarray) -> np.ndarray:
+        if key not in traj[0]:
+            return np.array(fallback, copy=True)
+        out: list[list[float]] = []
+        for i, row in enumerate(traj):
+            raw = row.get(key)
+            if raw is None:
+                out.append([float(x) for x in fallback[i].tolist()])
+                continue
+            if not isinstance(raw, list):
+                raise TypeError(f"Expected list-valued key '{key}' at row {i}.")
+            out.append([float(x) for x in raw])
+        return np.array(out, dtype=float)
+
+    def _plot_density_surface(
+        ax: Any,
+        data: np.ndarray,
+        *,
+        title: str,
+        zlim: tuple[float, float],
+        cmap: str,
+    ) -> None:
+        sites = np.arange(data.shape[1], dtype=float)
+        t_grid, s_grid = np.meshgrid(times, sites, indexing="xy")
+        ax.plot_surface(
+            t_grid,
+            s_grid,
+            data.T,
+            cmap=cmap,
+            linewidth=0.0,
+            antialiased=True,
+            alpha=0.95,
+        )
+        ax.set_title(title, fontsize=9)
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Site")
+        ax.set_zlabel("Density")
+        ax.set_zlim(float(zlim[0]), float(zlim[1]))
+        ax.view_init(elev=25, azim=-60)
+
+    def _plot_lane_3d(
+        ax: Any,
+        *,
+        series: list[np.ndarray],
+        labels: list[str],
+        colors: list[str],
+        title: str,
+        zlabel: str,
+    ) -> None:
+        for lane, (vals, lbl, col) in enumerate(zip(series, labels, colors)):
+            lane_vals = np.full_like(times, float(lane), dtype=float)
+            ax.plot(times, lane_vals, vals, color=col, linewidth=1.8, label=lbl)
+            ax.scatter(
+                times[::max(1, len(times) // 25)],
+                lane_vals[::max(1, len(times) // 25)],
+                vals[::max(1, len(times) // 25)],
+                color=col,
+                s=8,
+            )
+        ax.set_yticks([0.0, 1.0, 2.0])
+        ax.set_yticklabels(["Exact GS", "Exact Ansatz", "Trotter"])
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Branch")
+        ax.set_zlabel(zlabel)
+        ax.set_title(title, fontsize=9)
+        ax.view_init(elev=22, azim=-58)
+        ax.legend(fontsize=7, loc="upper left")
+
     fid = arr("fidelity")
     e_exact = arr("energy_static_exact")
+    e_exact_ans = arr_optional("energy_static_exact_ansatz", fallback=e_exact)
     e_trot = arr("energy_static_trotter")
     nu_exact = arr("n_up_site0_exact")
+    nu_exact_ans = arr_optional("n_up_site0_exact_ansatz", fallback=nu_exact)
     nu_trot = arr("n_up_site0_trotter")
     nd_exact = arr("n_dn_site0_exact")
+    nd_exact_ans = arr_optional("n_dn_site0_exact_ansatz", fallback=nd_exact)
     nd_trot = arr("n_dn_site0_trotter")
     d_exact = arr("doublon_exact")
+    d_exact_ans = arr_optional("doublon_exact_ansatz", fallback=d_exact)
     d_trot = arr("doublon_trotter")
+    stg_exact = arr("staggered_exact")
+    stg_exact_ans = arr_optional("staggered_exact_ansatz", fallback=stg_exact)
+    stg_trot = arr("staggered_trotter")
+
+    n_site_exact = mat("n_site_exact")
+    n_site_exact_ans = mat_optional("n_site_exact_ansatz", n_site_exact)
+    n_site_trot = mat("n_site_trotter")
+    n_up_site_exact = mat_optional("n_up_site_exact", n_site_exact * 0.5)
+    n_up_site_exact_ans = mat_optional("n_up_site_exact_ansatz", n_site_exact_ans * 0.5)
+    n_up_site_trot = mat_optional("n_up_site_trotter", n_site_trot * 0.5)
+    n_dn_site_exact = mat_optional("n_dn_site_exact", n_site_exact * 0.5)
+    n_dn_site_exact_ans = mat_optional("n_dn_site_exact_ansatz", n_site_exact_ans * 0.5)
+    n_dn_site_trot = mat_optional("n_dn_site_trotter", n_site_trot * 0.5)
+
+    err_n_trot_vs_exact_ans = np.abs(n_site_trot - n_site_exact_ans)
+    err_n_exact_ans_vs_exact_gs = np.abs(n_site_exact_ans - n_site_exact)
+    err_n_trot_vs_exact_gs = np.abs(n_site_trot - n_site_exact)
+
+    err_scalar_rows = np.vstack(
+        [
+            np.abs(e_trot - e_exact_ans),
+            np.abs(e_exact_ans - e_exact),
+            np.abs(d_trot - d_exact_ans),
+            np.abs(d_exact_ans - d_exact),
+            np.abs(stg_trot - stg_exact_ans),
+            np.abs(stg_exact_ans - stg_exact),
+        ]
+    )
+    err_scalar_labels = [
+        "|E_trot - E_exact_ans|",
+        "|E_exact_ans - E_exact_gs|",
+        "|D_trot - D_exact_ans|",
+        "|D_exact_ans - D_exact_gs|",
+        "|S_trot - S_exact_ans|",
+        "|S_exact_ans - S_exact_gs|",
+    ]
+
     gs_exact = float(payload["ground_state"]["exact_energy"])
     gs_exact_filtered_raw = payload["ground_state"].get("exact_energy_filtered")
     gs_exact_filtered = float(gs_exact_filtered_raw) if gs_exact_filtered_raw is not None else gs_exact
@@ -1206,7 +1475,149 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
     with PdfPages(str(pdf_path)) as pdf:
         _render_command_page(pdf, run_command)
 
-        # Drive diagnostics page: waveform/envelope + FFT spectrum.
+        # ------------------------------------------------------------------
+        # Front matter: 3D pages first (non-redundant)
+        # ------------------------------------------------------------------
+        dens_all = np.concatenate([n_site_exact.reshape(-1), n_site_exact_ans.reshape(-1), n_site_trot.reshape(-1)])
+        dens_zlim = (float(np.min(dens_all)), float(np.max(dens_all)))
+        if abs(dens_zlim[1] - dens_zlim[0]) < 1e-12:
+            dens_zlim = (dens_zlim[0] - 1e-6, dens_zlim[1] + 1e-6)
+
+        fig3d_n = plt.figure(figsize=(14.0, 8.5))
+        axn0 = fig3d_n.add_subplot(1, 3, 1, projection="3d")
+        axn1 = fig3d_n.add_subplot(1, 3, 2, projection="3d")
+        axn2 = fig3d_n.add_subplot(1, 3, 3, projection="3d")
+        _plot_density_surface(axn0, n_site_exact, title="Exact GS Filtered: n(site,t)", zlim=dens_zlim, cmap="Blues")
+        _plot_density_surface(axn1, n_site_exact_ans, title="Exact Ansatz: n(site,t)", zlim=dens_zlim, cmap="Greens")
+        _plot_density_surface(axn2, n_site_trot, title="Trotter Ansatz: n(site,t)", zlim=dens_zlim, cmap="Oranges")
+        fig3d_n.suptitle(f"L={payload['settings']['L']} 3D Densities (Total n)", fontsize=13)
+        fig3d_n.tight_layout(rect=(0.0, 0.02, 1.0, 0.93))
+        pdf.savefig(fig3d_n)
+        plt.close(fig3d_n)
+
+        up_all = np.concatenate([n_up_site_exact.reshape(-1), n_up_site_exact_ans.reshape(-1), n_up_site_trot.reshape(-1)])
+        up_zlim = (float(np.min(up_all)), float(np.max(up_all)))
+        if abs(up_zlim[1] - up_zlim[0]) < 1e-12:
+            up_zlim = (up_zlim[0] - 1e-6, up_zlim[1] + 1e-6)
+        fig3d_up = plt.figure(figsize=(14.0, 8.5))
+        axu0 = fig3d_up.add_subplot(1, 3, 1, projection="3d")
+        axu1 = fig3d_up.add_subplot(1, 3, 2, projection="3d")
+        axu2 = fig3d_up.add_subplot(1, 3, 3, projection="3d")
+        _plot_density_surface(axu0, n_up_site_exact, title="Exact GS Filtered: n_up(site,t)", zlim=up_zlim, cmap="PuBu")
+        _plot_density_surface(axu1, n_up_site_exact_ans, title="Exact Ansatz: n_up(site,t)", zlim=up_zlim, cmap="YlGn")
+        _plot_density_surface(axu2, n_up_site_trot, title="Trotter Ansatz: n_up(site,t)", zlim=up_zlim, cmap="YlOrBr")
+        fig3d_up.suptitle(f"L={payload['settings']['L']} 3D Densities (Spin-Up)", fontsize=13)
+        fig3d_up.tight_layout(rect=(0.0, 0.02, 1.0, 0.93))
+        pdf.savefig(fig3d_up)
+        plt.close(fig3d_up)
+
+        dn_all = np.concatenate([n_dn_site_exact.reshape(-1), n_dn_site_exact_ans.reshape(-1), n_dn_site_trot.reshape(-1)])
+        dn_zlim = (float(np.min(dn_all)), float(np.max(dn_all)))
+        if abs(dn_zlim[1] - dn_zlim[0]) < 1e-12:
+            dn_zlim = (dn_zlim[0] - 1e-6, dn_zlim[1] + 1e-6)
+        fig3d_dn = plt.figure(figsize=(14.0, 8.5))
+        axd0 = fig3d_dn.add_subplot(1, 3, 1, projection="3d")
+        axd1 = fig3d_dn.add_subplot(1, 3, 2, projection="3d")
+        axd2 = fig3d_dn.add_subplot(1, 3, 3, projection="3d")
+        _plot_density_surface(axd0, n_dn_site_exact, title="Exact GS Filtered: n_dn(site,t)", zlim=dn_zlim, cmap="PuBu")
+        _plot_density_surface(axd1, n_dn_site_exact_ans, title="Exact Ansatz: n_dn(site,t)", zlim=dn_zlim, cmap="YlGn")
+        _plot_density_surface(axd2, n_dn_site_trot, title="Trotter Ansatz: n_dn(site,t)", zlim=dn_zlim, cmap="YlOrBr")
+        fig3d_dn.suptitle(f"L={payload['settings']['L']} 3D Densities (Spin-Down)", fontsize=13)
+        fig3d_dn.tight_layout(rect=(0.0, 0.02, 1.0, 0.93))
+        pdf.savefig(fig3d_dn)
+        plt.close(fig3d_dn)
+
+        fig3d_scalars = plt.figure(figsize=(14.0, 8.5))
+        axe0 = fig3d_scalars.add_subplot(2, 2, 1, projection="3d")
+        axe1 = fig3d_scalars.add_subplot(2, 2, 2, projection="3d")
+        axe2 = fig3d_scalars.add_subplot(2, 2, 3, projection="3d")
+        axe3 = fig3d_scalars.add_subplot(2, 2, 4, projection="3d")
+        labels_3 = ["Exact GS Filtered", "Exact Ansatz", "Trotter Ansatz"]
+        colors_3 = ["#1f77b4", "#2ca02c", "#d62728"]
+        _plot_lane_3d(
+            axe0,
+            series=[arr("energy_total_exact"), arr_optional("energy_total_exact_ansatz", arr("energy_total_exact")), arr("energy_total_trotter")],
+            labels=labels_3,
+            colors=colors_3,
+            title="3D Lanes: Total Energy",
+            zlabel="Energy",
+        )
+        _plot_lane_3d(
+            axe1,
+            series=[arr("energy_static_exact"), arr_optional("energy_static_exact_ansatz", arr("energy_static_exact")), arr("energy_static_trotter")],
+            labels=labels_3,
+            colors=colors_3,
+            title="3D Lanes: Static Energy",
+            zlabel="Energy",
+        )
+        _plot_lane_3d(
+            axe2,
+            series=[arr("doublon_exact"), arr_optional("doublon_exact_ansatz", arr("doublon_exact")), arr("doublon_trotter")],
+            labels=labels_3,
+            colors=colors_3,
+            title="3D Lanes: Doublon",
+            zlabel="Doublon",
+        )
+        _plot_lane_3d(
+            axe3,
+            series=[arr("staggered_exact"), arr_optional("staggered_exact_ansatz", arr("staggered_exact")), arr("staggered_trotter")],
+            labels=labels_3,
+            colors=colors_3,
+            title="3D Lanes: Staggered Order",
+            zlabel="Order",
+        )
+        fig3d_scalars.suptitle(f"L={payload['settings']['L']} 3D Scalar Observables (Three Evolutions)", fontsize=13)
+        fig3d_scalars.tight_layout(rect=(0.0, 0.02, 1.0, 0.94))
+        pdf.savefig(fig3d_scalars)
+        plt.close(fig3d_scalars)
+
+        fig_err = plt.figure(figsize=(14.0, 8.5))
+        axh0 = fig_err.add_subplot(1, 3, 1)
+        axh1 = fig_err.add_subplot(1, 3, 2)
+        axh2 = fig_err.add_subplot(1, 3, 3)
+        heatmaps = [
+            (err_n_trot_vs_exact_ans, "|n_trot - n_exact_ansatz|"),
+            (err_n_exact_ans_vs_exact_gs, "|n_exact_ansatz - n_exact_gs|"),
+            (err_n_trot_vs_exact_gs, "|n_trot - n_exact_gs|"),
+        ]
+        for axh, (hmat_err, title) in zip((axh0, axh1, axh2), heatmaps):
+            im = axh.imshow(
+                hmat_err.T,
+                origin="lower",
+                aspect="auto",
+                extent=(float(times[0]), float(times[-1]), -0.5, float(hmat_err.shape[1] - 0.5)),
+                cmap="magma",
+            )
+            axh.set_title(title)
+            axh.set_xlabel("Time")
+            axh.set_ylabel("Site")
+            plt.colorbar(im, ax=axh, fraction=0.046, pad=0.04, label="Absolute Error")
+        fig_err.suptitle(f"L={payload['settings']['L']} Error Heatmaps (Absolute Errors)", fontsize=13)
+        fig_err.tight_layout(rect=(0.0, 0.02, 1.0, 0.94))
+        pdf.savefig(fig_err)
+        plt.close(fig_err)
+
+        fig_err_scalar, axes_scalar = plt.subplots(1, 1, figsize=(14.0, 8.5))
+        im_scalar = axes_scalar.imshow(
+            err_scalar_rows,
+            origin="lower",
+            aspect="auto",
+            extent=(float(times[0]), float(times[-1]), -0.5, float(err_scalar_rows.shape[0] - 0.5)),
+            cmap="inferno",
+        )
+        axes_scalar.set_yticks(np.arange(len(err_scalar_labels)))
+        axes_scalar.set_yticklabels(err_scalar_labels, fontsize=9)
+        axes_scalar.set_xlabel("Time")
+        axes_scalar.set_title("Absolute Error Heatmap (Scalar Observables)")
+        plt.colorbar(im_scalar, ax=axes_scalar, fraction=0.03, pad=0.02, label="Absolute Error")
+        fig_err_scalar.suptitle(f"L={payload['settings']['L']} Scalar Error Heatmap", fontsize=13)
+        fig_err_scalar.tight_layout(rect=(0.0, 0.02, 1.0, 0.94))
+        pdf.savefig(fig_err_scalar)
+        plt.close(fig_err_scalar)
+
+        # ------------------------------------------------------------------
+        # Main body: drive diagnostics + compact 2D diagnostics
+        # ------------------------------------------------------------------
         drive_cfg = payload.get("settings", {}).get("drive")
         if isinstance(drive_cfg, dict) and times.size >= 2:
             A = float(drive_cfg.get("A", 0.0))
@@ -1227,37 +1638,11 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
                 envelope = np.zeros_like(t_phys, dtype=float)
 
             figd, (axw, axf) = plt.subplots(1, 2, figsize=(11.0, 8.5))
-
             axw.plot(times, waveform, color="#1f77b4", linewidth=1.5, label="f(t)")
             axw.plot(times, envelope, color="#d62728", linestyle="--", linewidth=1.1, label="+envelope")
             axw.plot(times, -envelope, color="#d62728", linestyle="--", linewidth=1.1, label="-envelope")
             axw.axhline(0.0, color="#555555", linewidth=0.8, alpha=0.8)
-            # Auto-zoom time axis to where the envelope is physically relevant.
-            # This avoids dedicating most of the panel to near-zero tails.
-            env_peak = float(np.max(np.abs(envelope))) if envelope.size > 0 else 0.0
-            zoom_applied = False
-            if env_peak > 0.0 and times.size > 2:
-                env_frac = np.abs(envelope) / env_peak
-                active_idx = np.where(env_frac >= 5e-3)[0]  # keep >=0.5% of peak
-                if active_idx.size >= 2:
-                    i0 = int(active_idx[0])
-                    i1 = int(active_idx[-1])
-                    # Add small symmetric padding for readability.
-                    span = max(1, i1 - i0)
-                    pad = max(2, span // 12)
-                    i0 = max(0, i0 - pad)
-                    i1 = min(int(times.size - 1), i1 + pad)
-                    t_lo = float(times[i0])
-                    t_hi = float(times[i1])
-                    if t_hi > t_lo:
-                        axw.set_xlim(t_lo, t_hi)
-                        zoom_applied = True
-
-            if zoom_applied:
-                x0, x1 = axw.get_xlim()
-                axw.set_title(f"Drive Waveform and Gaussian Envelope (zoom {x0:.2f}..{x1:.2f})")
-            else:
-                axw.set_title("Drive Waveform and Gaussian Envelope")
+            axw.set_title("Drive Waveform and Gaussian Envelope")
             axw.set_xlabel("Time")
             axw.set_ylabel("f(t)")
             axw.grid(alpha=0.25)
@@ -1267,42 +1652,16 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
             dt_mean = float(np.mean(dt)) if dt.size > 0 else 0.0
             if dt_mean > 0.0 and waveform.size > 1:
                 centered = waveform - float(np.mean(waveform))
-                window = np.hanning(centered.size)
-                windowed = centered * window
+                windowed = centered * np.hanning(centered.size)
                 fft_vals = np.fft.rfft(windowed)
                 freqs = np.fft.rfftfreq(windowed.size, d=dt_mean)
                 omega_axis = 2.0 * np.pi * freqs
                 mag = np.abs(fft_vals)
                 if mag.size > 0:
                     mag = mag / (float(np.max(mag)) + 1e-15)
-
-                # Auto-zoom x-axis to the informative frequency band instead
-                # of full Nyquist range, which is often too wide to read.
-                omega_res = float(omega_axis[1] - omega_axis[0]) if omega_axis.size > 1 else float("nan")
-                power = mag * mag
-                power_sum = float(np.sum(power))
-                if power_sum > 0.0:
-                    cdf = np.cumsum(power) / power_sum
-                    p995_idx = int(np.searchsorted(cdf, 0.995))
-                    p995_idx = min(max(p995_idx, 0), int(omega_axis.size - 1))
-                    omega_p995 = float(omega_axis[p995_idx])
-                else:
-                    omega_p995 = 0.0
-                omega_focus = max(
-                    3.0 * abs(omega),
-                    1.20 * omega_p995,
-                    (15.0 * omega_res if np.isfinite(omega_res) else 0.0),
-                )
-                if omega_axis.size > 0:
-                    omega_focus = min(float(omega_axis[-1]), float(omega_focus))
-
                 axf.plot(omega_axis, mag, color="#2ca02c", linewidth=1.4, label="|FFT(windowed f(t))|")
                 axf.axvline(abs(omega), color="#d62728", linestyle="--", linewidth=1.0, label=f"drive omega={omega:.3f}")
-                if omega_focus > 0.0:
-                    axf.set_xlim(0.0, omega_focus)
-                    axf.set_title(f"Drive Spectrum (Normalized, zoom 0..{omega_focus:.2f})")
-                else:
-                    axf.set_title("Drive Spectrum (Normalized Magnitude)")
+                axf.set_title("Drive Spectrum (Normalized Magnitude)")
                 axf.set_xlabel("Angular frequency")
                 axf.set_ylabel("Normalized magnitude")
                 axf.grid(alpha=0.25)
@@ -1327,38 +1686,45 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ax00.plot(times, fid, color="#0b3d91", marker="o", markersize=3, markevery=markevery)
         fid_title = payload.get("settings", {}).get(
             "fidelity_definition_short",
-            "Fidelity(t) = |<psi_exact_gs_ref(t)|psi_ansatz_trot(t)>|^2",
+            "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
         )
         ax00.set_title(str(fid_title))
         ax00.grid(alpha=0.25)
 
-        ax01.plot(times, e_exact, label=f"{EXACT_LABEL} (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
-        ax01.plot(times, e_trot, label="Trotter (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax01.plot(times, e_exact, label="Exact GS filtered (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
+        ax01.plot(times, e_exact_ans, label="Exact ansatz init (static)", color="#2ca02c", linewidth=1.4, marker="D", markersize=3, markevery=markevery)
+        ax01.plot(times, e_trot, label="Trotter ansatz init (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
 
         # --- optional total-energy overlay (when drive active and differs) ---
         e_total_exact = arr("energy_total_exact")
+        e_total_exact_ans = arr_optional("energy_total_exact_ansatz", fallback=e_total_exact)
         e_total_trot = arr("energy_total_trotter")
         if not (np.allclose(e_total_exact, e_exact, atol=1e-14) and
                 np.allclose(e_total_trot, e_trot, atol=1e-14)):
-            ax01.plot(times, e_total_exact, label=f"{EXACT_LABEL} (total)", color="#17becf",
+            ax01.plot(times, e_total_exact, label="Exact GS filtered (total)", color="#17becf",
                       linewidth=1.6, marker="D", markersize=2.5, markevery=markevery, alpha=0.8)
-            ax01.plot(times, e_total_trot, label="Trotter (total)", color="#ff7f0e",
+            ax01.plot(times, e_total_exact_ans, label="Exact ansatz init (total)", color="#1f77b4",
+                      linewidth=1.3, marker="o", markersize=2.5, markevery=markevery, alpha=0.8)
+            ax01.plot(times, e_total_trot, label="Trotter ansatz init (total)", color="#ff7f0e",
                       linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery, alpha=0.8)
 
         ax01.set_title("Energy")
         ax01.grid(alpha=0.25)
         ax01.legend(fontsize=7)
 
-        ax10.plot(times, nu_exact, label=f"n_up0 {EXACT_LABEL}", color="#17becf", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
+        ax10.plot(times, nu_exact, label="n_up0 exact GS", color="#17becf", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
+        ax10.plot(times, nu_exact_ans, label="n_up0 exact ansatz", color="#2ca02c", linewidth=1.2, marker="D", markersize=3, markevery=markevery)
         ax10.plot(times, nu_trot, label="n_up0 trotter", color="#0f7f8b", linestyle="--", linewidth=1.2, marker="s", markersize=3, markevery=markevery)
-        ax10.plot(times, nd_exact, label=f"n_dn0 {EXACT_LABEL}", color="#9467bd", linewidth=1.8, marker="^", markersize=3, markevery=markevery)
+        ax10.plot(times, nd_exact, label="n_dn0 exact GS", color="#9467bd", linewidth=1.8, marker="^", markersize=3, markevery=markevery)
+        ax10.plot(times, nd_exact_ans, label="n_dn0 exact ansatz", color="#8c564b", linewidth=1.2, marker="X", markersize=3, markevery=markevery)
         ax10.plot(times, nd_trot, label="n_dn0 trotter", color="#6f4d8f", linestyle="--", linewidth=1.2, marker="v", markersize=3, markevery=markevery)
         ax10.set_title("Site-0 Occupations")
         ax10.set_xlabel("Time")
         ax10.grid(alpha=0.25)
         ax10.legend(fontsize=8)
 
-        ax11.plot(times, d_exact, label=f"doublon {EXACT_LABEL}", color="#8c564b", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
+        ax11.plot(times, d_exact, label="doublon exact GS", color="#8c564b", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
+        ax11.plot(times, d_exact_ans, label="doublon exact ansatz", color="#2ca02c", linewidth=1.2, marker="D", markersize=3, markevery=markevery)
         ax11.plot(times, d_trot, label="doublon trotter", color="#c251a1", linestyle="--", linewidth=1.2, marker="s", markersize=3, markevery=markevery)
         ax11.set_title("Total Doublon")
         ax11.set_xlabel("Time")
@@ -1369,6 +1735,22 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         fig.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
         pdf.savefig(fig)
         plt.close(fig)
+
+        # ------------------------------------------------------------------
+        # Appendix: redundant/supporting material
+        # ------------------------------------------------------------------
+        fig_appendix = plt.figure(figsize=(11.0, 8.5))
+        ax_appendix = fig_appendix.add_subplot(111)
+        ax_appendix.axis("off")
+        appendix_lines = [
+            f"Appendix — L={payload['settings']['L']}",
+            "",
+            "This section contains supporting/redundant views and metadata.",
+            "Core non-redundant analysis appears earlier in the PDF.",
+        ]
+        ax_appendix.text(0.03, 0.95, "\n".join(appendix_lines), va="top", ha="left", family="monospace", fontsize=12)
+        pdf.savefig(fig_appendix)
+        plt.close(fig_appendix)
 
         filt_label = f"Exact (sector {sector_label})"
         figv, vx0 = plt.subplots(1, 1, figsize=(11.0, 8.5))
@@ -1401,7 +1783,10 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
             f"exact_trajectory_label: {EXACT_LABEL}",
             f"exact_trajectory_method: {EXACT_METHOD}",
             f"fidelity_definition: {payload['settings'].get('fidelity_definition')}",
-            f"fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"energy_t0_exact_gs: {float(e_exact[0]) if e_exact.size > 0 else None}",
+            f"energy_t0_exact_ansatz: {float(e_exact_ans[0]) if e_exact_ans.size > 0 else None}",
+            f"energy_t0_trotter: {float(e_trot[0]) if e_trot.size > 0 else None}",
             f"ground_state_exact_energy (full Hilbert): {payload['ground_state']['exact_energy']:.12f}",
             f"ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
             f"filtered_sector: {payload['ground_state'].get('filtered_sector')}",
@@ -1428,6 +1813,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-times", type=int, default=201)
     parser.add_argument("--suzuki-order", type=int, default=2)
     parser.add_argument("--trotter-steps", type=int, default=64)
+    parser.add_argument(
+        "--fidelity-subspace-energy-tol",
+        type=float,
+        default=1e-8,
+        help=(
+            "Energy tolerance for the filtered-sector ground manifold used in "
+            "subspace fidelity: include states with E <= E0 + tol."
+        ),
+    )
     parser.add_argument("--term-order", choices=["native", "sorted"], default="sorted")
 
     # --- time-dependent drive arguments ---
@@ -1566,21 +1960,30 @@ def main() -> None:
     gs_energy_exact = float(np.real(evals[gs_idx]))
     psi_exact_ground = _normalize_state(np.asarray(evecs[:, gs_idx], dtype=complex).reshape(-1))
 
-    # Sector-filtered exact energy: minimum eigenvalue restricted to the same
-    # half-filled (N_up, N_dn) sector that VQE searches.  This is the
-    # apples-to-apples comparison target for the VQE bar plot.
+    # Sector-filtered exact ground manifold used by subspace-fidelity:
+    # select all filtered-sector eigenstates with E <= E0 + tol.
     _vqe_num_particles = _half_filled_particles(int(args.L))
+    _fidelity_subspace_tol = float(args.fidelity_subspace_energy_tol)
+    if _fidelity_subspace_tol < 0.0:
+        raise ValueError("--fidelity-subspace-energy-tol must be >= 0.")
     try:
-        gs_energy_exact_filtered, psi_exact_ground_filtered = _exact_ground_state_sector_filtered(
+        gs_energy_exact_filtered, fidelity_subspace_basis_v0 = _ground_manifold_basis_sector_filtered(
             hmat=hmat,
             num_sites=int(args.L),
             num_particles=_vqe_num_particles,
             ordering=str(args.ordering),
+            energy_tol=_fidelity_subspace_tol,
         )
+        psi_exact_ground_filtered = _normalize_state(
+            np.asarray(fidelity_subspace_basis_v0[:, 0], dtype=complex).reshape(-1)
+        )
+        fidelity_subspace_dimension = int(fidelity_subspace_basis_v0.shape[1])
     except Exception as _exc_filt:
         _ai_log("hardcoded_filtered_exact_failed", error=str(_exc_filt))
         gs_energy_exact_filtered = None
         psi_exact_ground_filtered = psi_exact_ground
+        fidelity_subspace_basis_v0 = psi_exact_ground.reshape(-1, 1)
+        fidelity_subspace_dimension = 1
 
     try:
         vqe_payload, psi_vqe = _run_hardcoded_vqe(
@@ -1652,6 +2055,8 @@ def main() -> None:
         ordering=str(args.ordering),
         psi0_ansatz_trot=psi0,
         psi0_exact_ref=psi_exact_ground_filtered,
+        fidelity_subspace_basis_v0=fidelity_subspace_basis_v0,
+        fidelity_subspace_energy_tol=_fidelity_subspace_tol,
         hmat=hmat,
         ordered_labels_exyz=ordered_labels_exyz,
         coeff_map_exyz=coeff_map_exyz,
@@ -1691,22 +2096,40 @@ def main() -> None:
         "term_order": str(args.term_order),
         "initial_state_source": str(args.initial_state_source),
         "skip_qpe": bool(args.skip_qpe),
-        "fidelity_definition_short": "Fidelity(t) = |<psi_exact_gs_ref(t)|psi_ansatz_trot(t)>|^2",
-        "fidelity_definition": (
-            "fidelity(t) = |<psi_exact_gs_ref(t)|psi_ansatz_trot(t)>|^2, "
-            "where psi_exact_gs_ref(t) = U_exact(t)|psi_gs(H_static; filtered sector)> and "
-            "psi_ansatz_trot(t) = U_trotter(t)|psi_ansatz(0)>."
+        "fidelity_definition_short": (
+            "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>"
         ),
-        "fidelity_reference_initial_state": "exact_static_ground_state_filtered_sector",
+        "fidelity_definition": (
+            "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, "
+            "where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector "
+            "ground manifold selected by E <= E0 + tol."
+        ),
+        "fidelity_subspace_energy_tol": float(_fidelity_subspace_tol),
+        "fidelity_reference_subspace": {
+            "sector": {
+                "n_up": int(_vqe_num_particles[0]),
+                "n_dn": int(_vqe_num_particles[1]),
+            },
+            "ground_subspace_dimension": int(fidelity_subspace_dimension),
+            "selection_rule": "E <= E0 + tol",
+        },
+        "fidelity_reference_initial_state": "exact_static_ground_manifold_filtered_sector",
         "fidelity_reference_sector": {
             "n_up": int(_vqe_num_particles[0]),
             "n_dn": int(_vqe_num_particles[1]),
         },
         "fidelity_ansatz_initial_state": str(selected_initial_source),
+        "trajectory_branches_definition": (
+            "exact_gs: exact/reference propagation from filtered-sector ground-state init; "
+            "exact_ansatz: exact/reference propagation from ansatz initial state; "
+            "trotter: Suzuki-Trotter propagation from ansatz initial state."
+        ),
         "energy_observable_definition": (
             "energy_static_exact is <psi_exact_gs_ref(t)|H_static|psi_exact_gs_ref(t)>. "
+            "energy_static_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static|psi_exact_ansatz_ref(t)>. "
             "energy_static_trotter is <psi_ansatz_trot(t)|H_static|psi_ansatz_trot(t)>. "
             "energy_total_exact is <psi_exact_gs_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_gs_ref(t)>. "
+            "energy_total_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_ansatz_ref(t)>. "
             "energy_total_trotter is <psi_ansatz_trot(t)|H_static + H_drive(drive_t0 + t)|psi_ansatz_trot(t)>. "
             "When drive is disabled, energy_total_* == energy_static_*. "
             "Drive sampling uses the same drive_t0 convention as propagation."
@@ -1757,6 +2180,7 @@ def main() -> None:
                 "n_up": int(_vqe_num_particles[0]),
                 "n_dn": int(_vqe_num_particles[1]),
             },
+            "ground_subspace_dimension": int(fidelity_subspace_dimension),
             "method": "matrix_diagonalization",
         },
         "vqe": vqe_payload,

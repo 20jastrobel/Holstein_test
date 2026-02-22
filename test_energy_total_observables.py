@@ -98,11 +98,22 @@ def _run_short_trajectory(
         dtype=complex,
     ).reshape(-1)
     psi0 = hp._normalize_state(psi0)
+    _e0, basis_v0 = hp._ground_manifold_basis_sector_filtered(
+        hmat=hmat,
+        num_sites=2,
+        num_particles=num_particles,
+        ordering="blocked",
+        energy_tol=1e-8,
+    )
+    psi_exact_ref = hp._normalize_state(np.asarray(basis_v0[:, 0], dtype=complex).reshape(-1))
 
     rows, _ = hp._simulate_trajectory(
         num_sites=2,
         ordering="blocked",
-        psi0=psi0,
+        psi0_ansatz_trot=psi0,
+        psi0_exact_ref=psi_exact_ref,
+        fidelity_subspace_basis_v0=basis_v0,
+        fidelity_subspace_energy_tol=1e-8,
         hmat=hmat,
         ordered_labels_exyz=ordered,
         coeff_map_exyz=coeff_map,

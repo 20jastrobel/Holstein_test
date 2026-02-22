@@ -19,8 +19,9 @@ can be compared head-to-head with automated metric extraction.
 - Configurable lattice size L, hopping t, interaction U, local potential dv
 - Periodic or open boundary conditions; blocked or interleaved qubit ordering
 - VQE ground-state solver with multi-restart optimisation
-- Second-order Suzuki–Trotter time evolution with fidelity tracking
+- Second-order Suzuki–Trotter time evolution with subspace-fidelity tracking
 - Quantum Phase Estimation (QPE) energy extraction
+- JSON `trajectory[].fidelity` stores subspace fidelity against the filtered-sector ground manifold (`E <= E0 + tol`, default `tol=1e-8`)
 
 ### Time-Dependent Drive
 All three pipelines support a **time-dependent onsite density drive**:

@@ -260,6 +260,9 @@ class TestParseDriveDefaults(unittest.TestCase):
     def test_drive_t0_default(self) -> None:
         self.assertAlmostEqual(self.args.drive_t0, 0.0)
 
+    def test_fidelity_subspace_energy_tol_default(self) -> None:
+        self.assertAlmostEqual(float(self.args.fidelity_subspace_energy_tol), 1e-8)
+
     def test_report_verbose_default_false(self) -> None:
         self.assertFalse(self.args.report_verbose)
 

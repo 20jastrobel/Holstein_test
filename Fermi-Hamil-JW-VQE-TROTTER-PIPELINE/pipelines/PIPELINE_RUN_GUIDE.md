@@ -15,6 +15,7 @@ Run from the sub-repo root (`Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/`).
 | `pipelines/compare_hardcoded_vs_qiskit_pipeline.py` | Orchestrator — runs both, compares metrics, writes comparison PDFs |
 | `pipelines/manual_compare_jsons.py` | Standalone JSON-vs-JSON consistency checker |
 | `pipelines/regression_L2_L3.sh` | Automated L=2/L=3 regression harness |
+| `pipelines/run_scaling_preset_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
 
 ---
 
@@ -54,6 +55,7 @@ If you want apples-to-apples hardcoded vs Qiskit from each ansatz, use `--initia
 | `--num-times` | int | `201` | Number of output time points |
 | `--suzuki-order` | int | `2` | Suzuki–Trotter product-formula order |
 | `--trotter-steps` | int | `64` | Number of Trotter steps |
+| `--fidelity-subspace-energy-tol` | float | `1e-8` | Ground-manifold selection tolerance for trajectory subspace fidelity: include filtered-sector states with `E <= E0 + tol`. |
 | `--term-order` | choice | `sorted` | Term ordering for Trotter product. Hardcoded: `native\|sorted`. Qiskit: `qiskit\|sorted` |
 
 ### Time-Dependent Drive Parameters (all three pipelines)
@@ -157,6 +159,7 @@ Defaults:
 - `--t 1.0 --u 4.0 --dv 0.0`
 - `--boundary periodic --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
+- `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`native|sorted`)
 - `--vqe-reps 2 --vqe-restarts 1 --vqe-seed 7 --vqe-maxiter 120`
 - `--qpe-eval-qubits 6 --qpe-shots 1024 --qpe-seed 11`
@@ -174,6 +177,7 @@ Defaults:
 - `--t 1.0 --u 4.0 --dv 0.0`
 - `--boundary periodic --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
+- `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`qiskit|sorted`)
 - `--vqe-reps 2 --vqe-restarts 3 --vqe-seed 7 --vqe-maxiter 120`
 - `--qpe-eval-qubits 6 --qpe-shots 1024 --qpe-seed 11`
@@ -193,6 +197,7 @@ Defaults:
 - `--t 1.0 --u 4.0 --dv 0.0`
 - `--boundary periodic --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
+- `--fidelity-subspace-energy-tol 1e-8`
 - `--hardcoded-vqe-reps 2 --hardcoded-vqe-restarts 3 --hardcoded-vqe-seed 7 --hardcoded-vqe-maxiter 600`
 - `--qiskit-vqe-reps 2 --qiskit-vqe-restarts 3 --qiskit-vqe-seed 7 --qiskit-vqe-maxiter 600`
 - `--qpe-eval-qubits 5 --qpe-shots 256 --qpe-seed 11`
@@ -307,9 +312,61 @@ python pipelines/manual_compare_jsons.py \
   --metrics artifacts/json/HvQ_L3_static_t1.0_U4.0_S64_metrics.json
 ```
 
+### 10) Run the L=2..6 scaling preset with VQE error gate
+
+```bash
+bash pipelines/run_scaling_preset_L2_L6.sh
+```
+
+Defaults in this runner:
+
+- Physics: `t=1.0, u=4.0, dv=0.0, periodic, blocked`.
+- Drive: enabled with `A=0.5, omega=2.0, tbar=3.0, phi=0.0, pattern=staggered`.
+- Error gate: `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-2`.
+- L=2..5 budget guard: `10` hours (`L25_BUDGET_HOURS`).
+- L6 run: enabled by default (`RUN_L6=1`).
+- PDFs: skipped by default (`SKIP_PDF=1`) for production timing runs.
+
+Useful overrides:
+
+```bash
+L25_BUDGET_HOURS=10 RUN_L6=0 bash pipelines/run_scaling_preset_L2_L6.sh
+```
+
+```bash
+ERROR_THRESHOLD=5e-3 SKIP_PDF=0 bash pipelines/run_scaling_preset_L2_L6.sh
+```
+
+Artifacts are written to:
+
+- `artifacts/scaling_preset_L2_L6_<timestamp>/json`
+- `artifacts/scaling_preset_L2_L6_<timestamp>/logs/summary.tsv`
+- `artifacts/scaling_preset_L2_L6_<timestamp>/logs/best.tsv`
+
 ---
 
-## Trajectory Energy Observables
+## Trajectory Fidelity and Energy Observables
+
+### Subspace Fidelity Semantics
+
+`trajectory[].fidelity` is the **subspace fidelity**:
+
+`F_sub(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>`
+
+where `P_exact_gs_subspace(t)` projects onto the time-evolved filtered-sector
+ground manifold selected by:
+
+`E <= E0 + tol`, with `tol = --fidelity-subspace-energy-tol` (default `1e-8`).
+
+The JSON `settings` block records:
+
+- `fidelity_definition_short`
+- `fidelity_definition`
+- `fidelity_subspace_energy_tol`
+- `fidelity_reference_subspace`:
+  - `sector = {n_up, n_dn}`
+  - `ground_subspace_dimension`
+  - `selection_rule = "E <= E0 + tol"`
 
 Each trajectory row in the JSON output contains two families of energy fields:
 
@@ -375,7 +432,7 @@ Prefixes: **H** = hardcoded, **Q** = Qiskit, **HvQ** = comparison, **amp** = amp
 |------|-------------|
 | `json/H_{tag}.json` | Hardcoded pipeline full output |
 | `json/Q_{tag}.json` | Qiskit pipeline full output |
-| `json/HvQ_{tag}_metrics.json` | Per-L comparison metrics (fidelity, energy, VQE, QPE deltas) |
+| `json/HvQ_{tag}_metrics.json` | Per-L comparison metrics (subspace fidelity, energy, VQE, QPE deltas) |
 | `json/HvQ_summary.json` | Summary across all L values |
 | `pdf/HvQ_bundle.pdf` | Multi-page comparison bundle PDF |
 | `pdf/HvQ_{tag}.pdf` | Per-L standalone comparison PDF (with `--with-per-l-pdfs`) |
@@ -399,6 +456,8 @@ Prefixes: **H** = hardcoded, **Q** = Qiskit, **HvQ** = comparison, **amp** = amp
 ### Metrics JSON schema (per-L comparison)
 
 The `HvQ_{tag}_metrics.json` file includes `trajectory_deltas` with per-observable HC−QK statistics:
+`trajectory_deltas.fidelity` keeps its key name for compatibility and stores
+**subspace fidelity** deltas.
 
 ```json
 {

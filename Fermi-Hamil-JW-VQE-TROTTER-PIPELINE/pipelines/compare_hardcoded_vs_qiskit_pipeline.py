@@ -145,8 +145,8 @@ def _delta_metric_definition_text() -> str:
         "Δn_up0(t)  = |n_up0_hc(t) - n_up0_qk(t)|\n"
         "Δn_dn0(t)  = |n_dn0_hc(t) - n_dn0_qk(t)|\n"
         "ΔD(t)      = |D_hc(t) - D_qk(t)|\n"
-        "F_pipeline(t) is the pipeline's stored trajectory fidelity value "
-        "(as computed internally vs that pipeline's exact evolution)."
+        "F_pipeline(t) is the pipeline's stored trajectory subspace-fidelity "
+        "value (as computed internally against the exact ground-manifold projector)."
     )
 
 
@@ -521,12 +521,12 @@ def _write_comparison_pdf(
         # --- Dedicated info page (no overlap with plots) ---
         _render_info_page(pdf, _info_text, title=f"L={L} Run Settings & Metrics Summary")
 
-        # --- Page A: Fidelity + Energy (1x2) ---
+        # --- Page A: Subspace Fidelity + Energy (1x2) ---
         figA, (axF, axE) = plt.subplots(1, 2, figsize=(11.0, 8.5), sharex=True)
 
-        axF.plot(times, q("fidelity"), label="Qiskit fidelity", color="#0b3d91", marker="o", markersize=3, markevery=markevery)
-        axF.plot(times, h("fidelity"), label="Hardcoded fidelity", color="#e15759", linestyle="--", marker="^", markersize=3, markevery=markevery)
-        axF.set_title("Fidelity")
+        axF.plot(times, q("fidelity"), label="Qiskit subspace fidelity", color="#0b3d91", marker="o", markersize=3, markevery=markevery)
+        axF.plot(times, h("fidelity"), label="Hardcoded subspace fidelity", color="#e15759", linestyle="--", marker="^", markersize=3, markevery=markevery)
+        axF.set_title("Subspace Fidelity")
         axF.set_xlabel("Time")
         axF.grid(alpha=0.25)
         axF.legend(fontsize=8)
@@ -556,7 +556,7 @@ def _write_comparison_pdf(
         axE.legend(fontsize=7)
         _autozoom(axE, h("energy_static_trotter"), q("energy_static_trotter"), h("energy_static_exact"), q("energy_static_exact"))
 
-        figA.suptitle(f"Pipeline Comparison L={L}: Hardcoded vs Qiskit (Fidelity & Energy)", fontsize=13)
+        figA.suptitle(f"Pipeline Comparison L={L}: Hardcoded vs Qiskit (Subspace Fidelity & Energy)", fontsize=13)
         figA.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
         pdf.savefig(figA)
         plt.close(figA)
@@ -634,7 +634,7 @@ def _write_comparison_pdf(
         bx10, bx11 = axes2[1, 0], axes2[1, 1]
 
         bx00.plot(times, np.abs(h("fidelity") - q("fidelity")), color="#1f77b4")
-        bx00.set_title("|ΔF(t)|")
+        bx00.set_title("|ΔF_sub(t)|")
         bx00.set_xlabel("Time")
         bx00.grid(alpha=0.25)
 
@@ -673,7 +673,7 @@ def _write_comparison_pdf(
             *_delta_metric_definition_text().splitlines(),
             "",
             f"ground_state_energy_abs_delta = {_fp(metrics['ground_state_energy']['abs_delta'])}",
-            f"fidelity max/mean/final = {_fp(td['fidelity']['max_abs_delta'])} / {_fp(td['fidelity']['mean_abs_delta'])} / {_fp(td['fidelity']['final_abs_delta'])}",
+            f"subspace_fidelity max/mean/final = {_fp(td['fidelity']['max_abs_delta'])} / {_fp(td['fidelity']['mean_abs_delta'])} / {_fp(td['fidelity']['final_abs_delta'])}",
             f"energy_static_trotter max/mean/final = {_fp(td['energy_static_trotter']['max_abs_delta'])} / {_fp(td['energy_static_trotter']['mean_abs_delta'])} / {_fp(td['energy_static_trotter']['final_abs_delta'])}",
             f"n_up_site0_trotter max/mean/final = {_fp(td['n_up_site0_trotter']['max_abs_delta'])} / {_fp(td['n_up_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_up_site0_trotter']['final_abs_delta'])}",
             f"n_dn_site0_trotter max/mean/final = {_fp(td['n_dn_site0_trotter']['max_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['final_abs_delta'])}",
@@ -927,12 +927,12 @@ def _write_comparison_pages_into_pdf(
     # --- Dedicated info page (no overlap with plots) ---
     _render_info_page(pdf, _info_text, title=f"Bundle L={L}: Run Settings & Metrics Summary")
 
-    # --- Page A: Fidelity + Energy (1x2) ---
+    # --- Page A: Subspace Fidelity + Energy (1x2) ---
     figA, (axF, axE) = plt.subplots(1, 2, figsize=(11.0, 8.5), sharex=True)
 
-    axF.plot(times, q("fidelity"), label="Qiskit fidelity", color="#0b3d91", marker="o", markersize=3, markevery=markevery)
-    axF.plot(times, h("fidelity"), label="Hardcoded fidelity", color="#e15759", linestyle="--", marker="^", markersize=3, markevery=markevery)
-    axF.set_title(f"L={L} Fidelity")
+    axF.plot(times, q("fidelity"), label="Qiskit subspace fidelity", color="#0b3d91", marker="o", markersize=3, markevery=markevery)
+    axF.plot(times, h("fidelity"), label="Hardcoded subspace fidelity", color="#e15759", linestyle="--", marker="^", markersize=3, markevery=markevery)
+    axF.set_title(f"L={L} Subspace Fidelity")
     axF.set_xlabel("Time")
     axF.grid(alpha=0.25)
     axF.legend(fontsize=8)
@@ -948,7 +948,7 @@ def _write_comparison_pages_into_pdf(
     axE.legend(fontsize=8)
     _autozoom(axE, h("energy_static_trotter"), q("energy_static_trotter"), h("energy_static_exact"), q("energy_static_exact"))
 
-    figA.suptitle(f"Bundle Page: L={L} Fidelity & Energy", fontsize=14)
+    figA.suptitle(f"Bundle Page: L={L} Subspace Fidelity & Energy", fontsize=14)
     figA.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
     pdf.savefig(figA)
     plt.close(figA)
@@ -1026,7 +1026,7 @@ def _write_comparison_pages_into_pdf(
     bx10, bx11 = axes2[1, 0], axes2[1, 1]
 
     bx00.plot(times, np.abs(h("fidelity") - q("fidelity")), color="#1f77b4")
-    bx00.set_title("|ΔF(t)|")
+    bx00.set_title("|ΔF_sub(t)|")
     bx00.set_xlabel("Time")
     bx00.grid(alpha=0.25)
 
@@ -1070,7 +1070,7 @@ def _write_comparison_pages_into_pdf(
         *_delta_metric_definition_text().splitlines(),
         "",
         f"ground_state_energy_abs_delta = {_fp(metrics['ground_state_energy']['abs_delta'])}",
-        f"fidelity max/mean/final = {_fp(td['fidelity']['max_abs_delta'])} / {_fp(td['fidelity']['mean_abs_delta'])} / {_fp(td['fidelity']['final_abs_delta'])}",
+        f"subspace_fidelity max/mean/final = {_fp(td['fidelity']['max_abs_delta'])} / {_fp(td['fidelity']['mean_abs_delta'])} / {_fp(td['fidelity']['final_abs_delta'])}",
         f"energy_static_trotter max/mean/final = {_fp(td['energy_static_trotter']['max_abs_delta'])} / {_fp(td['energy_static_trotter']['mean_abs_delta'])} / {_fp(td['energy_static_trotter']['final_abs_delta'])}",
         f"n_up_site0_trotter max/mean/final = {_fp(td['n_up_site0_trotter']['max_abs_delta'])} / {_fp(td['n_up_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_up_site0_trotter']['final_abs_delta'])}",
         f"n_dn_site0_trotter max/mean/final = {_fp(td['n_dn_site0_trotter']['max_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['final_abs_delta'])}",
@@ -1485,6 +1485,7 @@ def _run_amplitude_comparison_for_l(
             "--num-times", str(args.num_times),
             "--suzuki-order", str(args.suzuki_order),
             "--trotter-steps", str(args.trotter_steps),
+            "--fidelity-subspace-energy-tol", str(args.fidelity_subspace_energy_tol),
             "--term-order", "sorted",
             "--vqe-reps", str(args.hardcoded_vqe_reps),
             "--vqe-restarts", str(args.hardcoded_vqe_restarts),
@@ -1620,7 +1621,7 @@ def _write_amplitude_comparison_pdf(
     show_staggered = bool(str(args.drive_pattern).strip().lower() == "staggered")
 
     overlay_observables: list[tuple[str, str]] = [
-        ("Fidelity", "fidelity"),
+        ("Subspace Fidelity", "fidelity"),
         ("Energy E0(t)=<H0>", "energy"),
         ("Site-0 Density <n0>", "density_site0"),
         ("Double Occupancy / site", "doublon"),
@@ -1651,9 +1652,9 @@ def _write_amplitude_comparison_pdf(
         [
             "Safe-test (no-drive vs A0)",
             (
-                f"HC |ΔF|={_fmt_metric(float(safe['hc']['max_fidelity_delta']))}, "
+                f"HC |ΔF_sub|={_fmt_metric(float(safe['hc']['max_fidelity_delta']))}, "
                 f"|ΔE|={_fmt_metric(float(safe['hc']['max_energy_delta']))}\n"
-                f"QK |ΔF|={_fmt_metric(float(safe['qk']['max_fidelity_delta']))}, "
+                f"QK |ΔF_sub|={_fmt_metric(float(safe['qk']['max_fidelity_delta']))}, "
                 f"|ΔE|={_fmt_metric(float(safe['qk']['max_energy_delta']))}"
             ),
             "-",
@@ -1804,8 +1805,8 @@ def _write_amplitude_comparison_pdf(
             qk_ene_delta = _safe_delta_series(nd_qk_rows, a0_qk_rows, "energy_static_trotter")
 
             for ax, delta, title in [
-                (axes_st[0, 0], hc_fid_delta, f"HC |ΔFidelity| (no-drive vs A0={A0})"),
-                (axes_st[0, 1], qk_fid_delta, f"QK |ΔFidelity| (no-drive vs A0={A0})"),
+                (axes_st[0, 0], hc_fid_delta, f"HC |ΔSubspace Fidelity| (no-drive vs A0={A0})"),
+                (axes_st[0, 1], qk_fid_delta, f"QK |ΔSubspace Fidelity| (no-drive vs A0={A0})"),
                 (axes_st[1, 0], hc_ene_delta, f"HC |ΔE_trot| (no-drive vs A0={A0})"),
                 (axes_st[1, 1], qk_ene_delta, f"QK |ΔE_trot| (no-drive vs A0={A0})"),
             ]:
@@ -1832,9 +1833,9 @@ def _write_amplitude_comparison_pdf(
             fig_st.suptitle(
                 f"Safe-test Detail L={L}: {'PASSED' if safe['passed'] else 'FAILED'}  "
                 f"(reason: {reason})\n"
-                f"HC max|ΔF|={safe['hc']['max_fidelity_delta']:.2e}  "
+                f"HC max|ΔF_sub|={safe['hc']['max_fidelity_delta']:.2e}  "
                 f"HC max|ΔE|={safe['hc']['max_energy_delta']:.2e}  "
-                f"QK max|ΔF|={safe['qk']['max_fidelity_delta']:.2e}  "
+                f"QK max|ΔF_sub|={safe['qk']['max_fidelity_delta']:.2e}  "
                 f"QK max|ΔE|={safe['qk']['max_energy_delta']:.2e}",
                 fontsize=10,
             )
@@ -1958,7 +1959,7 @@ def _write_amplitude_comparison_pdf(
             if handles:
                 ax.legend(fontsize=6, loc="best")
 
-        _plot_combo(ax_list[0], "fidelity", title="Fidelity", ylabel="Fidelity", include_exact=False)
+        _plot_combo(ax_list[0], "fidelity", title="Subspace Fidelity", ylabel="Subspace Fidelity", include_exact=False)
         _plot_combo(ax_list[1], "energy", title="Energy (E0(t)=<H0>)", ylabel="E0(t)", include_exact=True)
         matched_kind = "staggered" if show_staggered else "density_site0"
         matched_title = "Staggered Imbalance O_stag" if show_staggered else "Site-0 Density <n0>"
@@ -2138,6 +2139,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-times", type=int, default=201)
     parser.add_argument("--suzuki-order", type=int, default=2)
     parser.add_argument("--trotter-steps", type=int, default=64)
+    parser.add_argument(
+        "--fidelity-subspace-energy-tol",
+        type=float,
+        default=1e-8,
+        help=(
+            "Energy tolerance for filtered-sector ground-manifold selection used by "
+            "trajectory subspace fidelity (E <= E0 + tol). Forwarded to both pipelines."
+        ),
+    )
 
     parser.add_argument("--hardcoded-vqe-reps", type=int, default=2)
     parser.add_argument("--hardcoded-vqe-restarts", type=int, default=3)
@@ -2338,6 +2348,7 @@ def main() -> None:
                 "--num-times", str(args.num_times),
                 "--suzuki-order", str(args.suzuki_order),
                 "--trotter-steps", str(args.trotter_steps),
+                "--fidelity-subspace-energy-tol", str(args.fidelity_subspace_energy_tol),
                 "--term-order", "sorted",
                 "--vqe-reps", str(args.hardcoded_vqe_reps),
                 "--vqe-restarts", str(args.hardcoded_vqe_restarts),
@@ -2374,6 +2385,7 @@ def main() -> None:
                 "--num-times", str(args.num_times),
                 "--suzuki-order", str(args.suzuki_order),
                 "--trotter-steps", str(args.trotter_steps),
+                "--fidelity-subspace-energy-tol", str(args.fidelity_subspace_energy_tol),
                 "--term-order", "sorted",
                 "--vqe-reps", str(args.qiskit_vqe_reps),
                 "--vqe-restarts", str(args.qiskit_vqe_restarts),

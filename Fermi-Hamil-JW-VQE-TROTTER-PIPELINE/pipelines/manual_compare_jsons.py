@@ -277,8 +277,9 @@ def _print_report(
     print("TRAJECTORY DELTAS")
     for key in TARGET_METRICS:
         row = metrics["trajectory_deltas"][key]
+        label = "subspace_fidelity" if key == "fidelity" else key
         print(
-            f"  {key}: max={_fp(row['max_abs_delta'])} mean={_fp(row['mean_abs_delta'])} final={_fp(row['final_abs_delta'])}"
+            f"  {label}: max={_fp(row['max_abs_delta'])} mean={_fp(row['mean_abs_delta'])} final={_fp(row['final_abs_delta'])}"
         )
     print("")
 

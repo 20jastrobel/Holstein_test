@@ -99,6 +99,98 @@ def _half_filled_particles(num_sites: int) -> tuple[int, int]:
     return ((num_sites + 1) // 2, num_sites // 2)
 
 
+def _sector_basis_indices(
+    num_sites: int,
+    num_particles: tuple[int, int],
+    ordering: str,
+) -> np.ndarray:
+    nq = 2 * int(num_sites)
+    dim = 1 << nq
+    n_up_want, n_dn_want = int(num_particles[0]), int(num_particles[1])
+    norm_ordering = str(ordering).strip().lower()
+
+    idx_all = np.arange(dim, dtype=np.int64)
+
+    if norm_ordering == "blocked":
+        up_mask = (1 << num_sites) - 1
+        dn_mask = up_mask << num_sites
+        n_up_arr = np.array([bin(int(i) & int(up_mask)).count("1") for i in idx_all], dtype=np.int32)
+        n_dn_arr = np.array([bin(int(i) & int(dn_mask)).count("1") for i in idx_all], dtype=np.int32)
+    else:
+        even_mask = int(sum(1 << (2 * q) for q in range(num_sites)))
+        odd_mask = int(sum(1 << (2 * q + 1) for q in range(num_sites)))
+        n_up_arr = np.array([bin(int(i) & even_mask).count("1") for i in idx_all], dtype=np.int32)
+        n_dn_arr = np.array([bin(int(i) & odd_mask).count("1") for i in idx_all], dtype=np.int32)
+
+    sector_indices = np.where((n_up_arr == n_up_want) & (n_dn_arr == n_dn_want))[0]
+    if sector_indices.size == 0:
+        raise ValueError(
+            f"No basis states found for sector (n_up={n_up_want}, n_dn={n_dn_want}) "
+            f"with ordering='{ordering}', num_sites={num_sites}."
+        )
+    return sector_indices
+
+
+def _ground_manifold_basis_sector_filtered(
+    hmat: np.ndarray,
+    *,
+    num_sites: int,
+    num_particles: tuple[int, int],
+    ordering: str,
+    energy_tol: float,
+) -> tuple[float, np.ndarray]:
+    """Return (ground_energy, embedded_ground_manifold_basis) in a fixed sector."""
+    tol = float(energy_tol)
+    if tol < 0.0:
+        raise ValueError(f"fidelity_subspace_energy_tol must be >= 0, got {tol}.")
+
+    sector_indices = _sector_basis_indices(num_sites, num_particles, ordering)
+    h_sector = hmat[np.ix_(sector_indices, sector_indices)]
+    evals_sector, evecs_sector = np.linalg.eigh(h_sector)
+    evals_real = np.real(evals_sector)
+    gs_energy = float(np.min(evals_real))
+    mask = evals_real <= (gs_energy + tol)
+    if not bool(np.any(mask)):
+        mask[int(np.argmin(evals_real))] = True
+
+    basis_sector = np.asarray(evecs_sector[:, mask], dtype=complex)
+    basis_full = np.zeros((hmat.shape[0], basis_sector.shape[1]), dtype=complex)
+    basis_full[sector_indices, :] = basis_sector
+    basis_full, _ = np.linalg.qr(basis_full)
+    if basis_full.shape[1] == 0:
+        raise RuntimeError("Filtered ground manifold basis is empty.")
+    return gs_energy, basis_full
+
+
+def _orthonormalize_basis_columns(
+    basis: np.ndarray,
+    *,
+    rank_tol: float = 1e-12,
+) -> np.ndarray:
+    if basis.ndim != 2 or basis.shape[1] == 0:
+        raise ValueError("Basis matrix must have shape (dim, k) with k>=1.")
+    qmat, rmat = np.linalg.qr(basis)
+    diag = np.abs(np.diag(rmat))
+    rank = int(np.sum(diag > float(rank_tol)))
+    if rank <= 0:
+        raise RuntimeError("Ground-manifold basis lost rank during orthonormalization.")
+    return qmat[:, :rank]
+
+
+def _projector_fidelity_from_basis(
+    basis_orthonormal: np.ndarray,
+    psi: np.ndarray,
+) -> float:
+    amps = np.conjugate(basis_orthonormal).T @ psi
+    raw = np.vdot(amps, amps)
+    val = float(np.real(raw))
+    if val < 0.0 and val > -1e-12:
+        val = 0.0
+    if val > 1.0 and val < 1.0 + 1e-12:
+        val = 1.0
+    return float(min(1.0, max(0.0, val)))
+
+
 def _interleaved_to_blocked_permutation(n_sites: int) -> list[int]:
     return [idx for site in range(n_sites) for idx in (site, n_sites + site)]
 
@@ -1047,6 +1139,8 @@ def _simulate_trajectory(
     num_sites: int,
     ordering: str,
     psi0: np.ndarray,
+    fidelity_subspace_basis_v0: np.ndarray,
+    fidelity_subspace_energy_tol: float,
     hmat: np.ndarray,
     trotter_hamiltonian_qop: SparsePauliOp,
     ordered_labels_exyz: list[str] | None = None,
@@ -1088,6 +1182,12 @@ def _simulate_trajectory(
     n_times = int(times.size)
     stride = max(1, n_times // 20)
     t0 = time.perf_counter()
+    basis_v0 = np.asarray(fidelity_subspace_basis_v0, dtype=complex)
+    if basis_v0.ndim != 2 or basis_v0.shape[0] != psi0.size:
+        raise ValueError("fidelity_subspace_basis_v0 must have shape (dim, k) with matching dim.")
+    if basis_v0.shape[1] <= 0:
+        raise ValueError("fidelity_subspace_basis_v0 must contain at least one basis vector.")
+    static_basis_eig = evecs_dag @ basis_v0
     _ai_log(
         "qiskit_trajectory_start",
         L=int(num_sites),
@@ -1098,6 +1198,9 @@ def _simulate_trajectory(
         exact_steps_multiplier=int(exact_steps_multiplier),
         suzuki_order=int(suzuki_order),
         drive_enabled=has_drive,
+        ground_subspace_dimension=int(basis_v0.shape[1]),
+        fidelity_subspace_energy_tol=float(fidelity_subspace_energy_tol),
+        fidelity_selection_rule="E <= E0 + tol",
     )
 
     rows: list[dict[str, float]] = []
@@ -1181,7 +1284,31 @@ def _simulate_trajectory(
                 norm_drift=norm_drift,
             )
 
-        fidelity = float(abs(np.vdot(psi_exact, psi_trot)) ** 2)
+        if not has_drive:
+            phases = np.exp(-1j * evals * t).reshape(-1, 1)
+            basis_t = evecs @ (phases * static_basis_eig)
+        else:
+            basis_t = np.zeros((psi_trot.size, basis_v0.shape[1]), dtype=complex)
+            for col in range(basis_v0.shape[1]):
+                basis_t[:, col] = _evolve_piecewise_exact(
+                    psi0=basis_v0[:, col],
+                    hmat_static=hmat,
+                    drive_coeff_provider_exyz=drive_coeff_provider_exyz,
+                    time_value=t,
+                    trotter_steps=reference_steps,
+                    t0=float(drive_t0),
+                    time_sampling=str(drive_time_sampling),
+                )
+
+        basis_t_orth = _orthonormalize_basis_columns(basis_t)
+        if basis_t_orth.shape[1] < basis_v0.shape[1]:
+            _ai_log(
+                "qiskit_fidelity_subspace_rank_reduced",
+                time=float(t),
+                original_dimension=int(basis_v0.shape[1]),
+                effective_dimension=int(basis_t_orth.shape[1]),
+            )
+        fidelity = _projector_fidelity_from_basis(basis_t_orth, psi_trot)
         n_up_exact_site, n_dn_exact_site, doublon_exact = _site_resolved_number_observables(
             psi_exact,
             num_sites,
@@ -1247,7 +1374,7 @@ def _simulate_trajectory(
                 total_steps=n_times,
                 frac=round(float((idx + 1) / n_times), 6),
                 time=float(t),
-                fidelity=float(fidelity),
+                subspace_fidelity=float(fidelity),
                 elapsed_sec=round(time.perf_counter() - t0, 6),
             )
 
@@ -1255,7 +1382,7 @@ def _simulate_trajectory(
         "qiskit_trajectory_done",
         total_steps=n_times,
         elapsed_sec=round(time.perf_counter() - t0, 6),
-        final_fidelity=float(rows[-1]["fidelity"]) if rows else None,
+        final_subspace_fidelity=float(rows[-1]["fidelity"]) if rows else None,
         final_energy_static_trotter=float(rows[-1]["energy_static_trotter"]) if rows else None,
     )
 
@@ -1320,7 +1447,11 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ax10, ax11 = axes[1, 0], axes[1, 1]
 
         ax00.plot(times, fid, color="#0b3d91", marker="o", markersize=3, markevery=markevery)
-        ax00.set_title(f"Fidelity(t) = |<{EXACT_LABEL}|Trotter>|^2")
+        fid_title = payload.get("settings", {}).get(
+            "fidelity_definition_short",
+            "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
+        )
+        ax00.set_title(str(fid_title))
         ax00.grid(alpha=0.25)
 
         ax01.plot(times, e_exact, label=f"{EXACT_LABEL} (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
@@ -1397,6 +1528,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
             f"settings: {json.dumps(payload['settings'])}",
             f"exact_trajectory_label: {EXACT_LABEL}",
             f"exact_trajectory_method: {EXACT_METHOD}",
+            f"fidelity_definition: {payload['settings'].get('fidelity_definition')}",
+            f"subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
             f"ground_state_exact_energy (full Hilbert): {payload['ground_state']['exact_energy']:.12f}",
             f"ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
             f"filtered_sector: {payload['ground_state'].get('filtered_sector')}",
@@ -1423,6 +1556,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-times", type=int, default=201)
     parser.add_argument("--suzuki-order", type=int, default=2)
     parser.add_argument("--trotter-steps", type=int, default=64)
+    parser.add_argument(
+        "--fidelity-subspace-energy-tol",
+        type=float,
+        default=1e-8,
+        help=(
+            "Energy tolerance for the filtered-sector ground manifold used in "
+            "subspace fidelity: include states with E <= E0 + tol."
+        ),
+    )
     parser.add_argument("--term-order", choices=["qiskit", "sorted"], default="sorted")
 
     # --- time-dependent drive arguments ---
@@ -1560,6 +1702,24 @@ def main() -> None:
     gs_idx = int(np.argmin(evals))
     gs_energy_exact = float(np.real(evals[gs_idx]))
     psi_exact_ground = _normalize_state(np.asarray(evecs[:, gs_idx], dtype=complex).reshape(-1))
+    num_particles = _half_filled_particles(int(args.L))
+    _fidelity_subspace_tol = float(args.fidelity_subspace_energy_tol)
+    if _fidelity_subspace_tol < 0.0:
+        raise ValueError("--fidelity-subspace-energy-tol must be >= 0.")
+    try:
+        gs_energy_exact_filtered, fidelity_subspace_basis_v0 = _ground_manifold_basis_sector_filtered(
+            hmat=hmat,
+            num_sites=int(args.L),
+            num_particles=num_particles,
+            ordering=str(args.ordering),
+            energy_tol=_fidelity_subspace_tol,
+        )
+        fidelity_subspace_dimension = int(fidelity_subspace_basis_v0.shape[1])
+    except Exception as _exc_filt:
+        _ai_log("qiskit_filtered_exact_failed", error=str(_exc_filt))
+        gs_energy_exact_filtered = None
+        fidelity_subspace_basis_v0 = psi_exact_ground.reshape(-1, 1)
+        fidelity_subspace_dimension = 1
 
     vqe_payload, psi_vqe = _run_qiskit_vqe(
         num_sites=int(args.L),
@@ -1577,7 +1737,6 @@ def main() -> None:
         optimizer_name=str(args.vqe_optimizer),
     )
 
-    num_particles = _half_filled_particles(int(args.L))
     psi_hf = _normalize_state(
         np.asarray(
             hartree_fock_statevector(int(args.L), num_particles, indexing=str(args.ordering)),
@@ -1625,6 +1784,8 @@ def main() -> None:
         num_sites=int(args.L),
         ordering=str(args.ordering),
         psi0=psi0,
+        fidelity_subspace_basis_v0=fidelity_subspace_basis_v0,
+        fidelity_subspace_energy_tol=_fidelity_subspace_tol,
         hmat=hmat,
         trotter_hamiltonian_qop=trotter_qop_ordered,
         ordered_labels_exyz=ordered_labels_exyz,
@@ -1665,6 +1826,29 @@ def main() -> None:
         "term_order": str(args.term_order),
         "initial_state_source": str(init_source),
         "skip_qpe": bool(args.skip_qpe),
+        "fidelity_definition_short": (
+            "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>"
+        ),
+        "fidelity_definition": (
+            "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, "
+            "where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector "
+            "ground manifold selected by E <= E0 + tol."
+        ),
+        "fidelity_subspace_energy_tol": float(_fidelity_subspace_tol),
+        "fidelity_reference_subspace": {
+            "sector": {
+                "n_up": int(num_particles[0]),
+                "n_dn": int(num_particles[1]),
+            },
+            "ground_subspace_dimension": int(fidelity_subspace_dimension),
+            "selection_rule": "E <= E0 + tol",
+        },
+        "fidelity_reference_initial_state": "exact_static_ground_manifold_filtered_sector",
+        "fidelity_reference_sector": {
+            "n_up": int(num_particles[0]),
+            "n_dn": int(num_particles[1]),
+        },
+        "fidelity_ansatz_initial_state": str(init_source),
         "energy_observable_definition": (
             "energy_static_* measures <psi|H_static|psi>. "
             "energy_total_* measures <psi|H_static + H_drive(drive_t0 + t)|psi>. "
@@ -1714,8 +1898,16 @@ def main() -> None:
         },
         "ground_state": {
             "exact_energy": float(gs_energy_exact),
-            "exact_energy_filtered": vqe_payload.get("exact_filtered_energy"),
-            "filtered_sector": vqe_payload.get("num_particles"),
+            "exact_energy_filtered": (
+                float(gs_energy_exact_filtered)
+                if gs_energy_exact_filtered is not None
+                else vqe_payload.get("exact_filtered_energy")
+            ),
+            "filtered_sector": {
+                "n_up": int(num_particles[0]),
+                "n_dn": int(num_particles[1]),
+            },
+            "ground_subspace_dimension": int(fidelity_subspace_dimension),
             "method": "matrix_diagonalization",
         },
         "vqe": vqe_payload,

@@ -209,10 +209,10 @@ fi
 #
 # Physics sanity gate (applied to the hardcoded JSON only — independent
 # of cross-pipeline comparison):
-#   1. Final-time fidelity (Trotter vs piecewise-exact) >= 0.90
+#   1. Final-time subspace fidelity (Trotter vs exact ground-manifold projector) >= 0.90
 #   2. max(norm_before_renorm) over trajectory <= 1.0 + 5e-3
 #
-# Cross-pipeline compare uses relaxed fidelity threshold (5e-3) because
+# Cross-pipeline compare uses relaxed subspace-fidelity threshold (5e-3) because
 # drive introduces additional per-implementation divergence vs the static run.
 # ============================================================
 
@@ -377,7 +377,7 @@ echo "Running L=3 drive qiskit pipeline (staggered)..."
   --output-pdf "${DRIVE_ARTIFACTS_DIR}/pdf/Q_${DRIVE_TAG_L3}.pdf" \
   --skip-pdf
 
-# ---- Cross-pipeline compare (drive artifacts dir, relaxed fidelity threshold) ----
+# ---- Cross-pipeline compare (drive artifacts dir, relaxed subspace-fidelity threshold) ----
 echo "Running compare pipeline for drive L=2,3..."
 "${PYTHON_BIN}" pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
   --l-values 2,3 \
@@ -455,11 +455,11 @@ for L in (2, 3):
         gate_pass = False
         continue
 
-    # Gate 1: Final-time fidelity (Trotter vs piecewise-exact reference).
+    # Gate 1: Final-time subspace fidelity.
     final_fidelity = float(traj[-1]["fidelity"])
     gate1 = final_fidelity >= fidelity_floor
     tag1  = "PASS" if gate1 else "FAIL"
-    print(f"  PHYSICS GATE L={L} final_fidelity={final_fidelity:.6f} "
+    print(f"  PHYSICS GATE L={L} final_subspace_fidelity={final_fidelity:.6f} "
           f">= {fidelity_floor}: {tag1}")
     if not gate1:
         gate_pass = False
@@ -477,9 +477,9 @@ for L in (2, 3):
         if not gate2:
             gate_pass = False
 
-    # Diagnostic: print fidelity range over trajectory (not a gate).
+    # Diagnostic: print subspace-fidelity range over trajectory (not a gate).
     fidelities = [float(r["fidelity"]) for r in traj]
-    print(f"  DIAGNOSTIC  L={L} fidelity min={min(fidelities):.6f} "
+    print(f"  DIAGNOSTIC  L={L} subspace_fidelity min={min(fidelities):.6f} "
           f"mean={sum(fidelities)/len(fidelities):.6f} final={fidelities[-1]:.6f}")
 
 sys.exit(0 if gate_pass else 1)
