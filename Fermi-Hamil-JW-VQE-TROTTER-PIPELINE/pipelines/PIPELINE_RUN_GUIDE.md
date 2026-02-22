@@ -138,7 +138,9 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--drive-amplitudes` | str | `"0.0,0.2"` | Comma-separated pair `A0,A1`. A0 is the trivial amplitude for the safe-test; A1 is the active amplitude. |
-| `--with-drive-amplitude-comparison-pdf` | flag | `false` | Generate amplitude-comparison PDF per L. Runs both pipelines 3× per L (disabled, A0, A1 = 6 sub-runs). Includes safe-test page and VQE delta page. |
+| `--with-drive-amplitude-comparison-pdf` | flag | `false` | Generate amplitude-comparison PDF per L. Runs both pipelines 3× per L (disabled, A0, A1 = 6 sub-runs). |
+| `--report-verbose` | flag | `false` | Verbose report mode; forces full safe-test detail plots. |
+| `--safe-test-near-threshold-factor` | float | `100.0` | Safe-test detail page gate: render when `max_safe_delta >= threshold/factor` (also on fail or `--report-verbose`). |
 
 ---
 
@@ -272,7 +274,7 @@ python pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
   --with-per-l-pdfs
 ```
 
-### 7) Amplitude comparison PDF (safe-test + VQE delta)
+### 7) Amplitude comparison PDF (scoreboard + physics response)
 
 ```bash
 python pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
@@ -284,7 +286,7 @@ python pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
 ```
 
 This runs 8 sub-pipeline invocations per L (2 main + 6 amplitude comparison) and generates:
-- `pdf/amp_{tag}.pdf` — 5-page PDF with safe-test plots, VQE bars, text summary
+- `pdf/amp_{tag}.pdf` — multi-page PDF with settings, scoreboard tables, drive waveform, response deltas, combined overlay, and residual-focused VQE page
 - `json/amp_{tag}_metrics.json` — machine-readable safe-test + VQE delta metrics
 
 ### 8) Run the L=2/L=3 regression harness
@@ -304,6 +306,48 @@ python pipelines/manual_compare_jsons.py \
   --qiskit artifacts/json/Q_L3_static_t1.0_U4.0_S64.json \
   --metrics artifacts/json/HvQ_L3_static_t1.0_U4.0_S64_metrics.json
 ```
+
+---
+
+## Trajectory Energy Observables
+
+Each trajectory row in the JSON output contains two families of energy fields:
+
+| Key | Observable | Formula |
+|-----|-----------|---------|
+| `energy_static_exact` | Static Hamiltonian expectation (exact propagator) | ⟨ψ\_exact\|H\_static\|ψ\_exact⟩ |
+| `energy_static_trotter` | Static Hamiltonian expectation (Trotter propagator) | ⟨ψ\_trotter\|H\_static\|ψ\_trotter⟩ |
+| `energy_total_exact` | **Total** instantaneous energy (exact propagator) | ⟨ψ\_exact\|H\_static + H\_drive(t₀+t)\|ψ\_exact⟩ |
+| `energy_total_trotter` | **Total** instantaneous energy (Trotter propagator) | ⟨ψ\_trotter\|H\_static + H\_drive(t₀+t)\|ψ\_trotter⟩ |
+
+### Behaviour by drive state
+
+| Drive state | `energy_total_*` |
+|-------------|-------------------|
+| Disabled (`--enable-drive` absent) | Identical to `energy_static_*` (no overhead) |
+| Enabled with `A = 0` (safe-test) | Identical to `energy_static_*` within machine precision |
+| Enabled with `A > 0` | Differs from `energy_static_*` by the drive contribution ⟨ψ\|H\_drive(t)\|ψ⟩ |
+
+### Physical time convention
+
+The drive Hamiltonian at observation time `t` is evaluated at physical time `drive_t0 + t`, consistent with the propagator convention.
+
+### Settings metadata
+
+The JSON `settings` block includes an `energy_observable_definition` string that documents the energy field semantics:
+
+```
+"energy_observable_definition": "energy_static_* measures <psi|H_static|psi>. energy_total_* measures <psi|H_static + H_drive(drive_t0 + t)|psi>. When drive is disabled, energy_total_* == energy_static_*. Drive sampling uses the same drive_t0 convention as propagation."
+```
+
+### Compare pipeline handling
+
+The compare pipeline (`compare_hardcoded_vs_qiskit_pipeline.py`) handles both energy families:
+
+- **Static energy**: `energy_static_trotter` HC−QK delta is a primary pass/fail gate (threshold `1e-3`).
+- **Total energy**: `energy_total_trotter` HC−QK delta is also a pass/fail gate (threshold `1e-3`), included when both JSONs provide the field.
+- **Plot overlay**: When drive is active and total energy differs from static, cyan and orange curves are overlaid on the energy plot.
+- **Single-pipeline PDFs**: Both HC and QK pipelines overlay total-energy curves on the energy plot when the drive causes them to differ from static.
 
 ---
 
@@ -341,16 +385,35 @@ Prefixes: **H** = hardcoded, **Q** = Qiskit, **HvQ** = comparison, **amp** = amp
 
 | File | Description |
 |------|-------------|
-| `pdf/amp_{tag}.pdf` | 5-page PDF: command, settings, safe-test plots, VQE bars, text summary |
+| `pdf/amp_{tag}.pdf` | Multi-page PDF: command, settings, scoreboard + drive waveform, response deltas, combined HC/QK overlay, VQE residual table, optional safe-test detail/heatmap/spectrum pages |
 | `json/amp_{tag}_metrics.json` | Machine-readable: `safe_test`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1` |
 | `json/amp_H_{tag}_{slug}.json` | HC intermediate outputs (slug = `disabled`, `A0`, `A1`) |
 | `json/amp_Q_{tag}_{slug}.json` | QK intermediate outputs (slug = `disabled`, `A0`, `A1`) |
 
 ### VQE visibility
 
-- Per-L comparison PDFs include explicit VQE bar charts (exact filtered / HC VQE / QK VQE).
+- Per-L comparison PDFs include explicit VQE comparison pages.
 - Bundle PDF includes VQE comparison pages and per-L VQE pages (with `--with-per-l-pdfs`).
-- Amplitude comparison PDF adds cross-amplitude VQE bar charts with ΔE = HC_VQE − QK_VQE annotations.
+- Amplitude comparison PDF uses a residual-focused VQE table (`HC-QK`, `HC-exact`, `QK-exact`) for perceptible deltas.
+
+### Metrics JSON schema (per-L comparison)
+
+The `HvQ_{tag}_metrics.json` file includes `trajectory_deltas` with per-observable HC−QK statistics:
+
+```json
+{
+  "trajectory_deltas": {
+    "fidelity":                { "max_abs_delta": ..., "mean_abs_delta": ..., "final_abs_delta": ... },
+    "energy_static_trotter":   { "max_abs_delta": ..., "mean_abs_delta": ..., "final_abs_delta": ... },
+    "energy_total_exact":      { "max_abs_delta": ..., "mean_abs_delta": ..., "final_abs_delta": ... },
+    "energy_total_trotter":    { "max_abs_delta": ..., "mean_abs_delta": ..., "final_abs_delta": ... },
+    "n_up_site0_trotter":      { "max_abs_delta": ..., "mean_abs_delta": ..., "final_abs_delta": ... },
+    "..."
+  }
+}
+```
+
+> `energy_total_trotter` is a pass/fail gate (threshold `1e-3`), same as `energy_static_trotter`.
 
 ### Metrics JSON schema (amplitude comparison)
 

@@ -39,11 +39,19 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.quantum.drives_time_potential import evaluate_drive_waveform
 
 THRESHOLDS = {
     "ground_state_energy_abs_delta": 1e-8,
     "fidelity_max_abs_delta": 1e-4,
-    "energy_trotter_max_abs_delta": 1e-3,
+    "energy_static_trotter_max_abs_delta": 1e-3,
+    "energy_total_trotter_max_abs_delta": 1e-3,
     "n_up_site0_trotter_max_abs_delta": 5e-3,
     "n_dn_site0_trotter_max_abs_delta": 5e-3,
     "doublon_trotter_max_abs_delta": 1e-3,
@@ -51,7 +59,7 @@ THRESHOLDS = {
 
 TARGET_METRICS = [
     "fidelity",
-    "energy_trotter",
+    "energy_static_trotter",
     "n_up_site0_trotter",
     "n_dn_site0_trotter",
     "doublon_trotter",
@@ -140,6 +148,32 @@ def _delta_metric_definition_text() -> str:
         "F_pipeline(t) is the pipeline's stored trajectory fidelity value "
         "(as computed internally vs that pipeline's exact evolution)."
     )
+
+
+# ---- Chemical accuracy in natural units --------------------------------
+_CHEM_ACCURACY_HARTREE = 1.6e-3  # 1.6 × 10⁻³ Ha
+
+
+def _chemical_accuracy_lines(t_hop_hartree: float | None) -> list[str]:
+    """Return text lines stating chemical accuracy in model natural units.
+
+    The Hubbard model uses the hopping parameter *t* as the energy unit.
+    Given the physical value of *t* in Hartree (``t_hop_hartree``), we
+    convert:  ε_chem [t] = 1.6×10⁻³ Ha  /  t [Ha].
+    """
+    if t_hop_hartree is None or t_hop_hartree <= 0.0:
+        return [
+            "",
+            "Chemical accuracy reference:",
+            f"  1.6e-3 Hartree  (no --t-hartree supplied; cannot convert to natural units)",
+        ]
+    eps = _CHEM_ACCURACY_HARTREE / t_hop_hartree
+    return [
+        "",
+        "Chemical accuracy reference:",
+        f"  1.6e-3 Hartree = {eps:.6e} t   (using t_hop = {t_hop_hartree:.6e} Ha)",
+        f"  Energy errors below {eps:.4e} t are within chemical accuracy.",
+    ]
 
 
 def _fmt_obj(obj: Any, *, width: int = 90) -> str:
@@ -260,6 +294,20 @@ def _compare_payloads(hardcoded: dict[str, Any], qiskit: dict[str, Any]) -> dict
             "first_time_abs_delta_gt_1e-3": _first_crossing(t_h, d, 1e-3),
         }
 
+    # --- total-energy comparison (always present in new JSONs) ---
+    for total_key in ("energy_total_exact", "energy_total_trotter"):
+        h_total = _arr_optional(h_rows, total_key)
+        q_total = _arr_optional(q_rows, total_key)
+        if h_total.size > 0 and q_total.size > 0 and h_total.size == q_total.size:
+            d_total = np.abs(h_total - q_total)
+            out["trajectory_deltas"][total_key] = {
+                "max_abs_delta": float(np.max(d_total)),
+                "mean_abs_delta": float(np.mean(d_total)),
+                "final_abs_delta": float(d_total[-1]),
+                "first_time_abs_delta_gt_1e-4": _first_crossing(t_h, d_total, 1e-4),
+                "first_time_abs_delta_gt_1e-3": _first_crossing(t_h, d_total, 1e-3),
+            }
+
     gs_h = float(hardcoded["ground_state"]["exact_energy"])
     gs_q = float(qiskit["ground_state"]["exact_energy"])
     out["ground_state_energy"] = {
@@ -271,11 +319,17 @@ def _compare_payloads(hardcoded: dict[str, Any], qiskit: dict[str, Any]) -> dict
     checks = {
         "ground_state_energy_abs_delta": out["ground_state_energy"]["abs_delta"] <= THRESHOLDS["ground_state_energy_abs_delta"],
         "fidelity_max_abs_delta": out["trajectory_deltas"]["fidelity"]["max_abs_delta"] <= THRESHOLDS["fidelity_max_abs_delta"],
-        "energy_trotter_max_abs_delta": out["trajectory_deltas"]["energy_trotter"]["max_abs_delta"] <= THRESHOLDS["energy_trotter_max_abs_delta"],
+        "energy_static_trotter_max_abs_delta": out["trajectory_deltas"]["energy_static_trotter"]["max_abs_delta"] <= THRESHOLDS["energy_static_trotter_max_abs_delta"],
         "n_up_site0_trotter_max_abs_delta": out["trajectory_deltas"]["n_up_site0_trotter"]["max_abs_delta"] <= THRESHOLDS["n_up_site0_trotter_max_abs_delta"],
         "n_dn_site0_trotter_max_abs_delta": out["trajectory_deltas"]["n_dn_site0_trotter"]["max_abs_delta"] <= THRESHOLDS["n_dn_site0_trotter_max_abs_delta"],
         "doublon_trotter_max_abs_delta": out["trajectory_deltas"]["doublon_trotter"]["max_abs_delta"] <= THRESHOLDS["doublon_trotter_max_abs_delta"],
     }
+    # Add energy_total_trotter pass/fail gate when data is available.
+    if "energy_total_trotter" in out["trajectory_deltas"]:
+        checks["energy_total_trotter_max_abs_delta"] = (
+            out["trajectory_deltas"]["energy_total_trotter"]["max_abs_delta"]
+            <= THRESHOLDS["energy_total_trotter_max_abs_delta"]
+        )
     out["acceptance"] = {
         "thresholds": THRESHOLDS,
         "checks": checks,
@@ -403,6 +457,36 @@ def _autozoom(ax: Any, *arrays: np.ndarray, pad_frac: float = 0.05) -> None:
     ax.set_ylim(lo - pad, hi + pad)
 
 
+def _set_fidelity_ylim(
+    ax: Any,
+    *arrays: np.ndarray,
+    pad_frac: float = 0.05,
+    min_span: float = 1e-4,
+) -> None:
+    """Clamp fidelity axes to a physical upper bound of 1.0."""
+    chunks = [np.asarray(a, dtype=float).ravel() for a in arrays if np.asarray(a).size > 0]
+    if not chunks:
+        ax.set_ylim(0.0, 1.0)
+        return
+
+    combined = np.concatenate(chunks)
+    finite = combined[np.isfinite(combined)]
+    if finite.size == 0:
+        ax.set_ylim(0.0, 1.0)
+        return
+
+    lo = float(np.min(finite))
+    hi = float(np.max(finite))
+    span = hi - lo
+    pad = span * pad_frac if span > 0.0 else 1e-8
+    ymin = lo - pad
+    ymax = 1.0
+    ymin = max(0.0, min(float(ymin), ymax - min_span))
+    if ymax - ymin < min_span:
+        ymin = max(0.0, ymax - min_span)
+    ax.set_ylim(ymin, ymax)
+
+
 def _write_comparison_pdf(
     *,
     pdf_path: Path,
@@ -411,6 +495,7 @@ def _write_comparison_pdf(
     qiskit: dict[str, Any],
     metrics: dict[str, Any],
     run_command: str,
+    t_hartree: float | None = None,
 ) -> None:
     h_rows = hardcoded["trajectory"]
     q_rows = qiskit["trajectory"]
@@ -445,17 +530,31 @@ def _write_comparison_pdf(
         axF.set_xlabel("Time")
         axF.grid(alpha=0.25)
         axF.legend(fontsize=8)
-        _autozoom(axF, h("fidelity"), q("fidelity"))
+        _set_fidelity_ylim(axF, h("fidelity"), q("fidelity"))
 
-        axE.plot(times, q("energy_trotter"), label="Qiskit trotter", color="#2ca02c", marker="s", markersize=3, markevery=markevery)
-        axE.plot(times, h("energy_trotter"), label="Hardcoded trotter", color="#d62728", linestyle="--", marker="v", markersize=3, markevery=markevery)
-        axE.plot(times, q("energy_exact"), label=EXACT_LABEL_QISKIT, color="#111111", linewidth=1.4)
-        axE.plot(times, h("energy_exact"), label=EXACT_LABEL_HARDCODE, color="#7f7f7f", linestyle=":", linewidth=1.2)
+        axE.plot(times, q("energy_static_trotter"), label="Qiskit trotter (static)", color="#2ca02c", marker="s", markersize=3, markevery=markevery)
+        axE.plot(times, h("energy_static_trotter"), label="Hardcoded trotter (static)", color="#d62728", linestyle="--", marker="v", markersize=3, markevery=markevery)
+        axE.plot(times, q("energy_static_exact"), label=EXACT_LABEL_QISKIT, color="#111111", linewidth=1.4)
+        axE.plot(times, h("energy_static_exact"), label=EXACT_LABEL_HARDCODE, color="#7f7f7f", linestyle=":", linewidth=1.2)
+
+        # --- total-energy overlay (when drive active and differs from static) ---
+        h_total_trot = _arr_optional(h_rows, "energy_total_trotter")
+        q_total_trot = _arr_optional(q_rows, "energy_total_trotter")
+        if h_total_trot.size == times.size and q_total_trot.size == times.size:
+            h_static_trot = h("energy_static_trotter")
+            q_static_trot = q("energy_static_trotter")
+            if not (np.allclose(h_total_trot, h_static_trot, atol=1e-14) and
+                    np.allclose(q_total_trot, q_static_trot, atol=1e-14)):
+                axE.plot(times, q_total_trot, label="Qiskit trotter (total)", color="#17becf",
+                         marker="D", markersize=2.5, markevery=markevery, linewidth=1.0, alpha=0.8)
+                axE.plot(times, h_total_trot, label="Hardcoded trotter (total)", color="#ff7f0e",
+                         linestyle="--", marker="<", markersize=2.5, markevery=markevery, linewidth=1.0, alpha=0.8)
+
         axE.set_title("Energy")
         axE.set_xlabel("Time")
         axE.grid(alpha=0.25)
-        axE.legend(fontsize=8)
-        _autozoom(axE, h("energy_trotter"), q("energy_trotter"), h("energy_exact"), q("energy_exact"))
+        axE.legend(fontsize=7)
+        _autozoom(axE, h("energy_static_trotter"), q("energy_static_trotter"), h("energy_static_exact"), q("energy_static_exact"))
 
         figA.suptitle(f"Pipeline Comparison L={L}: Hardcoded vs Qiskit (Fidelity & Energy)", fontsize=13)
         figA.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
@@ -539,8 +638,8 @@ def _write_comparison_pdf(
         bx00.set_xlabel("Time")
         bx00.grid(alpha=0.25)
 
-        bx01.plot(times, np.abs(h("energy_trotter") - q("energy_trotter")), color="#d62728")
-        bx01.set_title("|ΔE_trot(t)|")
+        bx01.plot(times, np.abs(h("energy_static_trotter") - q("energy_static_trotter")), color="#d62728")
+        bx01.set_title("|ΔE_static_trot(t)|")
         bx01.set_xlabel("Time")
         bx01.grid(alpha=0.25)
 
@@ -575,15 +674,24 @@ def _write_comparison_pdf(
             "",
             f"ground_state_energy_abs_delta = {_fp(metrics['ground_state_energy']['abs_delta'])}",
             f"fidelity max/mean/final = {_fp(td['fidelity']['max_abs_delta'])} / {_fp(td['fidelity']['mean_abs_delta'])} / {_fp(td['fidelity']['final_abs_delta'])}",
-            f"energy_trotter max/mean/final = {_fp(td['energy_trotter']['max_abs_delta'])} / {_fp(td['energy_trotter']['mean_abs_delta'])} / {_fp(td['energy_trotter']['final_abs_delta'])}",
+            f"energy_static_trotter max/mean/final = {_fp(td['energy_static_trotter']['max_abs_delta'])} / {_fp(td['energy_static_trotter']['mean_abs_delta'])} / {_fp(td['energy_static_trotter']['final_abs_delta'])}",
             f"n_up_site0_trotter max/mean/final = {_fp(td['n_up_site0_trotter']['max_abs_delta'])} / {_fp(td['n_up_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_up_site0_trotter']['final_abs_delta'])}",
             f"n_dn_site0_trotter max/mean/final = {_fp(td['n_dn_site0_trotter']['max_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['final_abs_delta'])}",
             f"doublon_trotter max/mean/final = {_fp(td['doublon_trotter']['max_abs_delta'])} / {_fp(td['doublon_trotter']['mean_abs_delta'])} / {_fp(td['doublon_trotter']['final_abs_delta'])}",
+        ]
+        # Include total-energy delta when both pipelines provide it.
+        if "energy_total_trotter" in td:
+            ett = td["energy_total_trotter"]
+            lines.append(
+                f"energy_total_trotter max/mean/final = {_fp(ett['max_abs_delta'])} / {_fp(ett['mean_abs_delta'])} / {_fp(ett['final_abs_delta'])}"
+            )
+        lines += [
             "",
             "checks:",
             *_fmt_obj(metrics["acceptance"]["checks"]).splitlines(),
             "",
             f"PASS = {metrics['acceptance']['pass']}",
+            *_chemical_accuracy_lines(t_hartree),
         ]
         _render_text_page(pdf, lines)
 
@@ -596,6 +704,7 @@ def _write_bundle_pdf(
     isolation_check: dict[str, Any],
     include_per_l_pages: bool,
     run_command: str,
+    t_hartree: float | None = None,
 ) -> None:
     lvals = [L for L, _h, _q, _m in per_l_data]
     exact_global = np.array([float(h["ground_state"]["exact_energy"]) for _L, h, _q, _m in per_l_data], dtype=float)
@@ -651,6 +760,7 @@ def _write_bundle_pdf(
         ]
         for row in overall_summary["results"]:
             lines.append(f"L={row['L']} pass={row['pass']} metrics_json={row['metrics_json']}")
+        lines.extend(_chemical_accuracy_lines(t_hartree))
         _render_text_page(pdf, lines)
 
         x = np.arange(len(lvals), dtype=float)
@@ -784,7 +894,7 @@ def _write_bundle_pdf(
 
         if include_per_l_pages:
             for L, hardcoded, qiskit, metrics in per_l_data:
-                _write_comparison_pages_into_pdf(pdf, L, hardcoded, qiskit, metrics)
+                _write_comparison_pages_into_pdf(pdf, L, hardcoded, qiskit, metrics, t_hartree=t_hartree)
 
 
 def _write_comparison_pages_into_pdf(
@@ -793,6 +903,7 @@ def _write_comparison_pages_into_pdf(
     hardcoded: dict[str, Any],
     qiskit: dict[str, Any],
     metrics: dict[str, Any],
+    t_hartree: float | None = None,
 ) -> None:
     h_rows = hardcoded["trajectory"]
     q_rows = qiskit["trajectory"]
@@ -825,17 +936,17 @@ def _write_comparison_pages_into_pdf(
     axF.set_xlabel("Time")
     axF.grid(alpha=0.25)
     axF.legend(fontsize=8)
-    _autozoom(axF, h("fidelity"), q("fidelity"))
+    _set_fidelity_ylim(axF, h("fidelity"), q("fidelity"))
 
-    axE.plot(times, q("energy_trotter"), label="Qiskit trotter", color="#2ca02c")
-    axE.plot(times, h("energy_trotter"), label="Hardcoded trotter", color="#d62728", linestyle="--")
-    axE.plot(times, q("energy_exact"), label=EXACT_LABEL_QISKIT, color="#111111", linewidth=1.2)
-    axE.plot(times, h("energy_exact"), label=EXACT_LABEL_HARDCODE, color="#7f7f7f", linestyle=":", linewidth=1.2)
+    axE.plot(times, q("energy_static_trotter"), label="Qiskit trotter", color="#2ca02c")
+    axE.plot(times, h("energy_static_trotter"), label="Hardcoded trotter", color="#d62728", linestyle="--")
+    axE.plot(times, q("energy_static_exact"), label=EXACT_LABEL_QISKIT, color="#111111", linewidth=1.2)
+    axE.plot(times, h("energy_static_exact"), label=EXACT_LABEL_HARDCODE, color="#7f7f7f", linestyle=":", linewidth=1.2)
     axE.set_title(f"L={L} Energy")
     axE.set_xlabel("Time")
     axE.grid(alpha=0.25)
     axE.legend(fontsize=8)
-    _autozoom(axE, h("energy_trotter"), q("energy_trotter"), h("energy_exact"), q("energy_exact"))
+    _autozoom(axE, h("energy_static_trotter"), q("energy_static_trotter"), h("energy_static_exact"), q("energy_static_exact"))
 
     figA.suptitle(f"Bundle Page: L={L} Fidelity & Energy", fontsize=14)
     figA.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
@@ -919,8 +1030,8 @@ def _write_comparison_pages_into_pdf(
     bx00.set_xlabel("Time")
     bx00.grid(alpha=0.25)
 
-    bx01.plot(times, np.abs(h("energy_trotter") - q("energy_trotter")), color="#d62728")
-    bx01.set_title("|ΔE_trot(t)|")
+    bx01.plot(times, np.abs(h("energy_static_trotter") - q("energy_static_trotter")), color="#d62728")
+    bx01.set_title("|ΔE_static_trot(t)|")
     bx01.set_xlabel("Time")
     bx01.grid(alpha=0.25)
 
@@ -960,7 +1071,7 @@ def _write_comparison_pages_into_pdf(
         "",
         f"ground_state_energy_abs_delta = {_fp(metrics['ground_state_energy']['abs_delta'])}",
         f"fidelity max/mean/final = {_fp(td['fidelity']['max_abs_delta'])} / {_fp(td['fidelity']['mean_abs_delta'])} / {_fp(td['fidelity']['final_abs_delta'])}",
-        f"energy_trotter max/mean/final = {_fp(td['energy_trotter']['max_abs_delta'])} / {_fp(td['energy_trotter']['mean_abs_delta'])} / {_fp(td['energy_trotter']['final_abs_delta'])}",
+        f"energy_static_trotter max/mean/final = {_fp(td['energy_static_trotter']['max_abs_delta'])} / {_fp(td['energy_static_trotter']['mean_abs_delta'])} / {_fp(td['energy_static_trotter']['final_abs_delta'])}",
         f"n_up_site0_trotter max/mean/final = {_fp(td['n_up_site0_trotter']['max_abs_delta'])} / {_fp(td['n_up_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_up_site0_trotter']['final_abs_delta'])}",
         f"n_dn_site0_trotter max/mean/final = {_fp(td['n_dn_site0_trotter']['max_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['mean_abs_delta'])} / {_fp(td['n_dn_site0_trotter']['final_abs_delta'])}",
         f"doublon_trotter max/mean/final = {_fp(td['doublon_trotter']['max_abs_delta'])} / {_fp(td['doublon_trotter']['mean_abs_delta'])} / {_fp(td['doublon_trotter']['final_abs_delta'])}",
@@ -969,6 +1080,7 @@ def _write_comparison_pages_into_pdf(
         *_fmt_obj(metrics["acceptance"]["checks"]).splitlines(),
         "",
         f"PASS = {metrics['acceptance']['pass']}",
+        *_chemical_accuracy_lines(t_hartree),
     ]
     _render_text_page(pdf, lines)
 
@@ -1147,9 +1259,9 @@ def _safe_test_check(
     za_qk = zero_amp_qk.get("trajectory", [])
 
     hc_fid = _max_abs(nd_hc, za_hc, "fidelity")
-    hc_ene = _max_abs(nd_hc, za_hc, "energy_trotter")
+    hc_ene = _max_abs(nd_hc, za_hc, "energy_static_trotter")
     qk_fid = _max_abs(nd_qk, za_qk, "fidelity")
-    qk_ene = _max_abs(nd_qk, za_qk, "energy_trotter")
+    qk_ene = _max_abs(nd_qk, za_qk, "energy_static_trotter")
 
     all_vals = [v for v in (hc_fid, hc_ene, qk_fid, qk_ene) if np.isfinite(v)]
     passed = bool(all_vals) and max(all_vals) < _SAFE_TEST_THRESHOLD
@@ -1160,6 +1272,180 @@ def _safe_test_check(
         "hc": {"max_fidelity_delta": hc_fid, "max_energy_delta": hc_ene},
         "qk": {"max_fidelity_delta": qk_fid, "max_energy_delta": qk_ene},
     }
+
+
+def _arr_optional(rows: list[dict[str, Any]], key: str) -> np.ndarray:
+    if not rows:
+        return np.array([], dtype=float)
+    out: list[float] = []
+    for row in rows:
+        if key not in row:
+            return np.array([], dtype=float)
+        out.append(float(row[key]))
+    return np.array(out, dtype=float)
+
+
+def _matrix_optional(rows: list[dict[str, Any]], key: str) -> np.ndarray:
+    if not rows or key not in rows[0]:
+        return np.array([[]], dtype=float)
+    first = rows[0].get(key)
+    if not isinstance(first, list):
+        return np.array([[]], dtype=float)
+    width = len(first)
+    if width == 0:
+        return np.array([[]], dtype=float)
+    mat = np.zeros((len(rows), width), dtype=float)
+    for ridx, row in enumerate(rows):
+        vals = row.get(key)
+        if not isinstance(vals, list) or len(vals) != width:
+            return np.array([[]], dtype=float)
+        mat[ridx, :] = np.array([float(x) for x in vals], dtype=float)
+    return mat
+
+
+def _observables_series(rows: list[dict[str, Any]], kind: str, impl: str) -> np.ndarray:
+    impl_norm = str(impl).strip().lower()
+    if kind == "fidelity":
+        return _arr_optional(rows, "fidelity")
+    if kind == "energy":
+        arr = _arr_optional(rows, f"energy_static_{impl_norm}")
+        if arr.size > 0:
+            return arr
+        return _arr_optional(rows, f"energy_{impl_norm}")
+    if kind == "doublon":
+        arr = _arr_optional(rows, f"doublon_avg_{impl_norm}")
+        if arr.size > 0:
+            return arr
+        return _arr_optional(rows, f"doublon_{impl_norm}")
+    if kind == "staggered":
+        return _arr_optional(rows, f"staggered_{impl_norm}")
+    if kind == "density_site0":
+        mat = _matrix_optional(rows, f"n_site_{impl_norm}")
+        if mat.size > 0 and mat.shape[1] > 0:
+            return mat[:, 0]
+        up = _arr_optional(rows, f"n_up_site0_{impl_norm}")
+        dn = _arr_optional(rows, f"n_dn_site0_{impl_norm}")
+        if up.size > 0 and dn.size == up.size:
+            return up + dn
+        return up
+    raise ValueError(f"Unknown observable kind: {kind!r}")
+
+
+def _aligned_pair(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if a.size == 0 or b.size == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+    n = min(int(a.size), int(b.size))
+    return np.asarray(a[:n], dtype=float), np.asarray(b[:n], dtype=float)
+
+
+def _max_abs_and_rms(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
+    aa, bb = _aligned_pair(a, b)
+    if aa.size == 0:
+        return float("nan"), float("nan")
+    diff = aa - bb
+    return float(np.max(np.abs(diff))), float(np.sqrt(np.mean(diff * diff)))
+
+
+def _response_delta(a0: np.ndarray, a1: np.ndarray) -> np.ndarray:
+    x0, x1 = _aligned_pair(a0, a1)
+    if x0.size == 0:
+        return np.array([], dtype=float)
+    return np.asarray(x1 - x0, dtype=float)
+
+
+def _response_stats(a0: np.ndarray, a1: np.ndarray) -> tuple[float, float]:
+    delta = _response_delta(a0, a1)
+    if delta.size == 0:
+        return float("nan"), float("nan")
+    return float(np.max(np.abs(delta))), float(delta[-1])
+
+
+def _fmt_metric(x: float, *, nan_text: str = "N/A") -> str:
+    if not np.isfinite(float(x)):
+        return nan_text
+    return f"{float(x):.3e}"
+
+
+def _render_compact_table(
+    ax: Any,
+    *,
+    title: str,
+    col_labels: list[str],
+    rows: list[list[str]],
+    fontsize: int = 7,
+) -> None:
+    ax.axis("off")
+    ax.set_title(title, fontsize=9, pad=6)
+    tbl = ax.table(
+        cellText=rows,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="center",
+        colLoc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(fontsize)
+    tbl.scale(1.0, 1.3)
+
+
+def _safe_delta_series(
+    rows_a: list[dict[str, Any]],
+    rows_b: list[dict[str, Any]],
+    key: str,
+) -> np.ndarray:
+    a = _arr_optional(rows_a, key)
+    b = _arr_optional(rows_b, key)
+    aa, bb = _aligned_pair(a, b)
+    if aa.size == 0:
+        return np.array([], dtype=float)
+    return np.abs(aa - bb)
+
+
+def _safe_test_plot_gate(
+    safe: dict[str, Any],
+    *,
+    near_factor: float,
+    verbose: bool,
+) -> tuple[bool, float]:
+    vals = [
+        float(safe["hc"]["max_fidelity_delta"]),
+        float(safe["hc"]["max_energy_delta"]),
+        float(safe["qk"]["max_fidelity_delta"]),
+        float(safe["qk"]["max_energy_delta"]),
+    ]
+    finite = [v for v in vals if np.isfinite(v)]
+    max_safe = max(finite) if finite else float("nan")
+    thr = float(safe["threshold"])
+    near = bool(np.isfinite(max_safe) and np.isfinite(thr) and thr > 0.0 and max_safe >= (thr / max(1.0, float(near_factor))))
+    show = bool((not bool(safe["passed"])) or near or bool(verbose))
+    return show, max_safe
+
+
+def _drive_config_from_args(args: argparse.Namespace) -> dict[str, float]:
+    return {
+        "drive_omega": float(args.drive_omega),
+        "drive_tbar": float(args.drive_tbar),
+        "drive_phi": float(args.drive_phi),
+        "drive_t0": float(args.drive_t0),
+    }
+
+
+def _fft_response(signal: np.ndarray, times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if signal.size < 4 or times.size < 4:
+        return np.array([], dtype=float), np.array([], dtype=float)
+    n = min(int(signal.size), int(times.size))
+    y = np.asarray(signal[:n], dtype=float)
+    t = np.asarray(times[:n], dtype=float)
+    dt = float(t[1] - t[0])
+    if not np.isfinite(dt) or dt <= 0.0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+    y0 = y - float(np.mean(y))
+    window = np.hanning(n)
+    spec = np.fft.rfft(y0 * window)
+    freq = np.fft.rfftfreq(n, d=dt)
+    omega = 2.0 * np.pi * freq
+    mag = np.abs(spec)
+    return omega, mag
 
 
 def _run_amplitude_comparison_for_l(
@@ -1204,6 +1490,7 @@ def _run_amplitude_comparison_for_l(
             "--vqe-restarts", str(args.hardcoded_vqe_restarts),
             "--vqe-seed", str(args.hardcoded_vqe_seed),
             "--vqe-maxiter", str(args.hardcoded_vqe_maxiter),
+            "--vqe-method", str(args.hardcoded_vqe_method),
             "--initial-state-source", str(args.initial_state_source),
             "--output-json", str(json_out),
             "--output-pdf", str(json_out).replace(".json", ".pdf"),
@@ -1224,6 +1511,9 @@ def _run_amplitude_comparison_for_l(
                 cmd[idx + 1] = str(args.qiskit_vqe_seed)
             elif flag == "--vqe-maxiter":
                 cmd[idx + 1] = str(args.qiskit_vqe_maxiter)
+        method_idx = cmd.index("--vqe-method")
+        cmd[method_idx] = "--vqe-optimizer"
+        cmd[method_idx + 1] = str(args.qiskit_vqe_optimizer)
         return cmd
 
     results: dict[str, Any] = {}
@@ -1270,27 +1560,9 @@ def _write_amplitude_comparison_pdf(
     A1: float,
     args: argparse.Namespace,
     run_command: str,
+    t_hartree: float | None = None,
 ) -> dict[str, Any]:
-    """Write the amplitude-comparison PDF for a single *L* value.
-
-    Pages
-    -----
-    1. Command page
-    2. Settings & knobs data page
-    3. Safe-test page (no-drive vs A0 = 0 trajectories must be identical)
-    4. VQE comparison page (bars + ΔE = HC_VQE − QK_VQE at A0 and A1)
-    5. Trajectory overlay — HC: A0 vs A1 (fidelity, energy, n↑₀, double occ)
-    6. Trajectory overlay — QK: A0 vs A1 (fidelity, energy, n↑₀, double occ)
-    7. Text summary (safe-test result + delta_vqe values)
-
-    Returns the metrics dict::
-
-        {
-            "safe_test": {...},
-            "delta_vqe_hc_minus_qk_at_A0": float,
-            "delta_vqe_hc_minus_qk_at_A1": float,
-        }
-    """
+    """Write the amplitude-comparison PDF for a single *L* value."""
     disabled_hc = amp_data["disabled"]["hc"]
     disabled_qk = amp_data["disabled"]["qk"]
     a0_hc = amp_data["A0"]["hc"]
@@ -1300,16 +1572,16 @@ def _write_amplitude_comparison_pdf(
 
     safe = _safe_test_check(disabled_hc, disabled_qk, a0_hc, a0_qk)
 
-    def _vqe_energy(payload: dict, name: str) -> float:
+    def _vqe_energy(payload: dict[str, Any]) -> float:
         val = payload.get("vqe", {}).get("energy")
         if val is None:
             val = payload.get("ground_state", {}).get("vqe_energy")
         return float(val) if val is not None else float("nan")
 
-    hc_vqe_a0 = _vqe_energy(a0_hc, "hc_A0")
-    qk_vqe_a0 = _vqe_energy(a0_qk, "qk_A0")
-    hc_vqe_a1 = _vqe_energy(a1_hc, "hc_A1")
-    qk_vqe_a1 = _vqe_energy(a1_qk, "qk_A1")
+    hc_vqe_a0 = _vqe_energy(a0_hc)
+    qk_vqe_a0 = _vqe_energy(a0_qk)
+    hc_vqe_a1 = _vqe_energy(a1_hc)
+    qk_vqe_a1 = _vqe_energy(a1_qk)
 
     exact_filtered_a0 = float("nan")
     try:
@@ -1325,10 +1597,116 @@ def _write_amplitude_comparison_pdf(
     delta_vqe_a0 = float(hc_vqe_a0 - qk_vqe_a0) if (np.isfinite(hc_vqe_a0) and np.isfinite(qk_vqe_a0)) else float("nan")
     delta_vqe_a1 = float(hc_vqe_a1 - qk_vqe_a1) if (np.isfinite(hc_vqe_a1) and np.isfinite(qk_vqe_a1)) else float("nan")
 
+    nd_hc_rows = disabled_hc.get("trajectory", [])
+    nd_qk_rows = disabled_qk.get("trajectory", [])
+    a0_hc_rows = a0_hc.get("trajectory", [])
+    a0_qk_rows = a0_qk.get("trajectory", [])
+    a1_hc_rows = a1_hc.get("trajectory", [])
+    a1_qk_rows = a1_qk.get("trajectory", [])
+
+    times = _arr_optional(a1_hc_rows, "time")
+    if times.size == 0:
+        times = _arr_optional(a0_hc_rows, "time")
+    if times.size == 0:
+        times = _arr_optional(a1_qk_rows, "time")
+    if times.size == 0:
+        times = _arr_optional(a0_qk_rows, "time")
+    if times.size == 0:
+        times = np.linspace(0.0, float(args.t_final), int(args.num_times), dtype=float)
+
+    drive_cfg = _drive_config_from_args(args)
+    drive_a0 = evaluate_drive_waveform(times, drive_cfg, float(A0))
+    drive_a1 = evaluate_drive_waveform(times, drive_cfg, float(A1))
+    show_staggered = bool(str(args.drive_pattern).strip().lower() == "staggered")
+
+    overlay_observables: list[tuple[str, str]] = [
+        ("Fidelity", "fidelity"),
+        ("Energy E0(t)=<H0>", "energy"),
+        ("Site-0 Density <n0>", "density_site0"),
+        ("Double Occupancy / site", "doublon"),
+    ]
+    if show_staggered:
+        overlay_observables.insert(2, ("Staggered Imbalance O_stag", "staggered"))
+
+    table_a_rows: list[list[str]] = []
+    for label, kind in overlay_observables:
+        a0_max, a0_rms = _max_abs_and_rms(
+            _observables_series(a0_hc_rows, kind, "trotter"),
+            _observables_series(a0_qk_rows, kind, "trotter"),
+        )
+        a1_max, a1_rms = _max_abs_and_rms(
+            _observables_series(a1_hc_rows, kind, "trotter"),
+            _observables_series(a1_qk_rows, kind, "trotter"),
+        )
+        table_a_rows.append(
+            [
+                label,
+                _fmt_metric(a0_max),
+                _fmt_metric(a0_rms),
+                _fmt_metric(a1_max),
+                _fmt_metric(a1_rms),
+            ]
+        )
+    table_a_rows.append(
+        [
+            "Safe-test (no-drive vs A0)",
+            (
+                f"HC |ΔF|={_fmt_metric(float(safe['hc']['max_fidelity_delta']))}, "
+                f"|ΔE|={_fmt_metric(float(safe['hc']['max_energy_delta']))}\n"
+                f"QK |ΔF|={_fmt_metric(float(safe['qk']['max_fidelity_delta']))}, "
+                f"|ΔE|={_fmt_metric(float(safe['qk']['max_energy_delta']))}"
+            ),
+            "-",
+            "-",
+            "-",
+        ]
+    )
+
+    response_rows_cfg: list[tuple[str, str]] = []
+    if show_staggered:
+        response_rows_cfg.append(("O_stag", "staggered"))
+    response_rows_cfg.extend(
+        [
+            ("n_site0", "density_site0"),
+            ("doublon/site", "doublon"),
+            ("Energy E0", "energy"),
+        ]
+    )
+
+    table_b_rows: list[list[str]] = []
+    for label, kind in response_rows_cfg:
+        hc_max, hc_final = _response_stats(
+            _observables_series(a0_hc_rows, kind, "trotter"),
+            _observables_series(a1_hc_rows, kind, "trotter"),
+        )
+        exact_a0 = _observables_series(a0_hc_rows, kind, "exact")
+        exact_a1 = _observables_series(a1_hc_rows, kind, "exact")
+        if exact_a0.size == 0 or exact_a1.size == 0:
+            exact_a0 = _observables_series(a0_qk_rows, kind, "exact")
+            exact_a1 = _observables_series(a1_qk_rows, kind, "exact")
+        ex_max, ex_final = _response_stats(exact_a0, exact_a1)
+        table_b_rows.append(
+            [
+                label,
+                _fmt_metric(hc_max),
+                _fmt_metric(hc_final),
+                _fmt_metric(ex_max),
+                _fmt_metric(ex_final),
+            ]
+        )
+
+    show_safe_page, max_safe = _safe_test_plot_gate(
+        safe,
+        near_factor=float(getattr(args, "safe_test_near_threshold_factor", 100.0)),
+        verbose=bool(getattr(args, "report_verbose", False)),
+    )
+
     metrics: dict[str, Any] = {
         "safe_test": safe,
         "delta_vqe_hc_minus_qk_at_A0": delta_vqe_a0,
         "delta_vqe_hc_minus_qk_at_A1": delta_vqe_a1,
+        "safe_test_detail_page_rendered": bool(show_safe_page),
+        "safe_test_max_abs": float(max_safe) if np.isfinite(max_safe) else float("nan"),
     }
 
     with PdfPages(str(pdf_path)) as pdf:
@@ -1369,218 +1747,373 @@ def _write_amplitude_comparison_pdf(
         ]
         _render_text_page(pdf, settings_lines)
 
-        # --- Page 3: safe-test ---
-        fig_st, axes_st = plt.subplots(2, 2, figsize=(11.0, 8.5))
-        ax_hcf, ax_qkf = axes_st[0, 0], axes_st[0, 1]
-        ax_hce, ax_qke = axes_st[1, 0], axes_st[1, 1]
+        # --- Page 3: scoreboard + physics headline ---
+        fig_score = plt.figure(figsize=(11.0, 8.5))
+        gs = fig_score.add_gridspec(2, 2, height_ratios=[1.2, 1.0], width_ratios=[1.0, 1.0])
+        ax_a = fig_score.add_subplot(gs[0, 0])
+        ax_b = fig_score.add_subplot(gs[0, 1])
+        ax_drive = fig_score.add_subplot(gs[1, :])
 
-        nd_rows = disabled_hc.get("trajectory", [])
-        za_rows = a0_hc.get("trajectory", [])
-        nd_times = _arr(nd_rows, "time")
-        za_times = _arr(za_rows, "time")
-
-        def _safe_delta(rows_a: list, rows_b: list, key: str) -> np.ndarray:
-            a = _arr(rows_a, key)
-            b = _arr(rows_b, key)
-            if a.size == 0 or b.size != a.size:
-                return np.array([])
-            return np.abs(a - b)
-
-        hc_fid_delta = _safe_delta(nd_rows, za_rows, "fidelity")
-        hc_ene_delta = _safe_delta(nd_rows, za_rows, "energy_trotter")
-
-        nd_qk_rows = disabled_qk.get("trajectory", [])
-        za_qk_rows = a0_qk.get("trajectory", [])
-        qk_fid_delta = _safe_delta(nd_qk_rows, za_qk_rows, "fidelity")
-        qk_ene_delta = _safe_delta(nd_qk_rows, za_qk_rows, "energy_trotter")
-
-        t_ref = nd_times if nd_times.size > 0 else za_times
-
-        for ax, delta, title in [
-            (ax_hcf, hc_fid_delta, f"HC |ΔFidelity| (no-drive vs A0={A0})"),
-            (ax_qkf, qk_fid_delta, f"QK |ΔFidelity| (no-drive vs A0={A0})"),
-            (ax_hce, hc_ene_delta, f"HC |ΔE_trot| (no-drive vs A0={A0})"),
-            (ax_qke, qk_ene_delta, f"QK |ΔE_trot| (no-drive vs A0={A0})"),
-        ]:
-            if delta.size > 0:
-                ax.semilogy(t_ref[: delta.size], delta + 1e-20, color="#1f77b4")
-                ax.axhline(_SAFE_TEST_THRESHOLD, color="red", linestyle="--", linewidth=0.8,
-                           label=f"threshold {_SAFE_TEST_THRESHOLD:.0e}")
-                ax.legend(fontsize=7)
-            else:
-                ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title(title, fontsize=9)
-            ax.set_xlabel("Time", fontsize=8)
-            ax.grid(alpha=0.25)
-
-        verdict = "✓ PASSED" if safe["passed"] else "✗ FAILED"
-        verdict_color = "green" if safe["passed"] else "red"
-        fig_st.suptitle(
-            f"Safe-test L={L}: drive-disabled vs drive-enabled A0={A0}  —  {verdict}\n"
-            f"HC max|ΔF|={safe['hc']['max_fidelity_delta']:.2e}  "
-            f"HC max|ΔE|={safe['hc']['max_energy_delta']:.2e}  "
-            f"QK max|ΔF|={safe['qk']['max_fidelity_delta']:.2e}  "
-            f"QK max|ΔE|={safe['qk']['max_energy_delta']:.2e}",
-            fontsize=11,
-            color=verdict_color,
+        _render_compact_table(
+            ax_a,
+            title="A) Cross-Implementation Agreement (HC vs QK)",
+            col_labels=["Observable", "A0 max|Δ|", "A0 RMS", "A1 max|Δ|", "A1 RMS"],
+            rows=table_a_rows,
+            fontsize=7,
         )
-        fig_st.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
-        pdf.savefig(fig_st)
-        plt.close(fig_st)
+        _render_compact_table(
+            ax_b,
+            title="B) Physics Response Magnitude (A1 - A0)",
+            col_labels=["Observable", "HC max|Δ|", "HC Δ(final)", "Exact max|Δ|", "Exact Δ(final)"],
+            rows=table_b_rows,
+            fontsize=7,
+        )
 
-        # --- Page 4: VQE comparison bars at A0 and A1 ---
-        fig_vqe, axes_vqe = plt.subplots(1, 2, figsize=(11.0, 8.5))
-        ax_a0, ax_a1 = axes_vqe
+        ax_drive.plot(times[: drive_a0.size], drive_a0, color="#1f77b4", linewidth=1.4, label=f"f(t), A0={A0}")
+        ax_drive.plot(times[: drive_a1.size], drive_a1, color="#d62728", linewidth=1.4, label=f"f(t), A1={A1}")
+        ax_drive.axhline(0.0, color="#555555", linewidth=0.8, alpha=0.8)
+        ax_drive.grid(alpha=0.25)
+        ax_drive.set_xlabel("Time", fontsize=9)
+        ax_drive.set_ylabel("f(t)", fontsize=9)
+        ax_drive.legend(fontsize=8, loc="best")
+        ax_drive.set_title(
+            "Drive waveform used in H(t): "
+            f"pattern={args.drive_pattern}, omega={args.drive_omega}, tbar={args.drive_tbar}, "
+            f"phi={args.drive_phi}, t0={args.drive_t0}, sampling={args.drive_time_sampling}",
+            fontsize=9,
+        )
+        fig_score.suptitle(
+            f"Amplitude Scoreboard + Physics Headline  L={L}\n"
+            f"Safe-test: {'PASSED' if safe['passed'] else 'FAILED'}   "
+            f"(max safe Δ={_fmt_metric(max_safe)})",
+            fontsize=11,
+        )
+        fig_score.tight_layout(rect=(0.0, 0.0, 1.0, 0.91))
+        pdf.savefig(fig_score)
+        plt.close(fig_score)
 
-        for ax, label_amp, ef, hc_e, qk_e, dv in [
-            (ax_a0, f"A0={A0}", exact_filtered_a0, hc_vqe_a0, qk_vqe_a0, delta_vqe_a0),
-            (ax_a1, f"A1={A1}", exact_filtered_a1, hc_vqe_a1, qk_vqe_a1, delta_vqe_a1),
-        ]:
-            bar_labels = ["Exact (filtered)", "HC VQE", "QK VQE"]
-            bar_vals = [ef, hc_e, qk_e]
-            bar_colors = ["#111111", "#2ca02c", "#ff7f0e"]
-            finite_vals = [v for v in bar_vals if np.isfinite(v)]
-            if finite_vals:
-                ymin = min(finite_vals) - 0.05 * abs(min(finite_vals))
-                ymax = max(finite_vals) + 0.05 * abs(max(finite_vals))
-            else:
-                ymin, ymax = -1.0, 0.0
+        # --- Conditional safe-test detail page ---
+        if show_safe_page:
+            fig_st, axes_st = plt.subplots(2, 2, figsize=(11.0, 8.5))
+            nd_times = _arr_optional(nd_hc_rows, "time")
+            za_times = _arr_optional(a0_hc_rows, "time")
+            t_ref = nd_times if nd_times.size > 0 else za_times
+            hc_fid_delta = _safe_delta_series(nd_hc_rows, a0_hc_rows, "fidelity")
+            hc_ene_delta = _safe_delta_series(nd_hc_rows, a0_hc_rows, "energy_static_trotter")
+            qk_fid_delta = _safe_delta_series(nd_qk_rows, a0_qk_rows, "fidelity")
+            qk_ene_delta = _safe_delta_series(nd_qk_rows, a0_qk_rows, "energy_static_trotter")
 
-            xs = np.arange(3)
-            bars = ax.bar(xs, bar_vals, color=bar_colors, edgecolor="black", linewidth=0.4)
-            ax.set_xticks(xs)
-            ax.set_xticklabels(bar_labels, rotation=18, ha="right", fontsize=8)
-            ax.set_ylabel("Energy")
-            ax.set_title(f"L={L}  {label_amp}  VQE Energies", fontsize=10)
-            ax.grid(axis="y", alpha=0.25)
-            if np.isfinite(ymin) and np.isfinite(ymax) and ymax > ymin:
-                ax.set_ylim(ymin, ymax)
-
-            dv_str = f"{dv:.6e}" if np.isfinite(dv) else "N/A"
-            ax.text(
-                0.5, 0.02,
-                f"ΔE = HC_VQE − QK_VQE = {dv_str}",
-                transform=ax.transAxes,
-                ha="center", va="bottom",
-                fontsize=9, style="italic",
+            for ax, delta, title in [
+                (axes_st[0, 0], hc_fid_delta, f"HC |ΔFidelity| (no-drive vs A0={A0})"),
+                (axes_st[0, 1], qk_fid_delta, f"QK |ΔFidelity| (no-drive vs A0={A0})"),
+                (axes_st[1, 0], hc_ene_delta, f"HC |ΔE_trot| (no-drive vs A0={A0})"),
+                (axes_st[1, 1], qk_ene_delta, f"QK |ΔE_trot| (no-drive vs A0={A0})"),
+            ]:
+                if delta.size > 0 and t_ref.size > 0:
+                    ax.semilogy(t_ref[: delta.size], delta + 1e-20, color="#1f77b4")
+                    ax.axhline(
+                        _SAFE_TEST_THRESHOLD,
+                        color="red",
+                        linestyle="--",
+                        linewidth=0.8,
+                        label=f"threshold {_SAFE_TEST_THRESHOLD:.0e}",
+                    )
+                    ax.legend(fontsize=7)
+                else:
+                    ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+                ax.set_title(title, fontsize=9)
+                ax.set_xlabel("Time", fontsize=8)
+                ax.grid(alpha=0.25)
+            reason = (
+                "FAIL / near-threshold / verbose triggered"
+                if (not safe["passed"]) or bool(getattr(args, "report_verbose", False))
+                else "near-threshold triggered"
             )
+            fig_st.suptitle(
+                f"Safe-test Detail L={L}: {'PASSED' if safe['passed'] else 'FAILED'}  "
+                f"(reason: {reason})\n"
+                f"HC max|ΔF|={safe['hc']['max_fidelity_delta']:.2e}  "
+                f"HC max|ΔE|={safe['hc']['max_energy_delta']:.2e}  "
+                f"QK max|ΔF|={safe['qk']['max_fidelity_delta']:.2e}  "
+                f"QK max|ΔE|={safe['qk']['max_energy_delta']:.2e}",
+                fontsize=10,
+            )
+            fig_st.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+            pdf.savefig(fig_st)
+            plt.close(fig_st)
 
-        fig_vqe.suptitle(
-            f"VQE Energy Comparison  L={L}\n"
-            "ΔE = VQE_hardcoded − VQE_qiskit  (shown below each bar chart)",
-            fontsize=11,
+        # --- VQE residual table (perceptible deltas) ---
+        vqe_rows = [
+            [
+                f"A0={A0}",
+                _fmt_metric(exact_filtered_a0),
+                _fmt_metric(hc_vqe_a0),
+                _fmt_metric(qk_vqe_a0),
+                _fmt_metric(delta_vqe_a0),
+                _fmt_metric(hc_vqe_a0 - exact_filtered_a0),
+                _fmt_metric(qk_vqe_a0 - exact_filtered_a0),
+            ],
+            [
+                f"A1={A1}",
+                _fmt_metric(exact_filtered_a1),
+                _fmt_metric(hc_vqe_a1),
+                _fmt_metric(qk_vqe_a1),
+                _fmt_metric(delta_vqe_a1),
+                _fmt_metric(hc_vqe_a1 - exact_filtered_a1),
+                _fmt_metric(qk_vqe_a1 - exact_filtered_a1),
+            ],
+        ]
+        vqe_identical_tol = 1e-12
+        vqe_identical = bool(
+            np.isfinite(hc_vqe_a0)
+            and np.isfinite(hc_vqe_a1)
+            and np.isfinite(qk_vqe_a0)
+            and np.isfinite(qk_vqe_a1)
+            and np.isfinite(exact_filtered_a0)
+            and np.isfinite(exact_filtered_a1)
+            and abs(hc_vqe_a1 - hc_vqe_a0) <= vqe_identical_tol
+            and abs(qk_vqe_a1 - qk_vqe_a0) <= vqe_identical_tol
+            and abs(exact_filtered_a1 - exact_filtered_a0) <= vqe_identical_tol
         )
-        fig_vqe.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+        fig_vqe = plt.figure(figsize=(11.0, 8.5))
+        ax_vqe = fig_vqe.add_subplot(111)
+        _render_compact_table(
+            ax_vqe,
+            title="VQE Energy Comparison (Residual-focused)",
+            col_labels=[
+                "Amplitude",
+                "Exact(filtered)",
+                "HC",
+                "QK",
+                "HC-QK",
+                "HC-Exact",
+                "QK-Exact",
+            ],
+            rows=vqe_rows,
+            fontsize=9,
+        )
+        vqe_note = "A0 and A1 identical within tol." if vqe_identical else "A0 and A1 differ."
+        chem_lines = _chemical_accuracy_lines(t_hartree)
+        ax_vqe.text(
+            0.02,
+            0.06,
+            " | ".join([vqe_note, *[line.strip() for line in chem_lines if line.strip()]]),
+            transform=ax_vqe.transAxes,
+            fontsize=8,
+            ha="left",
+            va="bottom",
+        )
+        fig_vqe.suptitle(f"VQE Energy Comparison L={L}", fontsize=11)
+        fig_vqe.tight_layout(rect=(0.0, 0.0, 1.0, 0.93))
         pdf.savefig(fig_vqe)
         plt.close(fig_vqe)
 
-        # --- Pages 5–6: trajectory overlay  A0 vs A1 (HC then QK) ----
-        # Each page has 4 subplots.  For energy / n_up / doublon we plot
-        # both the Trotter curve and the exact (reference) curve at each
-        # amplitude so the user can see both the physics and the Trotter
-        # error.  Fidelity has no separate exact curve.
-        #
-        # Tuple: (trotter_key, exact_key_or_None, y-axis label)
-        _traj_keys = [
-            ("fidelity",            None,                "Fidelity"),
-            ("energy_trotter",      "energy_exact",      "Energy"),
-            ("n_up_site0_trotter",  "n_up_site0_exact",  "⟨n↑₀⟩"),
-            ("doublon_trotter",     "doublon_exact",     "Double Occupancy"),
-        ]
+        # --- Combined trajectory overlay (HC + Exact in one page) ---
+        fig_ov, axes_ov = plt.subplots(2, 2, figsize=(11.0, 8.5))
+        ax_list = axes_ov.ravel()
 
-        def _safe_arr(rows: list, key: str) -> np.ndarray:
-            """Like _arr but returns empty array when key is absent."""
-            vals = [float(r[key]) for r in rows if key in r]
-            return np.array(vals, dtype=float) if vals else np.array([], dtype=float)
+        def _plot_combo(ax: Any, kind: str, *, title: str, ylabel: str, include_exact: bool) -> None:
+            t_a0_h = _arr_optional(a0_hc_rows, "time")
+            t_a1_h = _arr_optional(a1_hc_rows, "time")
+            t_a0_q = _arr_optional(a0_qk_rows, "time")
+            t_a1_q = _arr_optional(a1_qk_rows, "time")
+            y_a0_h = _observables_series(a0_hc_rows, kind, "trotter")
+            y_a1_h = _observables_series(a1_hc_rows, kind, "trotter")
 
-        for tag_label, payload_a0, payload_a1 in [
-            ("Hardcoded (HC)", a0_hc, a1_hc),
-            ("Qiskit (QK)",    a0_qk, a1_qk),
-        ]:
-            traj_a0 = payload_a0.get("trajectory", [])
-            traj_a1 = payload_a1.get("trajectory", [])
-            times_a0 = _arr(traj_a0, "time")
-            times_a1 = _arr(traj_a1, "time")
+            has_data = False
+            if y_a0_h.size > 0 and t_a0_h.size > 0:
+                ax.plot(t_a0_h[: y_a0_h.size], y_a0_h, color="#1f77b4", linestyle="-", linewidth=1.2, label=f"HC A0={A0}")
+                has_data = True
+            if y_a1_h.size > 0 and t_a1_h.size > 0:
+                ax.plot(t_a1_h[: y_a1_h.size], y_a1_h, color="#d62728", linestyle="-", linewidth=1.2, label=f"HC A1={A1}")
+                has_data = True
 
-            fig_ov, axes_ov = plt.subplots(2, 2, figsize=(11.0, 8.5))
-            axes_flat = axes_ov.ravel()
-            for idx, (tkey, ekey, nice) in enumerate(_traj_keys):
-                ax = axes_flat[idx]
-                has_data = False
-
-                # -- Trotter curves --
-                yt0 = _safe_arr(traj_a0, tkey)
-                yt1 = _safe_arr(traj_a1, tkey)
-                if yt0.size > 0:
-                    ax.plot(times_a0[: yt0.size], yt0,
-                            label=f"Trotter A={A0}", linewidth=1.4, color="#1f77b4")
+            if include_exact:
+                y_a0_ex = _observables_series(a0_hc_rows, kind, "exact")
+                y_a1_ex = _observables_series(a1_hc_rows, kind, "exact")
+                t_a0_ex = t_a0_h
+                t_a1_ex = t_a1_h
+                if y_a0_ex.size == 0:
+                    y_a0_ex = _observables_series(a0_qk_rows, kind, "exact")
+                    t_a0_ex = t_a0_q
+                if y_a1_ex.size == 0:
+                    y_a1_ex = _observables_series(a1_qk_rows, kind, "exact")
+                    t_a1_ex = t_a1_q
+                if y_a0_ex.size > 0 and t_a0_ex.size > 0:
+                    ax.plot(t_a0_ex[: y_a0_ex.size], y_a0_ex, color="#1f77b4", linestyle="--", linewidth=1.0, label=f"Exact A0={A0}")
                     has_data = True
-                if yt1.size > 0:
-                    ax.plot(times_a1[: yt1.size], yt1,
-                            label=f"Trotter A={A1}", linewidth=1.4, color="#d62728")
+                if y_a1_ex.size > 0 and t_a1_ex.size > 0:
+                    ax.plot(t_a1_ex[: y_a1_ex.size], y_a1_ex, color="#d62728", linestyle="--", linewidth=1.0, label=f"Exact A1={A1}")
                     has_data = True
 
-                # -- Exact curves (thin dashed, same colour family) --
-                if ekey is not None:
-                    ye0 = _safe_arr(traj_a0, ekey)
-                    ye1 = _safe_arr(traj_a1, ekey)
-                    if ye0.size > 0:
-                        ax.plot(times_a0[: ye0.size], ye0,
-                                label=f"Exact A={A0}", linewidth=1.0,
-                                color="#1f77b4", linestyle="--", alpha=0.7)
-                        has_data = True
-                    if ye1.size > 0:
-                        ax.plot(times_a1[: ye1.size], ye1,
-                                label=f"Exact A={A1}", linewidth=1.0,
-                                color="#d62728", linestyle="--", alpha=0.7)
-                        has_data = True
+            if not has_data:
+                ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(title, fontsize=9)
+            ax.set_xlabel("Time", fontsize=8)
+            ax.set_ylabel(ylabel, fontsize=8)
+            ax.grid(alpha=0.25)
+            if kind == "fidelity":
+                _set_fidelity_ylim(ax, y_a0_h, y_a1_h)
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(fontsize=6, loc="best")
 
-                if not has_data:
-                    ax.text(0.5, 0.5, "no data", ha="center", va="center",
-                            transform=ax.transAxes)
-                ax.set_title(f"{nice}", fontsize=10)
-                ax.set_xlabel("Time", fontsize=8)
-                ax.set_ylabel(nice, fontsize=8)
-                ax.legend(fontsize=7, loc="best")
-                ax.grid(alpha=0.25)
-            fig_ov.suptitle(
-                f"Trajectory Overlay  L={L}  —  {tag_label}\n"
-                f"Solid = Trotter,  Dashed = Exact   |   "
-                f"Blue = A={A0},  Red = A={A1}",
-                fontsize=11,
+        _plot_combo(ax_list[0], "fidelity", title="Fidelity", ylabel="Fidelity", include_exact=False)
+        _plot_combo(ax_list[1], "energy", title="Energy (E0(t)=<H0>)", ylabel="E0(t)", include_exact=True)
+        matched_kind = "staggered" if show_staggered else "density_site0"
+        matched_title = "Staggered Imbalance O_stag" if show_staggered else "Site-0 Density <n0>"
+        matched_ylabel = "O_stag" if show_staggered else "<n0>"
+        _plot_combo(ax_list[2], matched_kind, title=matched_title, ylabel=matched_ylabel, include_exact=True)
+        _plot_combo(ax_list[3], "doublon", title="Double Occupancy / site", ylabel="doublon/site", include_exact=True)
+        fig_ov.suptitle(
+            f"Trajectory Overlay L={L}\n"
+            "Color = amplitude (blue A0, red A1); style = HC solid, Exact dashed.",
+            fontsize=11,
+        )
+        fig_ov.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+        pdf.savefig(fig_ov)
+        plt.close(fig_ov)
+
+        # --- Drive-induced response page ---
+        fig_resp, axes_resp = plt.subplots(2, 2, figsize=(11.0, 8.5))
+        ax_r = axes_resp.ravel()
+        t_ref = times
+        delta_kind = matched_kind
+        d_hc_match = _response_delta(
+            _observables_series(a0_hc_rows, delta_kind, "trotter"),
+            _observables_series(a1_hc_rows, delta_kind, "trotter"),
+        )
+        d_hc_dbl = _response_delta(
+            _observables_series(a0_hc_rows, "doublon", "trotter"),
+            _observables_series(a1_hc_rows, "doublon", "trotter"),
+        )
+        d_hc_e = _response_delta(
+            _observables_series(a0_hc_rows, "energy", "trotter"),
+            _observables_series(a1_hc_rows, "energy", "trotter"),
+        )
+        d_ex_match = _response_delta(
+            _observables_series(a0_hc_rows, delta_kind, "exact"),
+            _observables_series(a1_hc_rows, delta_kind, "exact"),
+        )
+        if d_ex_match.size == 0:
+            d_ex_match = _response_delta(
+                _observables_series(a0_qk_rows, delta_kind, "exact"),
+                _observables_series(a1_qk_rows, delta_kind, "exact"),
             )
-            fig_ov.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
-            pdf.savefig(fig_ov)
-            plt.close(fig_ov)
+        d_ex_dbl = _response_delta(
+            _observables_series(a0_hc_rows, "doublon", "exact"),
+            _observables_series(a1_hc_rows, "doublon", "exact"),
+        )
+        if d_ex_dbl.size == 0:
+            d_ex_dbl = _response_delta(
+                _observables_series(a0_qk_rows, "doublon", "exact"),
+                _observables_series(a1_qk_rows, "doublon", "exact"),
+            )
+        d_ex_e = _response_delta(
+            _observables_series(a0_hc_rows, "energy", "exact"),
+            _observables_series(a1_hc_rows, "energy", "exact"),
+        )
+        if d_ex_e.size == 0:
+            d_ex_e = _response_delta(
+                _observables_series(a0_qk_rows, "energy", "exact"),
+                _observables_series(a1_qk_rows, "energy", "exact"),
+            )
 
-        # --- Page 7: text summary ---
-        summary_lines = [
-            f"Amplitude Comparison Summary  L={L}",
-            "",
-            f"  A0 = {A0}   (trivial / safe-test amplitude)",
-            f"  A1 = {A1}   (active amplitude)",
-            "",
-            "Safe-test (no-drive vs drive-enabled A0=0):",
-            f"  passed          : {safe['passed']}",
-            f"  threshold       : {safe['threshold']:.2e}",
-            f"  HC max|ΔFid|    : {safe['hc']['max_fidelity_delta']:.6e}",
-            f"  HC max|ΔE_trot| : {safe['hc']['max_energy_delta']:.6e}",
-            f"  QK max|ΔFid|    : {safe['qk']['max_fidelity_delta']:.6e}",
-            f"  QK max|ΔE_trot| : {safe['qk']['max_energy_delta']:.6e}",
-            "",
-            "VQE energies at A0:",
-            f"  exact_filtered  : {exact_filtered_a0:.10f}" if np.isfinite(exact_filtered_a0) else "  exact_filtered  : N/A",
-            f"  HC VQE energy   : {hc_vqe_a0:.10f}" if np.isfinite(hc_vqe_a0) else "  HC VQE energy   : N/A",
-            f"  QK VQE energy   : {qk_vqe_a0:.10f}" if np.isfinite(qk_vqe_a0) else "  QK VQE energy   : N/A",
-            f"  delta_vqe_hc_minus_qk_at_A0 : {delta_vqe_a0:.6e}" if np.isfinite(delta_vqe_a0) else "  delta_vqe_hc_minus_qk_at_A0 : N/A",
-            "",
-            "VQE energies at A1:",
-            f"  exact_filtered  : {exact_filtered_a1:.10f}" if np.isfinite(exact_filtered_a1) else "  exact_filtered  : N/A",
-            f"  HC VQE energy   : {hc_vqe_a1:.10f}" if np.isfinite(hc_vqe_a1) else "  HC VQE energy   : N/A",
-            f"  QK VQE energy   : {qk_vqe_a1:.10f}" if np.isfinite(qk_vqe_a1) else "  QK VQE energy   : N/A",
-            f"  delta_vqe_hc_minus_qk_at_A1 : {delta_vqe_a1:.6e}" if np.isfinite(delta_vqe_a1) else "  delta_vqe_hc_minus_qk_at_A1 : N/A",
-        ]
-        _render_text_page(pdf, summary_lines)
+        ax_r[0].plot(t_ref[: drive_a0.size], drive_a0, color="#1f77b4", linewidth=1.2, label=f"A0={A0}")
+        ax_r[0].plot(t_ref[: drive_a1.size], drive_a1, color="#d62728", linewidth=1.2, label=f"A1={A1}")
+        ax_r[0].axhline(0.0, color="#555555", linewidth=0.8, alpha=0.8)
+        ax_r[0].set_title("Drive waveform f(t)", fontsize=9)
+        ax_r[0].set_xlabel("Time", fontsize=8)
+        ax_r[0].set_ylabel("f(t)", fontsize=8)
+        ax_r[0].grid(alpha=0.25)
+        ax_r[0].legend(fontsize=7)
+
+        for ax, d_hc, d_ex, title, ylabel in [
+            (
+                ax_r[1],
+                d_hc_match,
+                d_ex_match,
+                ("ΔO_stag(t)" if show_staggered else "Δn_site0(t)"),
+                ("ΔO_stag" if show_staggered else "Δn_site0"),
+            ),
+            (ax_r[2], d_hc_dbl, d_ex_dbl, "ΔDoubleOcc(t)", "Δdoublon/site"),
+            (ax_r[3], d_hc_e, d_ex_e, "ΔEnergy(t)", "ΔE0(t)"),
+        ]:
+            if d_hc.size > 0:
+                ax.plot(t_ref[: d_hc.size], d_hc, color="#d62728", linewidth=1.2, label="HC Δ")
+            if d_ex.size > 0:
+                ax.plot(t_ref[: d_ex.size], d_ex, color="#111111", linestyle="--", linewidth=1.0, label="Exact Δ")
+            if d_hc.size == 0 and d_ex.size == 0:
+                ax.text(0.5, 0.5, "no data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(title, fontsize=9)
+            ax.set_xlabel("Time", fontsize=8)
+            ax.set_ylabel(ylabel, fontsize=8)
+            ax.grid(alpha=0.25)
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(fontsize=7, loc="best")
+
+        fig_resp.suptitle(f"Drive-Induced Response L={L} (A1 - A0)", fontsize=11)
+        fig_resp.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+        pdf.savefig(fig_resp)
+        plt.close(fig_resp)
+
+        # --- Optional site-resolved heatmaps ---
+        n_a1 = _matrix_optional(a1_hc_rows, "n_site_trotter")
+        n_a0 = _matrix_optional(a0_hc_rows, "n_site_trotter")
+        t_heat = _arr_optional(a1_hc_rows, "time")
+        if n_a1.size > 0 and n_a1.shape[1] > 0 and t_heat.size > 0:
+            n_rows = min(n_a0.shape[0], n_a1.shape[0])
+            if n_rows > 0 and n_a0.shape[1] == n_a1.shape[1]:
+                delta_mat = n_a1[:n_rows, :] - n_a0[:n_rows, :]
+            else:
+                delta_mat = np.zeros_like(n_a1)
+            fig_hm, axes_hm = plt.subplots(1, 2, figsize=(11.0, 8.5))
+            im0 = axes_hm[0].imshow(
+                n_a1.T,
+                aspect="auto",
+                origin="lower",
+                extent=[float(t_heat[0]), float(t_heat[min(len(t_heat) - 1, n_a1.shape[0] - 1)]), -0.5, n_a1.shape[1] - 0.5],
+            )
+            axes_hm[0].set_title(f"<n_i(t)> A1={A1}", fontsize=10)
+            axes_hm[0].set_xlabel("Time")
+            axes_hm[0].set_ylabel("Site index")
+            fig_hm.colorbar(im0, ax=axes_hm[0], shrink=0.8)
+            im1 = axes_hm[1].imshow(
+                delta_mat.T,
+                aspect="auto",
+                origin="lower",
+                extent=[float(t_heat[0]), float(t_heat[min(len(t_heat) - 1, delta_mat.shape[0] - 1)]), -0.5, delta_mat.shape[1] - 0.5],
+            )
+            axes_hm[1].set_title("Δn_i(t) = n_i,A1 - n_i,A0", fontsize=10)
+            axes_hm[1].set_xlabel("Time")
+            axes_hm[1].set_ylabel("Site index")
+            fig_hm.colorbar(im1, ax=axes_hm[1], shrink=0.8)
+            fig_hm.suptitle(f"Site-Resolved Density Heatmaps L={L}", fontsize=11)
+            fig_hm.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
+            pdf.savefig(fig_hm)
+            plt.close(fig_hm)
+
+        # --- Optional response spectrum panel ---
+        spec_signal = d_hc_match if d_hc_match.size > 0 else d_hc_dbl
+        omega_grid, mag = _fft_response(spec_signal, t_ref)
+        if omega_grid.size > 0 and mag.size > 0:
+            fig_fft, ax_fft = plt.subplots(1, 1, figsize=(11.0, 8.5))
+            ax_fft.plot(omega_grid, mag, color="#1f77b4", linewidth=1.3, label="|FFT(windowed response)|")
+            ax_fft.axvline(float(args.drive_omega), color="#d62728", linestyle="--", linewidth=1.0, label=f"drive ω={float(args.drive_omega):.3f}")
+            ax_fft.set_xlabel("ω")
+            ax_fft.set_ylabel("Magnitude")
+            ax_fft.set_title(
+                "Response Spectrum "
+                + ("(ΔO_stag)" if d_hc_match.size > 0 else "(Δdoublon/site)"),
+                fontsize=10,
+            )
+            ax_fft.grid(alpha=0.25)
+            ax_fft.legend(fontsize=8)
+            fig_fft.suptitle(f"Drive-Induced Response Spectrum L={L}", fontsize=11)
+            fig_fft.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
+            pdf.savefig(fig_fft)
+            plt.close(fig_fft)
 
     return metrics
 
@@ -1610,11 +2143,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hardcoded-vqe-restarts", type=int, default=3)
     parser.add_argument("--hardcoded-vqe-seed", type=int, default=7)
     parser.add_argument("--hardcoded-vqe-maxiter", type=int, default=600)
+    parser.add_argument(
+        "--hardcoded-vqe-method",
+        type=str,
+        default="COBYLA",
+        choices=["SLSQP", "COBYLA", "L-BFGS-B", "Powell", "Nelder-Mead"],
+    )
 
     parser.add_argument("--qiskit-vqe-reps", type=int, default=2)
     parser.add_argument("--qiskit-vqe-restarts", type=int, default=3)
     parser.add_argument("--qiskit-vqe-seed", type=int, default=7)
     parser.add_argument("--qiskit-vqe-maxiter", type=int, default=600)
+    parser.add_argument(
+        "--qiskit-vqe-optimizer",
+        type=str,
+        default="COBYLA",
+        choices=["SLSQP", "COBYLA", "L_BFGS_B"],
+    )
 
     parser.add_argument("--qpe-eval-qubits", type=int, default=5)
     parser.add_argument("--qpe-shots", type=int, default=256)
@@ -1713,8 +2258,39 @@ def parse_args() -> argparse.Namespace:
             "Requires --enable-drive (or any drive flags) to be meaningful."
         ),
     )
+    parser.add_argument(
+        "--report-verbose",
+        action="store_true",
+        default=False,
+        help=(
+            "Emit verbose report pages. For amplitude PDFs this forces the "
+            "full safe-test detail page even when far from threshold."
+        ),
+    )
+    parser.add_argument(
+        "--safe-test-near-threshold-factor",
+        type=float,
+        default=100.0,
+        help=(
+            "Near-threshold gate for rendering full safe-test plots. "
+            "The detail page appears when max_safe_delta >= threshold/factor, "
+            "or on failure, or with --report-verbose."
+        ),
+    )
 
     parser.add_argument("--artifacts-dir", type=Path, default=ROOT / "artifacts")
+    parser.add_argument(
+        "--t-hartree",
+        type=float,
+        default=None,
+        metavar="HARTREE",
+        help=(
+            "Physical value of the hopping parameter t in Hartree.  "
+            "Used to express chemical accuracy (1.6e-3 Ha) in the "
+            "model's natural energy units on every PDF text page.  "
+            "Example: for cuprate t≈0.3 eV, pass --t-hartree 0.01102."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1767,6 +2343,7 @@ def main() -> None:
                 "--vqe-restarts", str(args.hardcoded_vqe_restarts),
                 "--vqe-seed", str(args.hardcoded_vqe_seed),
                 "--vqe-maxiter", str(args.hardcoded_vqe_maxiter),
+                "--vqe-method", str(args.hardcoded_vqe_method),
                 "--qpe-eval-qubits", str(args.qpe_eval_qubits),
                 "--qpe-shots", str(args.qpe_shots),
                 "--qpe-seed", str(args.qpe_seed),
@@ -1802,6 +2379,7 @@ def main() -> None:
                 "--vqe-restarts", str(args.qiskit_vqe_restarts),
                 "--vqe-seed", str(args.qiskit_vqe_seed),
                 "--vqe-maxiter", str(args.qiskit_vqe_maxiter),
+                "--vqe-optimizer", str(args.qiskit_vqe_optimizer),
                 "--qpe-eval-qubits", str(args.qpe_eval_qubits),
                 "--qpe-shots", str(args.qpe_shots),
                 "--qpe-seed", str(args.qpe_seed),
@@ -1855,7 +2433,7 @@ def main() -> None:
             passed=bool(metrics["acceptance"]["pass"]),
             gs_abs_delta=float(metrics["ground_state_energy"]["abs_delta"]),
             fidelity_max_abs_delta=float(metrics["trajectory_deltas"]["fidelity"]["max_abs_delta"]),
-            energy_trotter_max_abs_delta=float(metrics["trajectory_deltas"]["energy_trotter"]["max_abs_delta"]),
+            energy_static_trotter_max_abs_delta=float(metrics["trajectory_deltas"]["energy_static_trotter"]["max_abs_delta"]),
         )
 
         metrics_payload = {
@@ -1877,6 +2455,7 @@ def main() -> None:
                 qiskit=qiskit,
                 metrics=metrics,
                 run_command=run_command,
+                t_hartree=args.t_hartree,
             )
 
         per_l_data.append((row.L, hardcoded, qiskit, metrics))
@@ -1950,6 +2529,7 @@ def main() -> None:
         isolation_check=isolation_check,
         include_per_l_pages=True,
         run_command=run_command,
+        t_hartree=args.t_hartree,
     )
     _ai_log(
         "compare_main_done",
@@ -1991,6 +2571,7 @@ def main() -> None:
                 A1=A1,
                 args=args,
                 run_command=run_command,
+                t_hartree=args.t_hartree,
             )
             amp_metrics_path = json_dir / f"amp_{tag}_metrics.json"
             amp_metrics_path.write_text(

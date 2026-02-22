@@ -39,12 +39,15 @@ The compare pipeline supports an **amplitude-comparison mode** (`--with-drive-am
 that exercises the drive at two amplitudes (A0 = trivial, A1 = active) and produces a
 multi-page PDF containing:
 
-1. **Safe-test page** — semilogy plots verifying that drive-disabled ≡ drive-enabled-A=0 (must be identical to machine precision)
-2. **VQE comparison page** — bar charts showing Exact / HC-VQE / QK-VQE energies at each amplitude with ΔE annotations
-3. **Text summary** — safe-test verdict, VQE energies, and delta values
+1. **Scoreboard + physics headline page** — compact HC-vs-QK agreement table, A1−A0 response table, and the exact drive waveform `f(t)` used in `H(t)`.
+2. **Drive-induced response page** — explicit Δ-observable traces (`ΔEnergy`, `ΔDoubleOcc`, and matched channel such as `ΔO_stag` for staggered drives).
+3. **Combined trajectory overlay page** — single page (HC + QK together) with color encoding amplitude and linestyle encoding implementation.
+4. **VQE residual page** — residual-focused table (`HC-QK`, `HC-exact`, `QK-exact`) to make tiny deltas perceptible.
+5. **Conditional safe-test detail page** — full semilogy timeseries appears only on fail, near-threshold, or with `--report-verbose`.
+6. **Optional meeting pages** — site-resolved density heatmaps and a compact response spectrum panel.
 
-A companion `amplitude_comparison_L{L}_metrics.json` provides machine-readable fields:
-`safe_test.passed`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1`.
+A companion `amp_{tag}_metrics.json` provides machine-readable fields:
+`safe_test`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1`.
 
 ## Run Guide
 
@@ -64,7 +67,7 @@ python pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
   --drive-omega 2.0 --drive-tbar 2.0 --t-final 2.0 --num-times 21 \
   --trotter-steps 32 --skip-qpe
 
-# Amplitude comparison PDF (safe-test + VQE deltas)
+# Amplitude comparison PDF (scoreboard + response deltas)
 python pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
   --l-values 2 --run-pipelines --enable-drive --drive-pattern dimer_bias \
   --drive-omega 2.0 --drive-tbar 2.0 --t-final 2.0 --num-times 21 \

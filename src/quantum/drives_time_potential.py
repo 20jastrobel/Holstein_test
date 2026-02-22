@@ -134,6 +134,42 @@ def gaussian_sinusoid_waveform(
     return float(A) * math.sin(arg) * env
 
 
+def evaluate_drive_waveform(
+    times: Sequence[float] | np.ndarray,
+    drive_config: Dict[str, float | int | str | None],
+    amplitude: float,
+) -> np.ndarray:
+    """Evaluate scalar drive coefficients on a time grid used by the report.
+
+    The returned waveform is the same scalar ``f(t)`` that multiplies the
+    drive operator in the Hamiltonian, with ``t0`` applied exactly as in the
+    evolution kernels (sampled at ``t + t0``).
+    """
+    arr = np.asarray(times, dtype=float)
+    shape = arr.shape
+    flat_t = arr.reshape(-1)
+
+    omega = float(drive_config.get("drive_omega", drive_config.get("omega", 1.0)))
+    tbar = float(drive_config.get("drive_tbar", drive_config.get("tbar", 1.0)))
+    phi = float(drive_config.get("drive_phi", drive_config.get("phi", 0.0)))
+    t0 = float(drive_config.get("drive_t0", drive_config.get("t0", 0.0)))
+
+    vals = np.array(
+        [
+            gaussian_sinusoid_waveform(
+                float(t) + t0,
+                A=float(amplitude),
+                omega=omega,
+                tbar=tbar,
+                phi=phi,
+            )
+            for t in flat_t
+        ],
+        dtype=float,
+    )
+    return vals.reshape(shape)
+
+
 # ---------------------------------------------------------------------------
 # Spatial weights
 # ---------------------------------------------------------------------------

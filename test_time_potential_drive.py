@@ -30,6 +30,7 @@ for p in (REPO_ROOT, PIPELINE_ROOT):
 from src.quantum.drives_time_potential import (
     DensityDriveTemplate,
     build_gaussian_sinusoid_density_drive,
+    evaluate_drive_waveform,
     gaussian_sinusoid_waveform,
 )
 from src.quantum.hubbard_latex_python_pairs import SPIN_DN, SPIN_UP, mode_index
@@ -263,6 +264,45 @@ class TestWaveform(unittest.TestCase):
         A = 2.0
         v = gaussian_sinusoid_waveform(0.0, A=A, omega=1.0, tbar=1.0, phi=phi)
         self.assertAlmostEqual(v, A * math.sin(phi), places=14)
+
+    def test_evaluate_drive_waveform_matches_scalar(self) -> None:
+        times = np.array([0.0, 0.25, 0.5, 0.75], dtype=float)
+        cfg = {
+            "drive_omega": 1.7,
+            "drive_tbar": 2.0,
+            "drive_phi": 0.3,
+            "drive_t0": 0.0,
+        }
+        got = evaluate_drive_waveform(times, cfg, amplitude=0.9)
+        expected = np.array(
+            [
+                gaussian_sinusoid_waveform(
+                    float(t),
+                    A=0.9,
+                    omega=1.7,
+                    tbar=2.0,
+                    phi=0.3,
+                )
+                for t in times
+            ],
+            dtype=float,
+        )
+        self.assertTrue(np.allclose(got, expected, atol=1e-14, rtol=0.0))
+
+    def test_evaluate_drive_waveform_applies_t0(self) -> None:
+        times = np.array([0.0, 0.2, 0.4], dtype=float)
+        cfg = {
+            "omega": 2.0,
+            "tbar": 1.5,
+            "phi": 0.0,
+            "t0": 0.5,
+        }
+        got = evaluate_drive_waveform(times, cfg, amplitude=1.0)
+        expected = np.array(
+            [gaussian_sinusoid_waveform(float(t) + 0.5, A=1.0, omega=2.0, tbar=1.5, phi=0.0) for t in times],
+            dtype=float,
+        )
+        self.assertTrue(np.allclose(got, expected, atol=1e-14, rtol=0.0))
 
 
 if __name__ == "__main__":

@@ -331,27 +331,77 @@ def _expectation_hamiltonian(psi: np.ndarray, hmat: np.ndarray) -> float:
     return float(np.real(np.vdot(psi, hmat @ psi)))
 
 
-def _occupation_site0(psi: np.ndarray, num_sites: int) -> tuple[float, float]:
-    probs = np.abs(psi) ** 2
-    n_up = 0.0
-    n_dn = 0.0
-    for idx, prob in enumerate(probs):
-        n_up += float((idx >> 0) & 1) * float(prob)
-        n_dn += float((idx >> num_sites) & 1) * float(prob)
-    return float(n_up), float(n_dn)
+def _build_drive_matrix_at_time(
+    drive_coeff_provider_exyz: Any,
+    t_physical: float,
+    nq: int,
+) -> np.ndarray:
+    """Build the full drive Hamiltonian matrix at a given physical time.
+
+    Returns a ``(2**nq, 2**nq)`` complex matrix representing H_drive(t).
+    If the drive map is empty at this time (e.g., A=0 or envelope → 0), the
+    returned matrix is the zero matrix.
+    """
+    dim = 1 << nq
+    drive_map = dict(drive_coeff_provider_exyz(float(t_physical)))
+    if not drive_map:
+        return np.zeros((dim, dim), dtype=complex)
+    # Fast path: check if all labels are Z-type (diagonal).
+    if all(_is_all_z_type(lbl) for lbl in drive_map if abs(drive_map[lbl]) > 1e-15):
+        diag = _build_drive_diagonal(
+            {lbl: complex(c) for lbl, c in drive_map.items() if abs(c) > 1e-15},
+            dim,
+            nq,
+        )
+        return np.diag(diag)
+    # General path: build from Pauli matrices.
+    hmat_drive = np.zeros((dim, dim), dtype=complex)
+    for lbl, c in drive_map.items():
+        if abs(c) <= 1e-15:
+            continue
+        hmat_drive += complex(c) * _pauli_matrix_exyz(lbl)
+    return hmat_drive
 
 
-def _doublon_total(psi: np.ndarray, num_sites: int) -> float:
+def _spin_orbital_bit_index(site: int, spin: int, num_sites: int, ordering: str) -> int:
+    ord_norm = str(ordering).strip().lower()
+    if ord_norm == "blocked":
+        return int(site) if int(spin) == 0 else int(num_sites) + int(site)
+    if ord_norm == "interleaved":
+        return (2 * int(site)) + int(spin)
+    raise ValueError(f"Unsupported ordering {ordering!r}")
+
+
+def _site_resolved_number_observables(
+    psi: np.ndarray,
+    num_sites: int,
+    ordering: str,
+) -> tuple[np.ndarray, np.ndarray, float]:
     probs = np.abs(psi) ** 2
-    out = 0.0
+    n_up = np.zeros(int(num_sites), dtype=float)
+    n_dn = np.zeros(int(num_sites), dtype=float)
+    doublon_total = 0.0
+    up_bits = [_spin_orbital_bit_index(site, 0, num_sites, ordering) for site in range(int(num_sites))]
+    dn_bits = [_spin_orbital_bit_index(site, 1, num_sites, ordering) for site in range(int(num_sites))]
+
     for idx, prob in enumerate(probs):
-        count = 0
-        for site in range(num_sites):
-            up = (idx >> site) & 1
-            dn = (idx >> (num_sites + site)) & 1
-            count += int(up * dn)
-        out += float(count) * float(prob)
-    return float(out)
+        p = float(prob)
+        if p <= 0.0:
+            continue
+        for site in range(int(num_sites)):
+            up = int((idx >> up_bits[site]) & 1)
+            dn = int((idx >> dn_bits[site]) & 1)
+            n_up[site] += float(up) * p
+            n_dn[site] += float(dn) * p
+            doublon_total += float(up * dn) * p
+    return n_up, n_dn, float(doublon_total)
+
+
+def _staggered_order(n_total_site: np.ndarray) -> float:
+    if n_total_site.size == 0:
+        return float("nan")
+    signs = np.array([1.0 if (i % 2 == 0) else -1.0 for i in range(int(n_total_site.size))], dtype=float)
+    return float(np.sum(signs * n_total_site) / float(n_total_site.size))
 
 
 def _state_to_amplitudes_qn_to_q0(psi: np.ndarray, cutoff: float = 1e-12) -> dict[str, dict[str, float]]:
@@ -392,6 +442,7 @@ def _run_hardcoded_vqe(
     restarts: int,
     seed: int,
     maxiter: int,
+    method: str,
 ) -> tuple[dict[str, Any], np.ndarray]:
     t0 = time.perf_counter()
     _ai_log(
@@ -402,6 +453,7 @@ def _run_hardcoded_vqe(
         restarts=int(restarts),
         maxiter=int(maxiter),
         seed=int(seed),
+        method=str(method),
     )
     ns = _load_hardcoded_vqe_namespace()
     num_particles = tuple(ns["half_filled_num_particles"](int(num_sites)))
@@ -426,7 +478,7 @@ def _run_hardcoded_vqe(
         restarts=int(restarts),
         seed=int(seed),
         maxiter=int(maxiter),
-        method="SLSQP",
+        method=str(method),
     )
 
     theta = np.asarray(result.theta, dtype=float)
@@ -444,6 +496,7 @@ def _run_hardcoded_vqe(
         "num_particles": {"n_up": int(num_particles[0]), "n_dn": int(num_particles[1])},
         "num_parameters": int(ansatz.num_parameters),
         "reps": int(reps),
+        "optimizer_method": str(method),
         "optimal_point": [float(x) for x in theta.tolist()],
         "hf_bitstring_qn_to_q0": hf_bits,
     }
@@ -919,6 +972,7 @@ def _evolve_piecewise_exact(
 def _simulate_trajectory(
     *,
     num_sites: int,
+    ordering: str,
     psi0: np.ndarray,
     hmat: np.ndarray,
     ordered_labels_exyz: list[str],
@@ -1015,21 +1069,60 @@ def _simulate_trajectory(
             )
 
         fidelity = float(abs(np.vdot(psi_exact, psi_trot)) ** 2)
-        n_up_exact, n_dn_exact = _occupation_site0(psi_exact, num_sites)
-        n_up_trot, n_dn_trot = _occupation_site0(psi_trot, num_sites)
+        n_up_exact_site, n_dn_exact_site, doublon_exact = _site_resolved_number_observables(
+            psi_exact,
+            num_sites,
+            ordering,
+        )
+        n_up_trot_site, n_dn_trot_site, doublon_trot = _site_resolved_number_observables(
+            psi_trot,
+            num_sites,
+            ordering,
+        )
+        n_exact_site = n_up_exact_site + n_dn_exact_site
+        n_trot_site = n_up_trot_site + n_dn_trot_site
+        n_up_exact = float(n_up_exact_site[0]) if n_up_exact_site.size > 0 else float("nan")
+        n_dn_exact = float(n_dn_exact_site[0]) if n_dn_exact_site.size > 0 else float("nan")
+        n_up_trot = float(n_up_trot_site[0]) if n_up_trot_site.size > 0 else float("nan")
+        n_dn_trot = float(n_dn_trot_site[0]) if n_dn_trot_site.size > 0 else float("nan")
+        energy_static_exact = _expectation_hamiltonian(psi_exact, hmat)
+        energy_static_trotter = _expectation_hamiltonian(psi_trot, hmat)
+
+        # --- total (instantaneous) energy: H_static + H_drive(t) ---
+        # The physical time for the drive at observation time t is
+        # drive_t0 + t, matching the propagator convention.
+        if has_drive:
+            t_physical = float(drive_t0) + t
+            hmat_drive_t = _build_drive_matrix_at_time(
+                drive_coeff_provider_exyz, t_physical, nq,
+            )
+            hmat_total_t = hmat + hmat_drive_t
+            energy_total_exact = _expectation_hamiltonian(psi_exact, hmat_total_t)
+            energy_total_trotter = _expectation_hamiltonian(psi_trot, hmat_total_t)
+        else:
+            energy_total_exact = energy_static_exact
+            energy_total_trotter = energy_static_trotter
 
         rows.append(
             {
                 "time": t,
                 "fidelity": fidelity,
-                "energy_exact": _expectation_hamiltonian(psi_exact, hmat),
-                "energy_trotter": _expectation_hamiltonian(psi_trot, hmat),
+                "energy_static_exact": energy_static_exact,
+                "energy_static_trotter": energy_static_trotter,
+                "energy_total_exact": energy_total_exact,
+                "energy_total_trotter": energy_total_trotter,
                 "n_up_site0_exact": n_up_exact,
                 "n_up_site0_trotter": n_up_trot,
                 "n_dn_site0_exact": n_dn_exact,
                 "n_dn_site0_trotter": n_dn_trot,
-                "doublon_exact": _doublon_total(psi_exact, num_sites),
-                "doublon_trotter": _doublon_total(psi_trot, num_sites),
+                "n_site_exact": [float(x) for x in n_exact_site.tolist()],
+                "n_site_trotter": [float(x) for x in n_trot_site.tolist()],
+                "staggered_exact": _staggered_order(n_exact_site),
+                "staggered_trotter": _staggered_order(n_trot_site),
+                "doublon_exact": doublon_exact,
+                "doublon_trotter": doublon_trot,
+                "doublon_avg_exact": float(doublon_exact / float(num_sites)),
+                "doublon_avg_trotter": float(doublon_trot / float(num_sites)),
                 "norm_before_renorm": norm_before,
             }
         )
@@ -1050,7 +1143,7 @@ def _simulate_trajectory(
         total_steps=n_times,
         elapsed_sec=round(time.perf_counter() - t0, 6),
         final_fidelity=float(rows[-1]["fidelity"]) if rows else None,
-        final_energy_trotter=float(rows[-1]["energy_trotter"]) if rows else None,
+        final_energy_static_trotter=float(rows[-1]["energy_static_trotter"]) if rows else None,
     )
 
     return rows, exact_states
@@ -1087,8 +1180,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         return np.array([float(r[key]) for r in traj], dtype=float)
 
     fid = arr("fidelity")
-    e_exact = arr("energy_exact")
-    e_trot = arr("energy_trotter")
+    e_exact = arr("energy_static_exact")
+    e_trot = arr("energy_static_trotter")
     nu_exact = arr("n_up_site0_exact")
     nu_trot = arr("n_up_site0_trotter")
     nd_exact = arr("n_dn_site0_exact")
@@ -1117,11 +1210,22 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ax00.set_title(f"Fidelity(t) = |<{EXACT_LABEL}|Trotter>|^2")
         ax00.grid(alpha=0.25)
 
-        ax01.plot(times, e_exact, label=EXACT_LABEL, color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
-        ax01.plot(times, e_trot, label="Trotter", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax01.plot(times, e_exact, label=f"{EXACT_LABEL} (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
+        ax01.plot(times, e_trot, label="Trotter (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+
+        # --- optional total-energy overlay (when drive active and differs) ---
+        e_total_exact = arr("energy_total_exact")
+        e_total_trot = arr("energy_total_trotter")
+        if not (np.allclose(e_total_exact, e_exact, atol=1e-14) and
+                np.allclose(e_total_trot, e_trot, atol=1e-14)):
+            ax01.plot(times, e_total_exact, label=f"{EXACT_LABEL} (total)", color="#17becf",
+                      linewidth=1.6, marker="D", markersize=2.5, markevery=markevery, alpha=0.8)
+            ax01.plot(times, e_total_trot, label="Trotter (total)", color="#ff7f0e",
+                      linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery, alpha=0.8)
+
         ax01.set_title("Energy")
         ax01.grid(alpha=0.25)
-        ax01.legend(fontsize=8)
+        ax01.legend(fontsize=7)
 
         ax10.plot(times, nu_exact, label=f"n_up0 {EXACT_LABEL}", color="#17becf", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
         ax10.plot(times, nu_trot, label="n_up0 trotter", color="#0f7f8b", linestyle="--", linewidth=1.2, marker="s", markersize=3, markevery=markevery)
@@ -1253,6 +1357,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vqe-restarts", type=int, default=1)
     parser.add_argument("--vqe-seed", type=int, default=7)
     parser.add_argument("--vqe-maxiter", type=int, default=120)
+    parser.add_argument(
+        "--vqe-method",
+        type=str,
+        default="COBYLA",
+        choices=["SLSQP", "COBYLA", "L-BFGS-B", "Powell", "Nelder-Mead"],
+        help="SciPy optimizer used by hardcoded VQE.",
+    )
 
     parser.add_argument("--qpe-eval-qubits", type=int, default=6)
     parser.add_argument("--qpe-shots", type=int, default=1024)
@@ -1361,6 +1472,7 @@ def main() -> None:
             restarts=int(args.vqe_restarts),
             seed=int(args.vqe_seed),
             maxiter=int(args.vqe_maxiter),
+            method=str(args.vqe_method),
         )
     except Exception as exc:
         _ai_log("hardcoded_vqe_failed", L=int(args.L), error=str(exc))
@@ -1415,6 +1527,7 @@ def main() -> None:
 
     trajectory, _exact_states = _simulate_trajectory(
         num_sites=int(args.L),
+        ordering=str(args.ordering),
         psi0=psi0,
         hmat=hmat,
         ordered_labels_exyz=ordered_labels_exyz,
@@ -1455,6 +1568,12 @@ def main() -> None:
         "term_order": str(args.term_order),
         "initial_state_source": str(args.initial_state_source),
         "skip_qpe": bool(args.skip_qpe),
+        "energy_observable_definition": (
+            "energy_static_* measures <psi|H_static|psi>. "
+            "energy_total_* measures <psi|H_static + H_drive(drive_t0 + t)|psi>. "
+            "When drive is disabled, energy_total_* == energy_static_*. "
+            "Drive sampling uses the same drive_t0 convention as propagation."
+        ),
     }
     if bool(args.enable_drive):
         settings["drive"] = {

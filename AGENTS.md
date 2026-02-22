@@ -137,15 +137,15 @@ Three built-in patterns (`--drive-pattern`):
 
 The compare pipeline supports `--with-drive-amplitude-comparison-pdf` which:
 1. Runs both pipelines 3× per L: drive-disabled, A0-enabled, A1-enabled (6 sub-runs total per L).
-2. Generates a 5-page PDF per L with safe-test semilogy plots, VQE bar charts, and text summary.
+2. Generates a multi-page physics-facing PDF per L with scoreboard tables, drive waveform, response deltas, and a combined HC/QK overlay.
 3. Writes `json/amp_{tag}_metrics.json` with `safe_test`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1`.
 
 ### Rules for agents modifying amplitude comparison
 - All artifacts go to `json/` or `pdf/` subdirectories. Filenames use the tag convention `L{L}_{vt|static}_t{t}_U{u}_S{steps}`.
 - Intermediate JSON files use the `amp_H_` / `amp_Q_` prefix: `json/amp_H_L2_static_t1.0_U4.0_S32_disabled.json`, `json/amp_Q_L2_static_t1.0_U4.0_S32_A0.json`, etc.
-- The safe-test page must always be included. It validates that the drive machinery does not perturb results when amplitude is zero.
+- Safe-test scalar metrics must always be reported on the scoreboard table. The full safe-test timeseries page is conditional (fail, near-threshold, or `--report-verbose`).
 - VQE delta is defined as `ΔE = VQE_hardcoded − VQE_qiskit` (the sector-filtered energy, not full-Hilbert).
-- New amplitude comparison CLI args: `--drive-amplitudes A0,A1` and `--with-drive-amplitude-comparison-pdf`.
+- New amplitude comparison CLI args: `--drive-amplitudes A0,A1`, `--with-drive-amplitude-comparison-pdf`, `--report-verbose`, and `--safe-test-near-threshold-factor`.
 
 ---
 
@@ -199,3 +199,10 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
    ```
 5. Add higher-order Suzuki–Trotter (4th order) by composition on the existing primitive `exp(PauliTerm)` backend.
 6. Add convergence-study scripts: sweep `--trotter-steps` and `--exact-steps-multiplier` to validate Trotter-error scaling under the drive.
+
+--Note -- Take your time coding! Be safe, and do not rush. The user has a lot of time and does not need things quickly.
+
+## Plans
+
+- Make the plan consise. Sacrifice grammar for the sake of concision.
+- At the end of each plan, give me a list of unresolved questions to answer/problems, if any.

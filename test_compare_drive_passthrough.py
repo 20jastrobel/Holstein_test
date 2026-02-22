@@ -260,6 +260,12 @@ class TestParseDriveDefaults(unittest.TestCase):
     def test_drive_t0_default(self) -> None:
         self.assertAlmostEqual(self.args.drive_t0, 0.0)
 
+    def test_report_verbose_default_false(self) -> None:
+        self.assertFalse(self.args.report_verbose)
+
+    def test_safe_test_near_threshold_factor_default(self) -> None:
+        self.assertAlmostEqual(float(self.args.safe_test_near_threshold_factor), 100.0)
+
     def test_defaults_match_DRIVE_FLAG_DEFAULTS_dict(self) -> None:
         """All defaults in parse_args must match _DRIVE_FLAG_DEFAULTS sentinel."""
         for key, expected in _DRIVE_FLAG_DEFAULTS.items():

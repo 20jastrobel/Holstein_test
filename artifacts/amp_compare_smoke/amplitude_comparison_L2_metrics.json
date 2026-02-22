@@ -1,0 +1,20 @@
+{
+  "generated_utc": "2026-02-21T00:11:04.676856+00:00",
+  "L": 2,
+  "A0": 0.0,
+  "A1": 0.2,
+  "safe_test": {
+    "passed": true,
+    "threshold": 1e-10,
+    "hc": {
+      "max_fidelity_delta": 6.661338147750939e-16,
+      "max_energy_delta": 0.0
+    },
+    "qk": {
+      "max_fidelity_delta": 8.881784197001252e-16,
+      "max_energy_delta": 4.440892098500626e-16
+    }
+  },
+  "delta_vqe_hc_minus_qk_at_A0": -1.8879857677234213e-09,
+  "delta_vqe_hc_minus_qk_at_A1": -1.8879857677234213e-09
+}
