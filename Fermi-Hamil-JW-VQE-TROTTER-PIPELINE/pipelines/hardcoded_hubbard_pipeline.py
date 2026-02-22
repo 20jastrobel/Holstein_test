@@ -47,6 +47,7 @@ from src.quantum.hartree_fock_reference_state import hartree_fock_statevector
 from src.quantum.hubbard_latex_python_pairs import build_hubbard_hamiltonian
 from src.quantum.drives_time_potential import (
     build_gaussian_sinusoid_density_drive,
+    evaluate_drive_waveform,
     reference_method_name,
 )
 
@@ -93,31 +94,11 @@ def _half_filled_particles(num_sites: int) -> tuple[int, int]:
     return ((num_sites + 1) // 2, num_sites // 2)
 
 
-def _exact_energy_sector_filtered(
-    hmat: np.ndarray,
+def _sector_basis_indices(
     num_sites: int,
     num_particles: tuple[int, int],
     ordering: str,
-) -> float:
-    """Return the lowest eigenvalue of *hmat* restricted to the particle sector
-    ``(n_up, n_dn) = num_particles``.
-
-    The sector is identified by counting set bits in the computational-basis
-    index according to the qubit layout:
-
-    * **blocked** (default for JW):  qubits 0 … L-1 are spin-up, L … 2L-1
-      are spin-down.  ``n_up = popcount(idx & up_mask)``,
-      ``n_dn = popcount(idx & dn_mask)``.
-    * **interleaved**: qubits 0, 2, 4, … are spin-up; 1, 3, 5, … are
-      spin-down.
-
-    Only basis states with exactly the requested particle numbers are kept.
-    The Hamiltonian is projected onto the sector subspace and diagonalised.
-    If no states satisfy the filter an error is raised.
-
-    This energy is the *apples-to-apples* comparison target for VQE, which is
-    also run in the same half-filled sector.
-    """
+) -> np.ndarray:
     nq = 2 * int(num_sites)
     dim = 1 << nq
     n_up_want, n_dn_want = int(num_particles[0]), int(num_particles[1])
@@ -134,35 +115,53 @@ def _exact_energy_sector_filtered(
     else:
         # Interleaved: even bits → spin-up, odd bits → spin-down.
         even_mask = int(sum(1 << (2 * q) for q in range(num_sites)))
-        odd_mask  = int(sum(1 << (2 * q + 1) for q in range(num_sites)))
+        odd_mask = int(sum(1 << (2 * q + 1) for q in range(num_sites)))
         n_up_arr = np.array([bin(int(i) & even_mask).count("1") for i in idx_all], dtype=np.int32)
         n_dn_arr = np.array([bin(int(i) & odd_mask).count("1") for i in idx_all], dtype=np.int32)
 
     sector_indices = np.where((n_up_arr == n_up_want) & (n_dn_arr == n_dn_want))[0]
-    if len(sector_indices) == 0:
+    if sector_indices.size == 0:
         raise ValueError(
             f"No basis states found for sector (n_up={n_up_want}, n_dn={n_dn_want}) "
             f"with ordering='{ordering}', num_sites={num_sites}."
         )
+    return sector_indices
 
+
+def _exact_ground_state_sector_filtered(
+    hmat: np.ndarray,
+    num_sites: int,
+    num_particles: tuple[int, int],
+    ordering: str,
+) -> tuple[float, np.ndarray]:
+    """Return (ground_energy, embedded_ground_statevector) in a fixed sector."""
+    sector_indices = _sector_basis_indices(num_sites, num_particles, ordering)
     h_sector = hmat[np.ix_(sector_indices, sector_indices)]
-    evals_sector = np.linalg.eigvalsh(h_sector)
-    return float(np.real(evals_sector[0]))
+    evals_sector, evecs_sector = np.linalg.eigh(h_sector)
+    gs_idx = int(np.argmin(evals_sector))
+    gs_energy = float(np.real(evals_sector[gs_idx]))
 
-    coeff_map: dict[str, complex] = {}
-    order: list[str] = []
-    for term in poly.return_polynomial():
-        label = str(term.pw2strng())
-        coeff = complex(term.p_coeff)
-        if abs(coeff) <= tol:
-            continue
-        if label not in coeff_map:
-            coeff_map[label] = 0.0 + 0.0j
-            order.append(label)
-        coeff_map[label] += coeff
-    cleaned_order = [lbl for lbl in order if abs(coeff_map[lbl]) > tol]
-    cleaned_map = {lbl: coeff_map[lbl] for lbl in cleaned_order}
-    return cleaned_order, cleaned_map
+    psi_sector = np.asarray(evecs_sector[:, gs_idx], dtype=complex).reshape(-1)
+    psi_full = np.zeros(hmat.shape[0], dtype=complex)
+    psi_full[sector_indices] = psi_sector
+    psi_full = _normalize_state(psi_full)
+    return gs_energy, psi_full
+
+
+def _exact_energy_sector_filtered(
+    hmat: np.ndarray,
+    num_sites: int,
+    num_particles: tuple[int, int],
+    ordering: str,
+) -> float:
+    """Backward-compatible helper: return only the filtered-sector energy."""
+    gs_energy, _psi = _exact_ground_state_sector_filtered(
+        hmat=hmat,
+        num_sites=num_sites,
+        num_particles=num_particles,
+        ordering=ordering,
+    )
+    return gs_energy
 
 
 def _pauli_matrix_exyz(label: str) -> np.ndarray:
@@ -193,6 +192,7 @@ def _collect_hardcoded_terms_exyz(
         else:
             coeff_map[label] = coeff_map[label] + coeff
     return native_order, coeff_map
+
 
 
 def _build_hamiltonian_matrix(coeff_map_exyz: dict[str, complex]) -> np.ndarray:
@@ -973,7 +973,8 @@ def _simulate_trajectory(
     *,
     num_sites: int,
     ordering: str,
-    psi0: np.ndarray,
+    psi0_ansatz_trot: np.ndarray,
+    psi0_exact_ref: np.ndarray,
     hmat: np.ndarray,
     ordered_labels_exyz: list[str],
     coeff_map_exyz: dict[str, complex],
@@ -1027,7 +1028,7 @@ def _simulate_trajectory(
         if not has_drive:
             # Time-independent: eigendecomposition shortcut (exact to machine
             # precision — does not depend on exact_steps_multiplier).
-            psi_exact = evecs @ (np.exp(-1j * evals * t) * (evecs_dag @ psi0))
+            psi_exact = evecs @ (np.exp(-1j * evals * t) * (evecs_dag @ psi0_exact_ref))
             psi_exact = _normalize_state(psi_exact)
         else:
             # Time-dependent: piecewise-constant matrix-exponential reference
@@ -1036,7 +1037,7 @@ def _simulate_trajectory(
             # this can be made arbitrarily accurate independently of the
             # Trotter circuit discretization.
             psi_exact = _evolve_piecewise_exact(
-                psi0=psi0,
+                psi0=psi0_exact_ref,
                 hmat_static=hmat,
                 drive_coeff_provider_exyz=drive_coeff_provider_exyz,
                 time_value=t,
@@ -1046,7 +1047,7 @@ def _simulate_trajectory(
             )
 
         psi_trot = _evolve_trotter_suzuki2_absolute(
-            psi0,
+            psi0_ansatz_trot,
             ordered_labels_exyz,
             coeff_map_exyz,
             compiled,
@@ -1068,6 +1069,9 @@ def _simulate_trajectory(
                 norm_drift=norm_drift,
             )
 
+        # Benchmark fidelity:
+        # exact reference starts from |psi_gs(H_static)> while trotter state
+        # starts from the ansatz/reference state selected in main().
         fidelity = float(abs(np.vdot(psi_exact, psi_trot)) ** 2)
         n_up_exact_site, n_dn_exact_site, doublon_exact = _site_resolved_number_observables(
             psi_exact,
@@ -1202,12 +1206,130 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
     with PdfPages(str(pdf_path)) as pdf:
         _render_command_page(pdf, run_command)
 
+        # Drive diagnostics page: waveform/envelope + FFT spectrum.
+        drive_cfg = payload.get("settings", {}).get("drive")
+        if isinstance(drive_cfg, dict) and times.size >= 2:
+            A = float(drive_cfg.get("A", 0.0))
+            omega = float(drive_cfg.get("omega", 1.0))
+            tbar = float(drive_cfg.get("tbar", 1.0))
+            phi = float(drive_cfg.get("phi", 0.0))
+            t0 = float(drive_cfg.get("t0", 0.0))
+
+            waveform = evaluate_drive_waveform(
+                times,
+                {"omega": omega, "tbar": tbar, "phi": phi, "t0": t0},
+                amplitude=A,
+            )
+            t_phys = times + t0
+            if tbar > 0.0:
+                envelope = abs(A) * np.exp(-(t_phys * t_phys) / (2.0 * tbar * tbar))
+            else:
+                envelope = np.zeros_like(t_phys, dtype=float)
+
+            figd, (axw, axf) = plt.subplots(1, 2, figsize=(11.0, 8.5))
+
+            axw.plot(times, waveform, color="#1f77b4", linewidth=1.5, label="f(t)")
+            axw.plot(times, envelope, color="#d62728", linestyle="--", linewidth=1.1, label="+envelope")
+            axw.plot(times, -envelope, color="#d62728", linestyle="--", linewidth=1.1, label="-envelope")
+            axw.axhline(0.0, color="#555555", linewidth=0.8, alpha=0.8)
+            # Auto-zoom time axis to where the envelope is physically relevant.
+            # This avoids dedicating most of the panel to near-zero tails.
+            env_peak = float(np.max(np.abs(envelope))) if envelope.size > 0 else 0.0
+            zoom_applied = False
+            if env_peak > 0.0 and times.size > 2:
+                env_frac = np.abs(envelope) / env_peak
+                active_idx = np.where(env_frac >= 5e-3)[0]  # keep >=0.5% of peak
+                if active_idx.size >= 2:
+                    i0 = int(active_idx[0])
+                    i1 = int(active_idx[-1])
+                    # Add small symmetric padding for readability.
+                    span = max(1, i1 - i0)
+                    pad = max(2, span // 12)
+                    i0 = max(0, i0 - pad)
+                    i1 = min(int(times.size - 1), i1 + pad)
+                    t_lo = float(times[i0])
+                    t_hi = float(times[i1])
+                    if t_hi > t_lo:
+                        axw.set_xlim(t_lo, t_hi)
+                        zoom_applied = True
+
+            if zoom_applied:
+                x0, x1 = axw.get_xlim()
+                axw.set_title(f"Drive Waveform and Gaussian Envelope (zoom {x0:.2f}..{x1:.2f})")
+            else:
+                axw.set_title("Drive Waveform and Gaussian Envelope")
+            axw.set_xlabel("Time")
+            axw.set_ylabel("f(t)")
+            axw.grid(alpha=0.25)
+            axw.legend(fontsize=8, loc="best")
+
+            dt = np.diff(times)
+            dt_mean = float(np.mean(dt)) if dt.size > 0 else 0.0
+            if dt_mean > 0.0 and waveform.size > 1:
+                centered = waveform - float(np.mean(waveform))
+                window = np.hanning(centered.size)
+                windowed = centered * window
+                fft_vals = np.fft.rfft(windowed)
+                freqs = np.fft.rfftfreq(windowed.size, d=dt_mean)
+                omega_axis = 2.0 * np.pi * freqs
+                mag = np.abs(fft_vals)
+                if mag.size > 0:
+                    mag = mag / (float(np.max(mag)) + 1e-15)
+
+                # Auto-zoom x-axis to the informative frequency band instead
+                # of full Nyquist range, which is often too wide to read.
+                omega_res = float(omega_axis[1] - omega_axis[0]) if omega_axis.size > 1 else float("nan")
+                power = mag * mag
+                power_sum = float(np.sum(power))
+                if power_sum > 0.0:
+                    cdf = np.cumsum(power) / power_sum
+                    p995_idx = int(np.searchsorted(cdf, 0.995))
+                    p995_idx = min(max(p995_idx, 0), int(omega_axis.size - 1))
+                    omega_p995 = float(omega_axis[p995_idx])
+                else:
+                    omega_p995 = 0.0
+                omega_focus = max(
+                    3.0 * abs(omega),
+                    1.20 * omega_p995,
+                    (15.0 * omega_res if np.isfinite(omega_res) else 0.0),
+                )
+                if omega_axis.size > 0:
+                    omega_focus = min(float(omega_axis[-1]), float(omega_focus))
+
+                axf.plot(omega_axis, mag, color="#2ca02c", linewidth=1.4, label="|FFT(windowed f(t))|")
+                axf.axvline(abs(omega), color="#d62728", linestyle="--", linewidth=1.0, label=f"drive omega={omega:.3f}")
+                if omega_focus > 0.0:
+                    axf.set_xlim(0.0, omega_focus)
+                    axf.set_title(f"Drive Spectrum (Normalized, zoom 0..{omega_focus:.2f})")
+                else:
+                    axf.set_title("Drive Spectrum (Normalized Magnitude)")
+                axf.set_xlabel("Angular frequency")
+                axf.set_ylabel("Normalized magnitude")
+                axf.grid(alpha=0.25)
+                axf.legend(fontsize=8, loc="best")
+            else:
+                axf.text(0.5, 0.5, "Insufficient time grid for FFT", ha="center", va="center", transform=axf.transAxes)
+                axf.set_title("Drive Spectrum")
+                axf.set_axis_off()
+
+            figd.suptitle(
+                f"Drive Diagnostics: A={A}, omega={omega}, tbar={tbar}, phi={phi}, t0={t0}",
+                fontsize=11,
+            )
+            figd.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
+            pdf.savefig(figd)
+            plt.close(figd)
+
         fig, axes = plt.subplots(2, 2, figsize=(11.0, 8.5), sharex=True)
         ax00, ax01 = axes[0, 0], axes[0, 1]
         ax10, ax11 = axes[1, 0], axes[1, 1]
 
         ax00.plot(times, fid, color="#0b3d91", marker="o", markersize=3, markevery=markevery)
-        ax00.set_title(f"Fidelity(t) = |<{EXACT_LABEL}|Trotter>|^2")
+        fid_title = payload.get("settings", {}).get(
+            "fidelity_definition_short",
+            "Fidelity(t) = |<psi_exact_gs_ref(t)|psi_ansatz_trot(t)>|^2",
+        )
+        ax00.set_title(str(fid_title))
         ax00.grid(alpha=0.25)
 
         ax01.plot(times, e_exact, label=f"{EXACT_LABEL} (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
@@ -1249,29 +1371,23 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         plt.close(fig)
 
         filt_label = f"Exact (sector {sector_label})"
-        figv, axesv = plt.subplots(1, 2, figsize=(11.0, 8.5))
-        vx0, vx1 = axesv[0], axesv[1]
+        figv, vx0 = plt.subplots(1, 1, figsize=(11.0, 8.5))
         vx0.bar([0, 1], [gs_exact_filtered, vqe_val], color=["#2166ac", "#2ca02c"], edgecolor="black", linewidth=0.4)
         vx0.set_xticks([0, 1])
         vx0.set_xticklabels([filt_label, "VQE"], fontsize=8)
         vx0.set_ylabel("Energy")
-        vx0.set_title("VQE Energy vs Exact (filtered sector)")
-        vx0.grid(axis="y", alpha=0.25)
-
         err_vqe = abs(vqe_val - gs_exact_filtered) if (np.isfinite(vqe_val) and np.isfinite(gs_exact_filtered)) else np.nan
-        vx1.bar([0], [err_vqe], color="#2ca02c", edgecolor="black", linewidth=0.4)
-        vx1.set_xticks([0])
-        vx1.set_xticklabels([f"|VQE \u2212 Exact (filtered)|"])
-        vx1.set_ylabel("Absolute Error")
-        vx1.set_title("VQE Absolute Error vs Exact (filtered sector)")
-        vx1.grid(axis="y", alpha=0.25)
+        err_text = (f"|VQE - Exact(filtered)| = {err_vqe:.3e}"
+                    if np.isfinite(err_vqe) else "|VQE - Exact(filtered)| = N/A")
+        vx0.set_title(f"VQE Energy vs Exact (filtered sector)\n{err_text}")
+        vx0.grid(axis="y", alpha=0.25)
 
         figv.suptitle(
             "VQE optimises within the half-filled sector; exact (filtered) is the true sector ground state.\n"
             "Full-Hilbert exact energy is in the JSON text summary only.",
             fontsize=10,
         )
-        figv.tight_layout(rect=(0.0, 0.03, 1.0, 0.91))
+        figv.tight_layout(rect=(0.0, 0.03, 1.0, 0.93))
         pdf.savefig(figv)
         plt.close(figv)
 
@@ -1284,6 +1400,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
             f"settings: {json.dumps(payload['settings'])}",
             f"exact_trajectory_label: {EXACT_LABEL}",
             f"exact_trajectory_method: {EXACT_METHOD}",
+            f"fidelity_definition: {payload['settings'].get('fidelity_definition')}",
+            f"fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
             f"ground_state_exact_energy (full Hilbert): {payload['ground_state']['exact_energy']:.12f}",
             f"ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
             f"filtered_sector: {payload['ground_state'].get('filtered_sector')}",
@@ -1453,15 +1571,16 @@ def main() -> None:
     # apples-to-apples comparison target for the VQE bar plot.
     _vqe_num_particles = _half_filled_particles(int(args.L))
     try:
-        gs_energy_exact_filtered = _exact_energy_sector_filtered(
-            hmat,
-            int(args.L),
-            _vqe_num_particles,
-            str(args.ordering),
+        gs_energy_exact_filtered, psi_exact_ground_filtered = _exact_ground_state_sector_filtered(
+            hmat=hmat,
+            num_sites=int(args.L),
+            num_particles=_vqe_num_particles,
+            ordering=str(args.ordering),
         )
     except Exception as _exc_filt:
         _ai_log("hardcoded_filtered_exact_failed", error=str(_exc_filt))
         gs_energy_exact_filtered = None
+        psi_exact_ground_filtered = psi_exact_ground
 
     try:
         vqe_payload, psi_vqe = _run_hardcoded_vqe(
@@ -1494,15 +1613,18 @@ def main() -> None:
 
     if args.initial_state_source == "vqe" and bool(vqe_payload.get("success", False)):
         psi0 = psi_vqe
-        _ai_log("hardcoded_initial_state_selected", source="vqe")
+        selected_initial_source = "vqe"
+        _ai_log("hardcoded_initial_state_selected", source=selected_initial_source)
     elif args.initial_state_source == "vqe":
         raise RuntimeError("Requested --initial-state-source vqe but hardcoded VQE statevector is unavailable.")
     elif args.initial_state_source == "hf":
         psi0 = psi_hf
-        _ai_log("hardcoded_initial_state_selected", source="hf")
+        selected_initial_source = "hf"
+        _ai_log("hardcoded_initial_state_selected", source=selected_initial_source)
     else:
         psi0 = psi_exact_ground
-        _ai_log("hardcoded_initial_state_selected", source="exact")
+        selected_initial_source = "exact"
+        _ai_log("hardcoded_initial_state_selected", source=selected_initial_source)
 
     if args.skip_qpe:
         qpe_payload = {
@@ -1528,7 +1650,8 @@ def main() -> None:
     trajectory, _exact_states = _simulate_trajectory(
         num_sites=int(args.L),
         ordering=str(args.ordering),
-        psi0=psi0,
+        psi0_ansatz_trot=psi0,
+        psi0_exact_ref=psi_exact_ground_filtered,
         hmat=hmat,
         ordered_labels_exyz=ordered_labels_exyz,
         coeff_map_exyz=coeff_map_exyz,
@@ -1568,9 +1691,23 @@ def main() -> None:
         "term_order": str(args.term_order),
         "initial_state_source": str(args.initial_state_source),
         "skip_qpe": bool(args.skip_qpe),
+        "fidelity_definition_short": "Fidelity(t) = |<psi_exact_gs_ref(t)|psi_ansatz_trot(t)>|^2",
+        "fidelity_definition": (
+            "fidelity(t) = |<psi_exact_gs_ref(t)|psi_ansatz_trot(t)>|^2, "
+            "where psi_exact_gs_ref(t) = U_exact(t)|psi_gs(H_static; filtered sector)> and "
+            "psi_ansatz_trot(t) = U_trotter(t)|psi_ansatz(0)>."
+        ),
+        "fidelity_reference_initial_state": "exact_static_ground_state_filtered_sector",
+        "fidelity_reference_sector": {
+            "n_up": int(_vqe_num_particles[0]),
+            "n_dn": int(_vqe_num_particles[1]),
+        },
+        "fidelity_ansatz_initial_state": str(selected_initial_source),
         "energy_observable_definition": (
-            "energy_static_* measures <psi|H_static|psi>. "
-            "energy_total_* measures <psi|H_static + H_drive(drive_t0 + t)|psi>. "
+            "energy_static_exact is <psi_exact_gs_ref(t)|H_static|psi_exact_gs_ref(t)>. "
+            "energy_static_trotter is <psi_ansatz_trot(t)|H_static|psi_ansatz_trot(t)>. "
+            "energy_total_exact is <psi_exact_gs_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_gs_ref(t)>. "
+            "energy_total_trotter is <psi_ansatz_trot(t)|H_static + H_drive(drive_t0 + t)|psi_ansatz_trot(t)>. "
             "When drive is disabled, energy_total_* == energy_static_*. "
             "Drive sampling uses the same drive_t0 convention as propagation."
         ),
@@ -1625,7 +1762,7 @@ def main() -> None:
         "vqe": vqe_payload,
         "qpe": qpe_payload,
         "initial_state": {
-            "source": str(args.initial_state_source if args.initial_state_source != "vqe" or vqe_payload.get("success") else "exact"),
+            "source": str(selected_initial_source),
             "amplitudes_qn_to_q0": _state_to_amplitudes_qn_to_q0(psi0),
         },
         "trajectory": trajectory,
