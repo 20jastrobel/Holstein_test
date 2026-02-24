@@ -1736,6 +1736,33 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         pdf.savefig(fig)
         plt.close(fig)
 
+        # Additional focused energy pages (requested): static-only and total-only.
+        fig_energy_static, ax_energy_static = plt.subplots(1, 1, figsize=(11.0, 8.5))
+        ax_energy_static.plot(times, e_exact, label="Exact GS filtered (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
+        ax_energy_static.plot(times, e_exact_ans, label="Exact ansatz init (static)", color="#2ca02c", linewidth=1.4, marker="D", markersize=3, markevery=markevery)
+        ax_energy_static.plot(times, e_trot, label="Trotter ansatz init (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax_energy_static.set_title("Energy (Static Hamiltonian Only)")
+        ax_energy_static.set_xlabel("Time")
+        ax_energy_static.set_ylabel("Energy")
+        ax_energy_static.grid(alpha=0.25)
+        ax_energy_static.legend(fontsize=8)
+        fig_energy_static.tight_layout(rect=(0.0, 0.02, 1.0, 0.98))
+        pdf.savefig(fig_energy_static)
+        plt.close(fig_energy_static)
+
+        fig_energy_total, ax_energy_total = plt.subplots(1, 1, figsize=(11.0, 8.5))
+        ax_energy_total.plot(times, e_total_exact, label="Exact GS filtered (total)", color="#17becf", linewidth=1.6, marker="D", markersize=2.5, markevery=markevery, alpha=0.8)
+        ax_energy_total.plot(times, e_total_exact_ans, label="Exact ansatz init (total)", color="#1f77b4", linewidth=1.3, marker="o", markersize=2.5, markevery=markevery, alpha=0.8)
+        ax_energy_total.plot(times, e_total_trot, label="Trotter ansatz init (total)", color="#ff7f0e", linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery, alpha=0.8)
+        ax_energy_total.set_title("Energy (Total Hamiltonian H(t) Only)")
+        ax_energy_total.set_xlabel("Time")
+        ax_energy_total.set_ylabel("Energy")
+        ax_energy_total.grid(alpha=0.25)
+        ax_energy_total.legend(fontsize=8)
+        fig_energy_total.tight_layout(rect=(0.0, 0.02, 1.0, 0.98))
+        pdf.savefig(fig_energy_total)
+        plt.close(fig_energy_total)
+
         # ------------------------------------------------------------------
         # Appendix: redundant/supporting material
         # ------------------------------------------------------------------

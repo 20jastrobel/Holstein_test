@@ -15,6 +15,7 @@ Run from the sub-repo root (`Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/`).
 | `pipelines/compare_hardcoded_vs_qiskit_pipeline.py` | Orchestrator — runs both, compares metrics, writes comparison PDFs |
 | `pipelines/manual_compare_jsons.py` | Standalone JSON-vs-JSON consistency checker |
 | `pipelines/regression_L2_L3.sh` | Automated L=2/L=3 regression harness |
+| `pipelines/run_L_drive_accurate.sh` | Shorthand runner for “run L”: drive-only, accuracy-gated (`delta_e < 1e-7`) with L-scaled heaviness |
 | `pipelines/run_scaling_preset_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
 
 ---
@@ -210,6 +211,44 @@ Defaults:
 ---
 
 ## Common Commands
+
+### 0) Shorthand `run L` convention (drive-only + accurate)
+
+```bash
+bash pipelines/run_L_drive_accurate.sh --L 4
+```
+
+This enforces the default shorthand contract:
+
+- drive is always enabled (never static),
+- accuracy gate is enforced:
+  `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-7`,
+- settings scale with `L` (heavier defaults for larger systems),
+- fallback attempts auto-escalate if the primary attempt misses the gate.
+
+Primary per-L presets used by the shorthand runner:
+
+| L | trotter_steps | exact_steps_multiplier | num_times | vqe_reps | vqe_restarts | vqe_method | vqe_maxiter |
+|---|---:|---:|---:|---:|---:|---|---:|
+| 2 | 128 | 2 | 201 | 2 | 2 | COBYLA | 1200 |
+| 3 | 192 | 2 | 201 | 2 | 3 | COBYLA | 2400 |
+| 4 | 256 | 3 | 241 | 4 | 4 | SLSQP | 6000 |
+| 5 | 384 | 3 | 301 | 4 | 5 | SLSQP | 8000 |
+| 6 | 512 | 4 | 361 | 5 | 6 | SLSQP | 10000 |
+
+Fallback behavior:
+- `fallback_A`: increase optimizer effort (`restarts + 2`, `maxiter * 2`, method `L-BFGS-B` for `L >= 4`).
+- `fallback_B`: additionally increase ansatz/dynamics effort (`reps + 1`, `trotter_steps * 1.5`, `exact_steps_multiplier + 1`).
+
+Optional flags:
+
+```bash
+bash pipelines/run_L_drive_accurate.sh --L 5 --with-pdf
+```
+
+```bash
+bash pipelines/run_L_drive_accurate.sh --L 6 --budget-hours 12 --artifacts-dir artifacts
+```
 
 ### 1) Run full compare for L=2,3,4 with locked heavy settings
 

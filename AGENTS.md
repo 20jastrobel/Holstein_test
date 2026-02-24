@@ -147,6 +147,27 @@ The compare pipeline supports `--with-drive-amplitude-comparison-pdf` which:
 - VQE delta is defined as `ΔE = VQE_hardcoded − VQE_qiskit` (the sector-filtered energy, not full-Hilbert).
 - New amplitude comparison CLI args: `--drive-amplitudes A0,A1`, `--with-drive-amplitude-comparison-pdf`, `--report-verbose`, and `--safe-test-near-threshold-factor`.
 
+## 4c) User shorthand run convention (`run L`)
+
+When the user requests a shorthand run like:
+- "run L=4"
+- "run a number L"
+- "run L 5"
+
+interpret it with the following **default contract**:
+
+1. The run is **drive-enabled, never static**.
+2. The run is **accuracy-gated** and must target:
+   `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-7`.
+3. Use **L-scaled heaviness** (stronger settings for larger L), not one-size-fits-all settings.
+
+Implementation rule:
+- Prefer `pipelines/run_L_drive_accurate.sh --L <L>` when available.
+- If this script is unavailable, emulate its semantics manually:
+  - drive enabled with scaling profile defaults,
+  - per-L parameter table,
+  - fallback escalation until the `1e-7` gate passes or budget is exhausted.
+
 ---
 
 ## 5) Style and maintainability
