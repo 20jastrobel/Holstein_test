@@ -470,7 +470,7 @@ class HubbardTermwiseAnsatz:
         sort_terms: bool = True,
     ) -> np.ndarray:
         if int(theta.size) != int(self.num_parameters):
-            log.error("theta has wrong length for this ansatz")
+        log.error("theta has wrong length for this ansatz")
         psi = np.array(psi_ref, copy=True)
         k = 0
         for _ in range(self.reps):

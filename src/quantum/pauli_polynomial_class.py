@@ -24,14 +24,20 @@ class PauliPolynomial:
         return len(self._pol)
     def add_term(self, pt):
         self._pol.append(pt)
+    @staticmethod
+    def _clone_term(pt):
+        return PauliTerm(pt.nqubit(), pc=pt.p_coeff, ps=pt.pw2strng())
+    @classmethod
+    def _clone_terms(cls, terms):
+        return [cls._clone_term(pt) for pt in terms]
     def __add__(self, pp):
         if isinstance(pp, PauliPolynomial):
             assert self._repr_mode == pp._repr_mode
-            new_pol = self._pol + pp.return_polynomial()
+            new_pol = self._clone_terms(self._pol) + self._clone_terms(pp.return_polynomial())
         elif isinstance(pp, (float, complex)):
             nq = self.get_nq()
             const_term = PauliTerm(nq, pc=pp, ps="e"*nq)
-            new_pol = self._pol + [const_term]
+            new_pol = self._clone_terms(self._pol) + [const_term]
         else:
             return NotImplemented
         return PauliPolynomial(self._repr_mode, new_pol)
@@ -51,11 +57,11 @@ class PauliPolynomial:
         if isinstance(pp, PauliPolynomial):
             assert self._repr_mode == pp._repr_mode
             min_pp = (-1.0) * pp
-            new_pol = self._pol + min_pp
+            new_pol = self._clone_terms(self._pol) + self._clone_terms(min_pp.return_polynomial())
         elif isinstance(pp, (float, complex)):
             nq = self.get_nq()
             const_term = PauliTerm(nq, pc=-pp, ps="e"*nq)
-            new_pol = self._pol + [const_term]
+            new_pol = self._clone_terms(self._pol) + [const_term]
         else:
             return NotImplemented
         return PauliPolynomial(self._repr_mode, new_pol)

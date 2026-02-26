@@ -1,17 +1,96 @@
 # Simplified Hubbard Pipeline Repo
 
-This repo implements **Fermionic Hubbard-model simulation pipelines** with Jordan–Wigner (JW)
-mapping, VQE ground-state preparation, Suzuki–Trotter time evolution, and optional QPE.
+This repo implements **Fermionic Hubbard-model simulation pipelines** with Jordan–Wigner (JW) mapping, VQE ground-state preparation, Suzuki–Trotter time evolution, and optional QPE (which we never want to use).
 Two independent implementations (a custom "hardcoded" backend and a Qiskit-based baseline)
-can be compared head-to-head with automated metric extraction.
+can be compared head-to-head with automated metric extraction -- Qiskit is meant to serve as a cross-check for the "hardcoded" implementation correctness.
 
 ## Main Entry Points
 
 | Script | Purpose |
 |--------|---------|
-| `pipelines/hardcoded_hubbard_pipeline.py` | Hardcoded Hamiltonian, hardcoded VQE, hardcoded Trotter dynamics, optional QPE |
+| `pipelines/hardcoded_hubbard_pipeline.py` | Hardcoded Hamiltonian, hardcoded VQE, hardcoded Trotter dynamics, optional (Qiskit) QPE |
 | `pipelines/qiskit_hubbard_baseline_pipeline.py` | Qiskit Hamiltonian, Qiskit VQE, Qiskit-aligned Trotter dynamics, optional QPE |
 | `pipelines/compare_hardcoded_vs_qiskit_pipeline.py` | Orchestrator — runs both pipelines, compares metrics, writes comparison PDFs |
+
+## Repository Architecture (Mermaid)
+
+```mermaid
+flowchart TB
+  subgraph Entrypoints["Pipeline Entry Scripts"]
+    compare["pipelines/compare_hardcoded_vs_qiskit_pipeline.py\n(orchestrator)"]
+    hardcoded["pipelines/hardcoded_hubbard_pipeline.py\n(hardcoded engine)"]
+    qiskit["pipelines/qiskit_hubbard_baseline_pipeline.py\n(qiskit baseline)"]
+    reg["pipelines/regression_L2_L3.sh\n(regression harness)"]
+    runL["pipelines/run_L_drive_accurate.sh\n(shorthand L runner)"]
+    runScale["pipelines/run_scaling_preset_L2_L6.sh\n(scaling runner)"]
+  end
+
+  subgraph Quantum["src/quantum Modules"]
+    hubbard["hubbard_latex_python_pairs.py\n(Hamiltonian builder)"]
+    vqe["vqe_latex_python_pairs.py\n(hardcoded VQE module)"]
+    drive["drives_time_potential.py\n(drive waveform/coeff provider)"]
+    hf["hartree_fock_reference_state.py\n(HF state source)"]
+    ppoly["pauli_polynomial_class.py\n(PauliPolynomial + JW ladder ops)"]
+    pterm["qubitization_module.py\n(canonical PauliTerm source)"]
+    pletter["pauli_letters_module.py\n(Pauli letter algebra core)"]
+    palias["pauli_words.py\n(compatibility alias)"]
+  end
+
+  subgraph Outputs["Generated Artifacts"]
+    outJson["artifacts/json/"]
+    outPdf["artifacts/pdf/"]
+    outCmd["artifacts/commands.txt"]
+  end
+
+  compare --> hardcoded
+  compare --> qiskit
+
+  hardcoded --> hubbard
+  hardcoded --> vqe
+  hardcoded --> drive
+  hardcoded --> hf
+
+  qiskit --> drive
+  qiskit --> hf
+
+  drive --> hubbard
+
+  ppoly --> pterm
+  palias --> pterm
+  pterm --> pletter
+
+  compare --> outJson
+  compare --> outPdf
+  compare --> outCmd
+
+  hardcoded --> outJson
+  hardcoded --> outPdf
+  hardcoded --> outCmd
+
+  qiskit --> outJson
+  qiskit --> outPdf
+  qiskit --> outCmd
+
+  reg --> outJson
+  reg --> outPdf
+  reg --> outCmd
+
+  runL --> outJson
+  runL --> outPdf
+  runL --> outCmd
+
+  runScale --> outJson
+  runScale --> outPdf
+  runScale --> outCmd
+
+  reg --> compare
+  runL --> compare
+  runScale --> compare
+```
+
+Scope note: this chart covers the active runtime architecture, not archived content.
+
+Arrow note: arrows denote runtime, import, or orchestration dependency.
 
 ## Key Features
 
