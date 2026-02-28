@@ -1,0 +1,19 @@
+{
+  "config": {
+    "boundary": "periodic",
+    "ordering": "blocked",
+    "n_ph_max": 1,
+    "reps": 6,
+    "method": "SLSQP",
+    "restarts": 4,
+    "maxiter": 800,
+    "seed": 89,
+    "initial_point_stddev": 1.0
+  },
+  "exact_energy_filtered": -0.3895531032970533,
+  "vqe_energy": -0.012623338961845781,
+  "delta_e_abs": 0.37692976433520753,
+  "vqe_success": true,
+  "vqe_message": "Optimization terminated successfully",
+  "elapsed_sec": 108.98600220680237
+}
