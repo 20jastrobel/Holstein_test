@@ -634,11 +634,15 @@ def _run_hardcoded_vqe(
     )
     ns = _load_hardcoded_vqe_namespace()
     ansatz_name_s = str(ansatz_name).strip().lower()
+    if ansatz_name_s == "hh_hva_tw":
+        ansatz_name_s = "hh_hva"
     problem_s = str(problem).strip().lower()
 
     valid_ansatzes = {"uccsd", "hva", "hh_hva"}
     if ansatz_name_s not in valid_ansatzes:
-        raise ValueError(f"Unsupported --vqe-ansatz '{ansatz_name}'. Expected one of: {sorted(valid_ansatzes)}.")
+        raise ValueError(
+            f"Unsupported --vqe-ansatz '{ansatz_name}'. Expected one of: {sorted(valid_ansatzes)} plus compatibility alias 'hh_hva_tw'."
+        )
 
     if ansatz_name_s == "hh_hva" and problem_s != "hh":
         raise ValueError("--vqe-ansatz hh_hva requires --problem hh.")
@@ -2214,8 +2218,11 @@ def parse_args() -> argparse.Namespace:
         "--vqe-ansatz",
         type=str,
         default="uccsd",
-        choices=["uccsd", "hva", "hh_hva"],
-        help="Hardcoded VQE ansatz family: uccsd, hva (Hubbard-only), hh_hva (Hubbard-Holstein layerwise).",
+        choices=["uccsd", "hva", "hh_hva", "hh_hva_tw"],
+        help=(
+            "Hardcoded VQE ansatz family: uccsd, hva (Hubbard-only), "
+            "hh_hva (Hubbard-Holstein layerwise), hh_hva_tw (compatibility alias of hh_hva)."
+        ),
     )
     parser.add_argument("--vqe-reps", type=int, default=2, help="Number of ansatz repetitions (layer depth).")
     parser.add_argument("--vqe-restarts", type=int, default=1)
