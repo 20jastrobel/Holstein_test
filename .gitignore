@@ -1,6 +1,8 @@
 .DS_Store
 **/.DS_Store
 **/__pycache__/
+**/.pytest_cache/
 *.pyc
 *.log
+*.swp
 Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/artifacts/

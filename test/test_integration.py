@@ -12,7 +12,7 @@ import numpy as np
 
 def _add_repo_paths() -> Path:
     """Add repo root and available project roots to sys.path."""
-    repo_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parent.parent
     candidate_roots = [
         repo_root,
         repo_root / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE",
