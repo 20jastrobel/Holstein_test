@@ -2352,6 +2352,17 @@ def _write_amplitude_comparison_pdf(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare hardcoded and Qiskit Hubbard pipeline outputs.")
     parser.add_argument("--l-values", type=str, default="2,3,4,5")
+    parser.add_argument(
+        "--problem",
+        type=str,
+        choices=["hubbard", "hh"],
+        default="hubbard",
+        help=(
+            "Model type. Only 'hubbard' is supported by the compare pipeline. "
+            "Hubbard-Holstein ('hh') must be run directly via "
+            "hardcoded_hubbard_pipeline.py --problem hh."
+        ),
+    )
     parser.add_argument("--run-pipelines", action="store_true", default=True)
     parser.add_argument("--no-run-pipelines", dest="run_pipelines", action="store_false")
     parser.add_argument(
@@ -2552,6 +2563,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    # ---- HH guard: compare pipeline is Hubbard-only ----
+    if getattr(args, "problem", "hubbard") == "hh":
+        raise SystemExit(
+            "ERROR: --problem hh (Hubbard-Holstein) is not supported by the compare pipeline.\n"
+            "The Qiskit baseline does not implement HH.  Run Hubbard-Holstein directly:\n"
+            "  python pipelines/hardcoded_hubbard_pipeline.py --problem hh [flags …]"
+        )
+
     _ai_log("compare_main_start", settings=vars(args))
     run_command = _current_command_string()
     # Resolve to absolute so that paths are consistent between the main

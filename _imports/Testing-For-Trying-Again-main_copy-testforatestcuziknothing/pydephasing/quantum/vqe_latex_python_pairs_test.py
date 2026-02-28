@@ -1,7 +1,7 @@
 # Auto-generated from vqe_latex_python_pairs_test.ipynb (benchmark cell removed)
 # Do not edit by hand unless you also update the notebook conversion logic.
 
-# src/quantum/vqe_latex_python_pairs.py
+# pydephasing/quantum/vqe_latex_python_pairs.py
 from __future__ import annotations
 
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 # Ensure repo root is importable when notebook is run from nested CWDs.
 _cwd = Path.cwd().resolve()
 for _candidate in (_cwd, *_cwd.parents):
-    if (_candidate / 'src' / 'quantum' / 'pauli_polynomial_class.py').exists():
+    if (_candidate / 'pydephasing' / 'quantum' / 'pauli_polynomial_class.py').exists():
         if str(_candidate) not in sys.path:
             sys.path.insert(0, str(_candidate))
         break
@@ -29,31 +29,33 @@ except Exception:  # pragma: no cover
     IPyMath = None
     display = None
 
-class _FallbackLog:
-    @staticmethod
-    def error(msg: str):
-        raise RuntimeError(msg)
+try:
+    from pydephasing.utilities.log import log
+except Exception:  # pragma: no cover
+    class _FallbackLog:
+        @staticmethod
+        def error(msg: str):
+            raise RuntimeError(msg)
 
-    @staticmethod
-    def info(msg: str):
-        print(msg)
+        @staticmethod
+        def info(msg: str):
+            print(msg)
 
-
-log = _FallbackLog()
+    log = _FallbackLog()
 
 try:
-    from src.quantum.pauli_polynomial_class import (
+    from pydephasing.quantum.pauli_polynomial_class import (
         PauliPolynomial,
         fermion_minus_operator,
         fermion_plus_operator,
     )
-    from src.quantum.pauli_words import PauliTerm
+    from pydephasing.quantum.pauli_words import PauliTerm
 except Exception as _dep_exc:  # pragma: no cover
     PauliPolynomial = Any  # type: ignore[assignment]
 
     def _missing_dep(*_args, **_kwargs):
         raise ImportError(
-            "src.quantum dependencies are unavailable in this environment"
+            "pydephasing quantum dependencies are unavailable in this environment"
         ) from _dep_exc
 
     fermion_minus_operator = _missing_dep  # type: ignore[assignment]
@@ -62,7 +64,7 @@ except Exception as _dep_exc:  # pragma: no cover
 
 try:
     # Reuse your canonical Hubbard lattice helpers for consistent indexing/edges.
-    from src.quantum.hubbard_latex_python_pairs import (
+    from pydephasing.quantum.hubbard_latex_python_pairs import (
         Dims,
         SPIN_DN,
         SPIN_UP,
@@ -314,7 +316,7 @@ def half_filled_num_particles(num_sites: int) -> Tuple[int, int]:
 try:
     from hartree_fock_reference_state import hartree_fock_bitstring
 except Exception:
-    from src.quantum.hartree_fock_reference_state import hartree_fock_bitstring
+    from pydephasing.quantum.hartree_fock_reference_state import hartree_fock_bitstring
 
 def jw_number_operator(repr_mode: str, nq: int, p_mode: int) -> PauliPolynomial:
     if repr_mode != "JW":
@@ -413,7 +415,6 @@ def _single_term_polynomials_sorted(
     repr_mode: str,
     coefficient_tolerance: float = 1e-12,
 ) -> List[PauliPolynomial]:
-    """Split a PauliPolynomial into individual single-term PauliPolynomials, sorted."""
     terms = list(poly.return_polynomial())
     terms.sort(key=lambda t: (t.pw2strng(), float(np.real(t.p_coeff)), float(np.imag(t.p_coeff))))
     out: List[PauliPolynomial] = []
@@ -424,18 +425,6 @@ def _single_term_polynomials_sorted(
         nq = int(term.nqubit())
         out.append(PauliPolynomial(repr_mode, [PauliTerm(nq, ps=term.pw2strng(), pc=coeff)]))
     return out
-
-
-# ---------------------------------------------------------------------------
-# Hubbard-Holstein reference state (thin wrapper around hartree_fock module)
-# ---------------------------------------------------------------------------
-
-try:
-    from src.quantum.hartree_fock_reference_state import hubbard_holstein_reference_state
-except Exception:  # pragma: no cover
-    def hubbard_holstein_reference_state(**kwargs) -> np.ndarray:
-        raise ImportError("hubbard_holstein_reference_state unavailable")
-
 
 @dataclass(frozen=True)
 class AnsatzTerm:
@@ -549,12 +538,19 @@ class HubbardTermwiseAnsatz:
 
 class HubbardLayerwiseAnsatz(HubbardTermwiseAnsatz):
     """
-    Layer-wise Hubbard ansatz with shared parameters per physical term group.
+    Layer-wise Hubbard ansatz with shared parameters per physical contribution.
 
-    Per layer:
-      1) one shared theta over all hopping primitives
-      2) one shared theta over all onsite-U primitives
-      3) one shared theta over all potential primitives (if present)
+    Per layer, apply:
+      1) all hopping terms with shared theta_hop
+      2) all onsite terms with shared theta_u
+      3) all potential terms with shared theta_v (optional)
+
+    This keeps the term-product structure (future Trotter-friendly) while tying
+    parameters at the layer level.
+
+    Parameter count per layer:
+      - 2 when potential block is absent
+      - 3 when potential block is present
     """
 
     def _build_base_terms(self) -> None:
@@ -562,22 +558,26 @@ class HubbardLayerwiseAnsatz(HubbardTermwiseAnsatz):
         n_sites = int(self.n_sites)
 
         hop_terms: List[AnsatzTerm] = []
-        onsite_terms: List[AnsatzTerm] = []
-        potential_terms: List[AnsatzTerm] = []
-
+        hop_poly: Optional[PauliPolynomial] = None
         for (i, j) in self.edges:
             for spin in (SPIN_UP, SPIN_DN):
                 p_i = mode_index(int(i), int(spin), indexing=self.indexing, n_sites=n_sites)
                 p_j = mode_index(int(j), int(spin), indexing=self.indexing, n_sites=n_sites)
                 poly = hubbard_hop_term(nq, p_i, p_j, t=self.t, repr_mode=self.repr_mode)
                 hop_terms.append(AnsatzTerm(label=f"hop(i={i},j={j},spin={spin})", polynomial=poly))
+                hop_poly = poly if hop_poly is None else (hop_poly + poly)
 
+        onsite_terms: List[AnsatzTerm] = []
+        onsite_poly: Optional[PauliPolynomial] = None
         for i in range(n_sites):
             p_up = mode_index(i, SPIN_UP, indexing=self.indexing, n_sites=n_sites)
             p_dn = mode_index(i, SPIN_DN, indexing=self.indexing, n_sites=n_sites)
             poly = hubbard_onsite_term(nq, p_up, p_dn, U=self.U, repr_mode=self.repr_mode)
             onsite_terms.append(AnsatzTerm(label=f"onsite(i={i})", polynomial=poly))
+            onsite_poly = poly if onsite_poly is None else (onsite_poly + poly)
 
+        potential_terms: List[AnsatzTerm] = []
+        potential_poly: Optional[PauliPolynomial] = None
         if self.include_potential_terms:
             for i in range(n_sites):
                 vi = float(self.v_list[i])
@@ -587,20 +587,22 @@ class HubbardLayerwiseAnsatz(HubbardTermwiseAnsatz):
                     p_mode = mode_index(i, spin, indexing=self.indexing, n_sites=n_sites)
                     poly = hubbard_potential_term(nq, p_mode, v_i=vi, repr_mode=self.repr_mode)
                     potential_terms.append(AnsatzTerm(label=f"pot(i={i},spin={spin})", polynomial=poly))
+                    potential_poly = poly if potential_poly is None else (potential_poly + poly)
 
+        self.base_terms = []
         self.layer_term_groups: List[Tuple[str, List[AnsatzTerm]]] = []
-        if hop_terms:
+        if hop_terms and hop_poly is not None:
             self.layer_term_groups.append(("hop_layer", hop_terms))
-        if onsite_terms:
+            self.base_terms.append(AnsatzTerm(label="hop_layer", polynomial=hop_poly))
+        if onsite_terms and onsite_poly is not None:
             self.layer_term_groups.append(("onsite_layer", onsite_terms))
-        if potential_terms:
+            self.base_terms.append(AnsatzTerm(label="onsite_layer", polynomial=onsite_poly))
+        if potential_terms and potential_poly is not None:
             self.layer_term_groups.append(("potential_layer", potential_terms))
+            self.base_terms.append(AnsatzTerm(label="potential_layer", polynomial=potential_poly))
 
-        # Aggregated representative list retained for parameter counting.
-        self.base_terms = [
-            AnsatzTerm(label=group_name, polynomial=group_terms[0].polynomial)
-            for group_name, group_terms in self.layer_term_groups
-        ]
+        if not self.base_terms:
+            log.error("HubbardLayerwiseAnsatz produced no layer terms")
 
     def prepare_state(
         self,
@@ -613,20 +615,253 @@ class HubbardLayerwiseAnsatz(HubbardTermwiseAnsatz):
     ) -> np.ndarray:
         if int(theta.size) != int(self.num_parameters):
             log.error("theta has wrong length for this ansatz")
+        if not hasattr(self, "layer_term_groups"):
+            log.error("HubbardLayerwiseAnsatz missing layer term groups")
 
         psi = np.array(psi_ref, copy=True)
         k = 0
         for _ in range(self.reps):
-            for _group_name, group_terms in self.layer_term_groups:
-                theta_shared = float(theta[k])
+            for _label, group_terms in self.layer_term_groups:
+                shared_theta = float(theta[k])
                 for term in group_terms:
                     psi = apply_exp_pauli_polynomial(
                         psi,
                         term.polynomial,
-                        theta_shared,
+                        shared_theta,
                         ignore_identity=ignore_identity,
                         coefficient_tolerance=coefficient_tolerance,
                         sort_terms=sort_terms,
+                    )
+                k += 1
+        return psi
+
+
+def hubbard_holstein_reference_state(
+    *,
+    dims: Dims,
+    num_particles: Optional[Tuple[int, int]] = None,
+    n_ph_max: int,
+    boson_encoding: str = "binary",
+    indexing: str = "blocked",
+) -> np.ndarray:
+    """
+    HH reference state = fermionic HF determinant tensor phonon vacuum.
+
+    Bitstring ordering follows q_(n-1)...q_0:
+      full_bitstring = \"0\" * n_bos + hf_fermion_bitstring.
+    """
+    n_sites = int(n_sites_from_dims(dims))
+    n_ferm = 2 * n_sites
+    qpb = int(boson_qubits_per_site(int(n_ph_max), str(boson_encoding)))
+    n_bos = n_sites * qpb
+    n_total = n_ferm + n_bos
+
+    if num_particles is None:
+        num_particles_i = half_filled_num_particles(n_sites)
+    else:
+        num_particles_i = (int(num_particles[0]), int(num_particles[1]))
+
+    hf_fermion_bitstring = str(
+        hartree_fock_bitstring(
+            n_sites=n_sites,
+            num_particles=num_particles_i,
+            indexing=str(indexing),
+        )
+    )
+    full_bitstring = ("0" * n_bos) + hf_fermion_bitstring
+    return basis_state(n_total, full_bitstring)
+
+
+class HubbardHolsteinLayerwiseAnsatz:
+    """
+    Layer-wise HH ansatz with shared parameters per physical contribution group.
+
+    Per layer, apply groups in deterministic order:
+      1) hopping
+      2) onsite-U
+      3) fermion potential (optional)
+      4) phonon energy
+      5) e-ph coupling
+      6) HH drive (optional)
+    """
+
+    def __init__(
+        self,
+        dims: Dims,
+        J: float,
+        U: float,
+        omega0: float,
+        g: float,
+        n_ph_max: int,
+        *,
+        boson_encoding: str = "binary",
+        v: SitePotential = None,
+        v_t: TimePotential = None,
+        v0: SitePotential = None,
+        t_eval: Optional[float] = None,
+        reps: int = 1,
+        repr_mode: str = "JW",
+        indexing: str = "blocked",
+        edges: Optional[Sequence[Tuple[int, int]]] = None,
+        pbc: Union[bool, Sequence[bool]] = True,
+        include_zero_point: bool = True,
+        coefficient_tolerance: float = 1e-12,
+        sort_terms: bool = True,
+    ):
+        self.dims = dims
+        self.n_sites = int(n_sites_from_dims(dims))
+        self.n_ferm = 2 * self.n_sites
+        self.n_ph_max = int(n_ph_max)
+        self.boson_encoding = str(boson_encoding)
+        self.qpb = int(boson_qubits_per_site(self.n_ph_max, self.boson_encoding))
+        self.n_total = self.n_ferm + self.n_sites * self.qpb
+        self.nq = int(self.n_total)
+
+        self.J = float(J)
+        self.U = float(U)
+        self.omega0 = float(omega0)
+        self.g = float(g)
+        self.v_list = _parse_site_potential(v, n_sites=self.n_sites)
+        self.v_t = v_t
+        self.v0 = v0
+        self.t_eval = t_eval
+        self.include_zero_point = bool(include_zero_point)
+
+        self.repr_mode = str(repr_mode)
+        self.indexing = str(indexing)
+        self.edges = list(edges) if edges is not None else bravais_nearest_neighbor_edges(dims, pbc=pbc)
+        self.reps = int(reps)
+        if self.reps <= 0:
+            log.error("reps must be positive")
+
+        self.coefficient_tolerance = float(coefficient_tolerance)
+        self.sort_terms = bool(sort_terms)
+
+        self.base_terms: List[AnsatzTerm] = []
+        self.layer_term_groups: List[Tuple[str, List[AnsatzTerm]]] = []
+        self._build_base_terms()
+        self.num_parameters = self.reps * len(self.base_terms)
+
+    def _poly_group(
+        self,
+        label: str,
+        poly: PauliPolynomial,
+    ) -> None:
+        term_polys = _single_term_polynomials_sorted(
+            poly,
+            repr_mode=self.repr_mode,
+            coefficient_tolerance=self.coefficient_tolerance,
+        )
+        if not term_polys:
+            return
+        group_terms: List[AnsatzTerm] = []
+        group_poly: Optional[PauliPolynomial] = None
+        for i, term_poly in enumerate(term_polys):
+            group_terms.append(AnsatzTerm(label=f"{label}_term_{i}", polynomial=term_poly))
+            group_poly = term_poly if group_poly is None else (group_poly + term_poly)
+        assert group_poly is not None
+        self.layer_term_groups.append((label, group_terms))
+        self.base_terms.append(AnsatzTerm(label=label, polynomial=group_poly))
+
+    def _build_base_terms(self) -> None:
+        hop_poly = build_hubbard_kinetic(
+            dims=self.dims,
+            t=self.J,
+            repr_mode=self.repr_mode,
+            indexing=self.indexing,
+            edges=self.edges,
+            pbc=True,
+            nq_override=self.n_total,
+        )
+        self._poly_group("hop_layer", hop_poly)
+
+        onsite_poly = build_hubbard_onsite(
+            dims=self.dims,
+            U=self.U,
+            repr_mode=self.repr_mode,
+            indexing=self.indexing,
+            nq_override=self.n_total,
+        )
+        self._poly_group("onsite_layer", onsite_poly)
+
+        potential_poly = build_hubbard_potential(
+            dims=self.dims,
+            v=self.v_list,
+            repr_mode=self.repr_mode,
+            indexing=self.indexing,
+            nq_override=self.n_total,
+        )
+        self._poly_group("potential_layer", potential_poly)
+
+        phonon_poly = build_holstein_phonon_energy(
+            dims=self.dims,
+            omega0=self.omega0,
+            n_ph_max=self.n_ph_max,
+            boson_encoding=self.boson_encoding,
+            repr_mode=self.repr_mode,
+            tol=self.coefficient_tolerance,
+            zero_point=self.include_zero_point,
+        )
+        self._poly_group("phonon_layer", phonon_poly)
+
+        eph_poly = build_holstein_coupling(
+            dims=self.dims,
+            g=self.g,
+            n_ph_max=self.n_ph_max,
+            boson_encoding=self.boson_encoding,
+            repr_mode=self.repr_mode,
+            indexing=self.indexing,
+            tol=self.coefficient_tolerance,
+        )
+        self._poly_group("eph_layer", eph_poly)
+
+        if self.v_t is not None or self.v0 is not None:
+            drive_poly = build_hubbard_holstein_drive(
+                dims=self.dims,
+                v_t=self.v_t,
+                v0=self.v0,
+                t=self.t_eval,
+                repr_mode=self.repr_mode,
+                indexing=self.indexing,
+                nq_override=self.n_total,
+            )
+            self._poly_group("drive_layer", drive_poly)
+
+        if not self.base_terms:
+            log.error("HubbardHolsteinLayerwiseAnsatz produced no layer terms")
+
+    def prepare_state(
+        self,
+        theta: np.ndarray,
+        psi_ref: np.ndarray,
+        *,
+        ignore_identity: bool = True,
+        coefficient_tolerance: Optional[float] = None,
+        sort_terms: Optional[bool] = None,
+    ) -> np.ndarray:
+        if int(theta.size) != int(self.num_parameters):
+            log.error("theta has wrong length for this ansatz")
+        if not hasattr(self, "layer_term_groups"):
+            log.error("HubbardHolsteinLayerwiseAnsatz missing layer term groups")
+        if int(psi_ref.size) != (1 << int(self.nq)):
+            log.error("psi_ref length must be 2^nq for HubbardHolsteinLayerwiseAnsatz")
+
+        coeff_tol = self.coefficient_tolerance if coefficient_tolerance is None else float(coefficient_tolerance)
+        sort_flag = self.sort_terms if sort_terms is None else bool(sort_terms)
+
+        psi = np.array(psi_ref, copy=True)
+        k = 0
+        for _ in range(self.reps):
+            for _label, group_terms in self.layer_term_groups:
+                shared_theta = float(theta[k])
+                for term in group_terms:
+                    psi = apply_exp_pauli_polynomial(
+                        psi,
+                        term.polynomial,
+                        shared_theta,
+                        ignore_identity=ignore_identity,
+                        coefficient_tolerance=coeff_tol,
+                        sort_terms=sort_flag,
                     )
                 k += 1
         return psi
@@ -815,11 +1050,14 @@ class HardcodedUCCSDAnsatz:
 
 class HardcodedUCCSDLayerwiseAnsatz(HardcodedUCCSDAnsatz):
     """
-    Layer-wise UCCSD ansatz with one shared parameter per excitation group.
+    Layer-wise UCCSD-style ansatz with shared amplitudes per excitation rank.
 
-    Per layer:
-      1) one shared theta across all singles generators (if enabled/present)
-      2) one shared theta across all doubles generators (if enabled/present)
+    Per layer, apply:
+      1) all single generators with shared theta_s (optional)
+      2) all double generators with shared theta_d (optional)
+
+    Parameter count per layer:
+      - up to 2 (singles + doubles)
     """
 
     def _build_base_terms(self) -> None:
@@ -836,24 +1074,28 @@ class HardcodedUCCSDLayerwiseAnsatz(HardcodedUCCSDAnsatz):
         beta_virt = beta_all[n_beta:]
 
         singles_terms: List[AnsatzTerm] = []
-        doubles_terms: List[AnsatzTerm] = []
-
+        singles_poly: Optional[PauliPolynomial] = None
         if self.include_singles:
             for i_occ in alpha_occ:
                 for a_virt in alpha_virt:
-                    gen = self._single_generator(i_occ, a_virt)
+                    poly = self._single_generator(i_occ, a_virt)
                     singles_terms.append(
-                        AnsatzTerm(label=f"uccsd_sing(alpha:{i_occ}->{a_virt})", polynomial=gen)
+                        AnsatzTerm(label=f"uccsd_sing(alpha:{i_occ}->{a_virt})", polynomial=poly)
                     )
+                    singles_poly = poly if singles_poly is None else (singles_poly + poly)
 
             for i_occ in beta_occ:
                 for a_virt in beta_virt:
-                    gen = self._single_generator(i_occ, a_virt)
+                    poly = self._single_generator(i_occ, a_virt)
                     singles_terms.append(
-                        AnsatzTerm(label=f"uccsd_sing(beta:{i_occ}->{a_virt})", polynomial=gen)
+                        AnsatzTerm(label=f"uccsd_sing(beta:{i_occ}->{a_virt})", polynomial=poly)
                     )
+                    singles_poly = poly if singles_poly is None else (singles_poly + poly)
 
+        doubles_terms: List[AnsatzTerm] = []
+        doubles_poly: Optional[PauliPolynomial] = None
         if self.include_doubles:
+            # alpha-alpha doubles
             for i_pos in range(len(alpha_occ)):
                 for j_pos in range(i_pos + 1, len(alpha_occ)):
                     i_occ = alpha_occ[i_pos]
@@ -862,16 +1104,16 @@ class HardcodedUCCSDLayerwiseAnsatz(HardcodedUCCSDAnsatz):
                         for b_pos in range(a_pos + 1, len(alpha_virt)):
                             a_virt = alpha_virt[a_pos]
                             b_virt = alpha_virt[b_pos]
-                            gen = self._double_generator(i_occ, j_occ, a_virt, b_virt)
+                            poly = self._double_generator(i_occ, j_occ, a_virt, b_virt)
                             doubles_terms.append(
                                 AnsatzTerm(
-                                    label=(
-                                        f"uccsd_dbl(aa:{i_occ},{j_occ}->{a_virt},{b_virt})"
-                                    ),
-                                    polynomial=gen,
+                                    label=f"uccsd_dbl(aa:{i_occ},{j_occ}->{a_virt},{b_virt})",
+                                    polynomial=poly,
                                 )
                             )
+                            doubles_poly = poly if doubles_poly is None else (doubles_poly + poly)
 
+            # beta-beta doubles
             for i_pos in range(len(beta_occ)):
                 for j_pos in range(i_pos + 1, len(beta_occ)):
                     i_occ = beta_occ[i_pos]
@@ -880,250 +1122,40 @@ class HardcodedUCCSDLayerwiseAnsatz(HardcodedUCCSDAnsatz):
                         for b_pos in range(a_pos + 1, len(beta_virt)):
                             a_virt = beta_virt[a_pos]
                             b_virt = beta_virt[b_pos]
-                            gen = self._double_generator(i_occ, j_occ, a_virt, b_virt)
+                            poly = self._double_generator(i_occ, j_occ, a_virt, b_virt)
                             doubles_terms.append(
                                 AnsatzTerm(
-                                    label=(
-                                        f"uccsd_dbl(bb:{i_occ},{j_occ}->{a_virt},{b_virt})"
-                                    ),
-                                    polynomial=gen,
+                                    label=f"uccsd_dbl(bb:{i_occ},{j_occ}->{a_virt},{b_virt})",
+                                    polynomial=poly,
                                 )
                             )
+                            doubles_poly = poly if doubles_poly is None else (doubles_poly + poly)
 
+            # alpha-beta doubles
             for i_occ in alpha_occ:
                 for j_occ in beta_occ:
                     for a_virt in alpha_virt:
                         for b_virt in beta_virt:
-                            gen = self._double_generator(i_occ, j_occ, a_virt, b_virt)
+                            poly = self._double_generator(i_occ, j_occ, a_virt, b_virt)
                             doubles_terms.append(
                                 AnsatzTerm(
-                                    label=(
-                                        f"uccsd_dbl(ab:{i_occ},{j_occ}->{a_virt},{b_virt})"
-                                    ),
-                                    polynomial=gen,
+                                    label=f"uccsd_dbl(ab:{i_occ},{j_occ}->{a_virt},{b_virt})",
+                                    polynomial=poly,
                                 )
                             )
+                            doubles_poly = poly if doubles_poly is None else (doubles_poly + poly)
 
+        self.base_terms = []
         self.layer_term_groups: List[Tuple[str, List[AnsatzTerm]]] = []
-        if singles_terms:
+        if singles_terms and singles_poly is not None:
             self.layer_term_groups.append(("uccsd_singles_layer", singles_terms))
-        if doubles_terms:
+            self.base_terms.append(AnsatzTerm(label="uccsd_singles_layer", polynomial=singles_poly))
+        if doubles_terms and doubles_poly is not None:
             self.layer_term_groups.append(("uccsd_doubles_layer", doubles_terms))
-
-        self.base_terms = [
-            AnsatzTerm(label=group_name, polynomial=group_terms[0].polynomial)
-            for group_name, group_terms in self.layer_term_groups
-        ]
-
-    def prepare_state(
-        self,
-        theta: np.ndarray,
-        psi_ref: np.ndarray,
-        *,
-        ignore_identity: bool = True,
-        coefficient_tolerance: float = 1e-12,
-        sort_terms: bool = True,
-    ) -> np.ndarray:
-        if int(theta.size) != int(self.num_parameters):
-            log.error("theta has wrong length for this ansatz")
-
-        psi = np.array(psi_ref, copy=True)
-        k = 0
-        for _ in range(self.reps):
-            for _group_name, group_terms in self.layer_term_groups:
-                theta_shared = float(theta[k])
-                for term in group_terms:
-                    psi = apply_exp_pauli_polynomial(
-                        psi,
-                        term.polynomial,
-                        theta_shared,
-                        ignore_identity=ignore_identity,
-                        coefficient_tolerance=coefficient_tolerance,
-                        sort_terms=sort_terms,
-                    )
-                k += 1
-        return psi
-
-
-# ---------------------------------------------------------------------------
-# Hubbard-Holstein layerwise ansatz
-# ---------------------------------------------------------------------------
-
-class HubbardHolsteinLayerwiseAnsatz:
-    r"""
-    Layer-wise Hubbard-Holstein ansatz with shared parameters per physical group.
-
-    Per layer, apply groups in deterministic order:
-      1) hopping       — H_t from fermion sector, extended to nq_total qubits
-      2) onsite-U      — H_U from fermion sector, extended to nq_total qubits
-      3) potential      — H_v from fermion sector (optional, only if v_i ≠ 0)
-      4) phonon energy  — H_{ph} = ω₀ Σ_i (n_{b,i} + ½)
-      5) e-ph coupling  — H_g  = g  Σ_i x_i (n_i − 𝟙)
-      6) drive          — H_{drive} (optional, only if v_t / v0 provided)
-
-    Each group is decomposed into individual Pauli-term exponentials
-    (via _single_term_polynomials_sorted), sharing one θ per group per layer.
-
-    Total qubit register: [2L fermion qubits | L · qpb phonon qubits].
-    """
-
-    def __init__(
-        self,
-        dims: Dims,
-        J: float,
-        U: float,
-        omega0: float,
-        g: float,
-        n_ph_max: int,
-        *,
-        boson_encoding: str = "binary",
-        v: SitePotential = None,
-        v_t: TimePotential = None,
-        v0: SitePotential = None,
-        t_eval: Optional[float] = None,
-        reps: int = 1,
-        repr_mode: str = "JW",
-        indexing: str = "blocked",
-        edges: Optional[Sequence[Tuple[int, int]]] = None,
-        pbc: Union[bool, Sequence[bool]] = True,
-        include_zero_point: bool = True,
-        coefficient_tolerance: float = 1e-12,
-        sort_terms: bool = True,
-    ):
-        self.dims = dims
-        self.n_sites = int(n_sites_from_dims(dims))
-        self.n_ferm = 2 * self.n_sites
-        self.n_ph_max = int(n_ph_max)
-        self.boson_encoding = str(boson_encoding)
-        self.qpb = int(boson_qubits_per_site(self.n_ph_max, self.boson_encoding))
-        self.n_total = self.n_ferm + self.n_sites * self.qpb
-        self.nq = int(self.n_total)
-
-        self.J = float(J)
-        self.U = float(U)
-        self.omega0 = float(omega0)
-        self.g = float(g)
-        self.v_list = _parse_site_potential(v, n_sites=self.n_sites)
-        self.v_t = v_t
-        self.v0 = v0
-        self.t_eval = t_eval
-        self.include_zero_point = bool(include_zero_point)
-
-        self.repr_mode = str(repr_mode)
-        self.indexing = str(indexing)
-        self.edges = list(edges) if edges is not None else bravais_nearest_neighbor_edges(dims, pbc=pbc)
-        self.reps = int(reps)
-        if self.reps <= 0:
-            log.error("reps must be positive")
-
-        self.coefficient_tolerance = float(coefficient_tolerance)
-        self.sort_terms = bool(sort_terms)
-
-        self.base_terms: List[AnsatzTerm] = []
-        self.layer_term_groups: List[Tuple[str, List[AnsatzTerm]]] = []
-        self._build_base_terms()
-        self.num_parameters = self.reps * len(self.base_terms)
-
-    # -- internal helper: split a polynomial into single-term exponentials --
-
-    def _poly_group(
-        self,
-        label: str,
-        poly: PauliPolynomial,
-    ) -> None:
-        """Decompose poly into sorted single-term PauliPolynomials and register as a group."""
-        term_polys = _single_term_polynomials_sorted(
-            poly,
-            repr_mode=self.repr_mode,
-            coefficient_tolerance=self.coefficient_tolerance,
-        )
-        if not term_polys:
-            return
-        group_terms: List[AnsatzTerm] = []
-        group_poly: Optional[PauliPolynomial] = None
-        for i, term_poly in enumerate(term_polys):
-            group_terms.append(AnsatzTerm(label=f"{label}_term_{i}", polynomial=term_poly))
-            group_poly = term_poly if group_poly is None else (group_poly + term_poly)
-        assert group_poly is not None
-        self.layer_term_groups.append((label, group_terms))
-        self.base_terms.append(AnsatzTerm(label=label, polynomial=group_poly))
-
-    # -- term construction -------------------------------------------------
-
-    def _build_base_terms(self) -> None:
-        # (1) hopping on the full fermion+phonon register
-        hop_poly = build_hubbard_kinetic(
-            dims=self.dims,
-            t=self.J,
-            repr_mode=self.repr_mode,
-            indexing=self.indexing,
-            edges=self.edges,
-            pbc=True,
-            nq_override=self.n_total,
-        )
-        self._poly_group("hop_layer", hop_poly)
-
-        # (2) onsite U
-        onsite_poly = build_hubbard_onsite(
-            dims=self.dims,
-            U=self.U,
-            repr_mode=self.repr_mode,
-            indexing=self.indexing,
-            nq_override=self.n_total,
-        )
-        self._poly_group("onsite_layer", onsite_poly)
-
-        # (3) fermion potential (optional — skipped if all v_i are zero)
-        potential_poly = build_hubbard_potential(
-            dims=self.dims,
-            v=self.v_list,
-            repr_mode=self.repr_mode,
-            indexing=self.indexing,
-            nq_override=self.n_total,
-        )
-        self._poly_group("potential_layer", potential_poly)
-
-        # (4) phonon energy: H_ph = ω₀ Σ_i (n_{b,i} + ½)
-        phonon_poly = build_holstein_phonon_energy(
-            dims=self.dims,
-            omega0=self.omega0,
-            n_ph_max=self.n_ph_max,
-            boson_encoding=self.boson_encoding,
-            repr_mode=self.repr_mode,
-            tol=self.coefficient_tolerance,
-            zero_point=self.include_zero_point,
-        )
-        self._poly_group("phonon_layer", phonon_poly)
-
-        # (5) electron-phonon coupling: H_g = g Σ_i x_i (n_i − 𝟙)
-        eph_poly = build_holstein_coupling(
-            dims=self.dims,
-            g=self.g,
-            n_ph_max=self.n_ph_max,
-            boson_encoding=self.boson_encoding,
-            repr_mode=self.repr_mode,
-            indexing=self.indexing,
-            tol=self.coefficient_tolerance,
-        )
-        self._poly_group("eph_layer", eph_poly)
-
-        # (6) drive (optional)
-        if self.v_t is not None or self.v0 is not None:
-            drive_poly = build_hubbard_holstein_drive(
-                dims=self.dims,
-                v_t=self.v_t,
-                v0=self.v0,
-                t=self.t_eval,
-                repr_mode=self.repr_mode,
-                indexing=self.indexing,
-                nq_override=self.n_total,
-            )
-            self._poly_group("drive_layer", drive_poly)
+            self.base_terms.append(AnsatzTerm(label="uccsd_doubles_layer", polynomial=doubles_poly))
 
         if not self.base_terms:
-            log.error("HubbardHolsteinLayerwiseAnsatz produced no layer terms")
-
-    # -- state preparation -------------------------------------------------
+            log.error("HardcodedUCCSDLayerwiseAnsatz produced no layer terms")
 
     def prepare_state(
         self,
@@ -1131,18 +1163,13 @@ class HubbardHolsteinLayerwiseAnsatz:
         psi_ref: np.ndarray,
         *,
         ignore_identity: bool = True,
-        coefficient_tolerance: Optional[float] = None,
-        sort_terms: Optional[bool] = None,
+        coefficient_tolerance: float = 1e-12,
+        sort_terms: bool = True,
     ) -> np.ndarray:
         if int(theta.size) != int(self.num_parameters):
             log.error("theta has wrong length for this ansatz")
         if not hasattr(self, "layer_term_groups"):
-            log.error("HubbardHolsteinLayerwiseAnsatz missing layer term groups")
-        if int(psi_ref.size) != (1 << int(self.nq)):
-            log.error("psi_ref length must be 2^nq for HubbardHolsteinLayerwiseAnsatz")
-
-        coeff_tol = self.coefficient_tolerance if coefficient_tolerance is None else float(coefficient_tolerance)
-        sort_flag = self.sort_terms if sort_terms is None else bool(sort_terms)
+            log.error("HardcodedUCCSDLayerwiseAnsatz missing layer term groups")
 
         psi = np.array(psi_ref, copy=True)
         k = 0
@@ -1155,8 +1182,8 @@ class HubbardHolsteinLayerwiseAnsatz:
                         term.polynomial,
                         shared_theta,
                         ignore_identity=ignore_identity,
-                        coefficient_tolerance=coeff_tol,
-                        sort_terms=sort_flag,
+                        coefficient_tolerance=coefficient_tolerance,
+                        sort_terms=sort_terms,
                     )
                 k += 1
         return psi
@@ -1364,66 +1391,6 @@ def exact_ground_energy_sector(
     evals = np.linalg.eigvalsh(sub)
     return float(np.min(np.real(evals)))
 
-
-def _sector_basis_indices_fermion_only(
-    nq_total: int,
-    alpha_indices: Sequence[int],
-    beta_indices: Sequence[int],
-    n_alpha: int,
-    n_beta: int,
-) -> List[int]:
-    """Select basis states by fermion particle-number, phonon qubits unconstrained.
-
-    Like _sector_basis_indices but only checks the specified fermion qubit
-    indices; all other (phonon) qubits are free.
-    """
-    idxs: List[int] = []
-    for idx in range(1 << int(nq_total)):
-        na = sum((idx >> int(q)) & 1 for q in alpha_indices)
-        nb = sum((idx >> int(q)) & 1 for q in beta_indices)
-        if na == int(n_alpha) and nb == int(n_beta):
-            idxs.append(int(idx))
-    return idxs
-
-
-def exact_ground_energy_sector_hh(
-    H: PauliPolynomial,
-    *,
-    num_sites: int,
-    num_particles: Tuple[int, int],
-    n_ph_max: int,
-    boson_encoding: str = "binary",
-    indexing: str = "blocked",
-    tol: float = 1e-12,
-) -> float:
-    r"""Sector-filtered ground energy for a Hubbard-Holstein Hamiltonian.
-
-    Filters on fermion particle-number (alpha/beta spin sectors) while
-    treating all phonon qubits as free.  The full Hilbert-space dimension
-    is 2^{2L + L·qpb} where qpb = boson_qubits_per_site(n_ph_max).
-    """
-    M = hamiltonian_matrix(H, tol=tol)
-    nq_total = int(round(math.log2(M.shape[0])))
-
-    # Fermion qubit indices — identical to _spin_orbital_index_sets but within
-    # the first 2*L qubits of the (2L + L·qpb)-qubit register.
-    alpha_idx, beta_idx = _spin_orbital_index_sets(int(num_sites), ordering=indexing)
-    n_alpha, n_beta = int(num_particles[0]), int(num_particles[1])
-
-    basis = _sector_basis_indices_fermion_only(
-        nq_total, alpha_idx, beta_idx, n_alpha, n_beta,
-    )
-    if not basis:
-        raise ValueError(
-            f"No HH basis states for sector (n_up={n_alpha}, n_dn={n_beta}) "
-            f"with nq_total={nq_total}, num_sites={num_sites}."
-        )
-
-    sub = M[np.ix_(basis, basis)]
-    evals = np.linalg.eigvalsh(sub)
-    return float(np.min(np.real(evals)))
-
-
 def show_latex_and_code(title: str, latex_expr: str, fn) -> None:
     if display is not None and IPyMath is not None:
         if title:
@@ -1467,6 +1434,6 @@ def show_vqe_latex_python_pairs() -> None:
 if __name__ == "__main__":
     print(
         "Use this in Jupyter for rendered LaTeX:\n"
-        "from src.quantum.vqe_latex_python_pairs import show_vqe_latex_python_pairs\n"
+        "from pydephasing.quantum.vqe_latex_python_pairs import show_vqe_latex_python_pairs\n"
         "show_vqe_latex_python_pairs()"
     )

@@ -28,6 +28,12 @@ Options:
   --python-bin <path>      Python executable (default: /opt/anaconda3/bin/python or python)
   --skip-pdf               Skip PDF generation (default)
   --with-pdf               Generate PDF
+  --problem <str>          Model type: hubbard (default) or hh (Hubbard-Holstein)
+  --omega0 <float>         HH phonon frequency (hh only, default 1.0)
+  --g-ep <float>           HH electron-phonon coupling (hh only, default 0.5)
+  --n-ph-max <int>         HH max phonon quanta per site (hh only, default 1)
+  --boson-encoding <str>   HH boson encoding: unary (default) or binary
+  --vqe-ansatz <str>       Override VQE ansatz (auto-set to hh_hva for hh)
   -h, --help               Show this help
 USAGE
 }
@@ -38,6 +44,14 @@ BUDGET_HOURS=""
 SKIP_PDF="1"
 PYTHON_BIN_DEFAULT="/opt/anaconda3/bin/python"
 PYTHON_BIN="${PYTHON_BIN:-${PYTHON_BIN_DEFAULT}}"
+
+# HH optional flags (empty = not set = Hubbard default)
+PROBLEM=""
+OMEGA0=""
+G_EP=""
+N_PH_MAX=""
+BOSON_ENCODING=""
+VQE_ANSATZ_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +78,30 @@ while [[ $# -gt 0 ]]; do
     --with-pdf)
       SKIP_PDF="0"
       shift
+      ;;
+    --problem)
+      PROBLEM="${2:-}"
+      shift 2
+      ;;
+    --omega0)
+      OMEGA0="${2:-}"
+      shift 2
+      ;;
+    --g-ep)
+      G_EP="${2:-}"
+      shift 2
+      ;;
+    --n-ph-max)
+      N_PH_MAX="${2:-}"
+      shift 2
+      ;;
+    --boson-encoding)
+      BOSON_ENCODING="${2:-}"
+      shift 2
+      ;;
+    --vqe-ansatz)
+      VQE_ANSATZ_OVERRIDE="${2:-}"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -332,6 +370,29 @@ run_attempt() {
     --initial-state-source vqe
     --output-json "${json_path}"
   )
+
+  # HH flags (forwarded only when set)
+  if [[ -n "${PROBLEM}" ]]; then
+    cmd+=(--problem "${PROBLEM}")
+  fi
+  if [[ -n "${OMEGA0}" ]]; then
+    cmd+=(--omega0 "${OMEGA0}")
+  fi
+  if [[ -n "${G_EP}" ]]; then
+    cmd+=(--g-ep "${G_EP}")
+  fi
+  if [[ -n "${N_PH_MAX}" ]]; then
+    cmd+=(--n-ph-max "${N_PH_MAX}")
+  fi
+  if [[ -n "${BOSON_ENCODING}" ]]; then
+    cmd+=(--boson-encoding "${BOSON_ENCODING}")
+  fi
+  # VQE ansatz: auto-default to hh_hva for HH if not overridden
+  if [[ -n "${VQE_ANSATZ_OVERRIDE}" ]]; then
+    cmd+=(--vqe-ansatz "${VQE_ANSATZ_OVERRIDE}")
+  elif [[ "${PROBLEM}" == "hh" ]]; then
+    cmd+=(--vqe-ansatz hh_hva)
+  fi
 
   if [[ "${SKIP_PDF}" == "1" ]]; then
     cmd+=(--skip-pdf)

@@ -1580,6 +1580,17 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Qiskit baseline Hubbard pipeline runner.")
     parser.add_argument("--L", type=int, required=True, help="Number of lattice sites.")
+    parser.add_argument(
+        "--problem",
+        type=str,
+        choices=["hubbard", "hh"],
+        default="hubbard",
+        help=(
+            "Model type. Only 'hubbard' is supported by the Qiskit baseline. "
+            "Hubbard-Holstein ('hh') must be run via "
+            "hardcoded_hubbard_pipeline.py --problem hh."
+        ),
+    )
     parser.add_argument("--t", type=float, default=1.0, help="Hopping coefficient.")
     parser.add_argument("--u", type=float, default=4.0, help="Onsite interaction U.")
     parser.add_argument("--dv", type=float, default=0.0, help="Uniform local potential term v (Hv = -v n).")
@@ -1668,6 +1679,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    # ---- HH guard: Qiskit baseline is Hubbard-only ----
+    if getattr(args, "problem", "hubbard") == "hh":
+        raise SystemExit(
+            "ERROR: --problem hh (Hubbard-Holstein) is not supported by the Qiskit baseline.\n"
+            "Qiskit Nature's FermiHubbardModel does not include phonon degrees of freedom.\n"
+            "Run Hubbard-Holstein directly:\n"
+            "  python pipelines/hardcoded_hubbard_pipeline.py --problem hh [flags …]"
+        )
+
     _ai_log("qiskit_main_start", settings=vars(args))
     run_command = _current_command_string()
     artifacts_dir = ROOT / "artifacts"

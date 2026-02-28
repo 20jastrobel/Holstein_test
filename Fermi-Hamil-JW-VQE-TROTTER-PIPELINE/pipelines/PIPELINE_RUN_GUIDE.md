@@ -11,12 +11,13 @@ Run from the sub-repo root (`Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/`).
 | Script | Purpose |
 |--------|---------|
 | `pipelines/hardcoded_hubbard_pipeline.py` | Hardcoded Hamiltonian, hardcoded VQE, hardcoded Trotter dynamics, optional QPE |
+| `pipelines/hardcoded_adapt_pipeline.py` | Hardcoded ADAPT-VQE (greedy operator selection, COBYLA re-opt) + Trotter dynamics |
 | `pipelines/qiskit_hubbard_baseline_pipeline.py` | Qiskit Hamiltonian, Qiskit VQE, Qiskit Trotter dynamics, optional QPE |
 | `pipelines/compare_hardcoded_vs_qiskit_pipeline.py` | Orchestrator — runs both, compares metrics, writes comparison PDFs |
 | `pipelines/manual_compare_jsons.py` | Standalone JSON-vs-JSON consistency checker |
 | `pipelines/regression_L2_L3.sh` | Automated L=2/L=3 regression harness |
 | `pipelines/run_hva_uccsd_qiskit_L2_L3.sh` | Repro runner for hardcoded layer-wise UCCSD/HVA vs shared qiskit baseline on L=2,3 |
-| `pipelines/run_L_drive_accurate.sh` | Shorthand runner for “run L”: drive-only, accuracy-gated (`delta_e < 1e-7`) with L-scaled heaviness |
+| `pipelines/run_L_drive_accurate.sh` | Shorthand runner for "run L": drive-only, accuracy-gated (`delta_e < 1e-7`) with L-scaled heaviness |
 | `pipelines/run_scaling_preset_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
 
 ---
@@ -46,8 +47,34 @@ If you want apples-to-apples hardcoded vs Qiskit from each ansatz, use `--initia
 | `--t` | float | `1.0` | Hopping coefficient t |
 | `--u` | float | `4.0` | Onsite interaction U |
 | `--dv` | float | `0.0` | Uniform local potential term v (H_v = −v n) |
-| `--boundary` | choice | `periodic` | Boundary conditions: `periodic` or `open` |
+| `--boundary` | choice | `open` | Boundary conditions: `periodic` or `open` |
 | `--ordering` | choice | `blocked` | Qubit ordering: `blocked` or `interleaved` |
+
+### Hubbard-Holstein (HH) Model Parameters (hardcoded pipeline only)
+
+These flags activate the Hubbard-Holstein model with electron-phonon coupling.
+The default problem is **Hubbard** (`--problem hubbard`); HH phonon parameters
+are used only when `--problem hh` is set.
+
+> **Scope note:** The compare pipeline and the Qiskit baseline pipeline do not
+> support `--problem hh`. Hubbard-Holstein must be run directly via the
+> hardcoded pipeline (`hardcoded_hubbard_pipeline.py --problem hh`).
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--problem` | choice | `hubbard` | Model selection: `hubbard` (pure Fermi-Hubbard) or `hh` (Hubbard-Holstein) |
+| `--omega0` | float | `1.0` | Phonon frequency ω₀ |
+| `--g-ep` | float | `0.5` | Electron-phonon coupling strength g |
+| `--n-ph-max` | int | `1` | Maximum phonon occupation per site |
+| `--boson-encoding` | choice | `binary` | Boson qubit encoding: `binary` or `unary` |
+
+**Qubit layout (HH):**
+`[2L fermion qubits | L × qpb phonon qubits]` where `qpb = ceil(log2(n_ph_max + 1))`.
+
+**Sector filtering (HH):**
+The VQE sector filter acts only on the 2L fermion qubits; phonon qubits are
+left unconstrained. The exact filtered energy uses the same fermion-only
+projection.
 
 ### Time-Evolution Parameters (all three pipelines)
 
@@ -86,7 +113,7 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 | Flag | Type | Default (HC) | Default (QK) | Description |
 |------|------|-------------|-------------|-------------|
-| `--vqe-ansatz` | choice | `uccsd` | n/a | Hardcoded-only ansatz family: `uccsd` or `hva` (both map to layer-wise implementations) |
+| `--vqe-ansatz` | choice | `uccsd` | Hardcoded-only ansatz family: `uccsd`, `hva`, or `hh_hva` (all layer-wise) |
 | `--vqe-reps` | int | `2` | `2` | Number of ansatz repetitions (circuit depth) |
 | `--vqe-restarts` | int | `1` | `3` | Number of independent VQE optimisation restarts |
 | `--vqe-seed` | int | `7` | `7` | Random seed for VQE parameter initialisation |
@@ -152,11 +179,69 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 - `--vqe-ansatz uccsd` -> `HardcodedUCCSDLayerwiseAnsatz`
 - `--vqe-ansatz hva` -> `HubbardLayerwiseAnsatz`
+- `--vqe-ansatz hh_hva` -> `HubbardHolsteinLayerwiseAnsatz` (requires `--problem hh`)
 - Legacy term-wise classes remain available in `src/quantum/vqe_latex_python_pairs.py`, but runtime defaults route to the layer-wise classes above.
 - Hardcoded VQE JSON now includes:
   - `vqe.ansatz`
   - `vqe.parameterization` (currently `"layerwise"`)
   - `vqe.exact_filtered_energy`
+
+---
+
+## ADAPT-VQE Pipeline (`hardcoded_adapt_pipeline.py`)
+
+The ADAPT-VQE pipeline greedily selects operators from a pool, one per iteration,
+re-optimising all parameters at each depth, until gradient or energy convergence.
+
+### ADAPT-VQE Parameters
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--adapt-pool` | choice | `uccsd` | Pool type: `uccsd`, `cse`, `full_hamiltonian`, `hva` (HH only), `paop`, `paop_min`, `paop_std`, `paop_full` (HH only) |
+| `--adapt-max-depth` | int | `20` | Maximum ADAPT iterations (operators appended) |
+| `--adapt-eps-grad` | float | `1e-4` | Gradient convergence threshold |
+| `--adapt-eps-energy` | float | `1e-8` | Energy convergence threshold |
+| `--adapt-maxiter` | int | `300` | COBYLA maxiter per re-optimization |
+| `--adapt-seed` | int | `7` | Random seed |
+| `--adapt-allow-repeats` / `--adapt-no-repeats` | flag | `allow` | Allow selecting the same pool operator more than once |
+| `--adapt-finite-angle-fallback` / `--adapt-no-finite-angle-fallback` | flag | `enabled` | Scan ±theta probes when gradients are below threshold |
+| `--adapt-finite-angle` | float | `0.1` | Probe angle for finite-angle fallback |
+| `--adapt-finite-angle-min-improvement` | float | `1e-12` | Minimum energy drop from probe to accept fallback |
+| `--adapt-disable-hh-seed` | flag | `false` | Disable HH quadrature seed pre-optimization |
+
+### PAOP Pool Parameters (HH only)
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--paop-r` | int | `1` | Cloud radius R for `paop_full` |
+| `--paop-split-paulis` | flag | `false` | Split composite generators into single Pauli terms |
+| `--paop-prune-eps` | float | `0.0` | Prune Pauli terms below this coefficient |
+| `--paop-normalization` | choice | `none` | Generator normalization: `none`, `fro`, `maxcoeff` |
+
+### Pool types by problem
+
+| Problem | Available pools |
+|---------|----------------|
+| `hubbard` | `uccsd`, `cse`, `full_hamiltonian` |
+| `hh` | `hva`, `full_hamiltonian`, `paop`, `paop_min`, `paop_std`, `paop_full` |
+
+**Pool details:**
+- `uccsd` — UCCSD single + double excitation generators (same as VQE pipeline)
+- `cse` — Term-wise Hubbard ansatz terms (Hamiltonian-variational style)
+- `full_hamiltonian` — One generator per non-identity Hamiltonian Pauli term
+- `hva` (HH) — HH layerwise generators + UCCSD lifted to HH register + termwise-augmented (merged, deduplicated)
+- `paop_min` — Displacement-only polaron operators (local conditional displacement)
+- `paop_std` — Displacement + dressed hopping
+- `paop_full` — All polaron operators (displacement + doublon dressing + dressed hopping + extended cloud)
+- `paop` — alias for `paop_std`
+
+### Sector filtering (ADAPT)
+
+For `--problem hh`, the ADAPT pipeline uses **fermion-only sector filtering**
+(via `exact_ground_energy_sector_hh`): phonon qubits are unconstrained. This
+matches the VQE pipeline convention.
+
+For `--problem hubbard`, standard full-register sector filtering is used.
 
 ---
 
@@ -171,17 +256,40 @@ python pipelines/hardcoded_hubbard_pipeline.py --help
 Defaults:
 
 - `--t 1.0 --u 4.0 --dv 0.0`
-- `--boundary periodic --ordering blocked`
+- `--boundary open --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`native|sorted`)
-- `--vqe-ansatz uccsd` (`uccsd|hva`)
+- `--vqe-ansatz uccsd` (`uccsd|hva|hh_hva`)
 - `--vqe-reps 2 --vqe-restarts 1 --vqe-seed 7 --vqe-maxiter 120`
 - `--qpe-eval-qubits 6 --qpe-shots 1024 --qpe-seed 11`
 - `--initial-state-source vqe`
 - Drive: disabled by default. Enable with `--enable-drive`.
+- Problem: `hubbard` by default. Use `--problem hh` for Hubbard-Holstein.
+
+### ADAPT-VQE pipeline
+
+```bash
+python pipelines/hardcoded_adapt_pipeline.py --help
+```
+
+Defaults:
+
+- `--t 1.0 --u 4.0 --dv 0.0`
+- `--boundary open --ordering blocked`
+- `--problem hubbard` (use `--problem hh` for Hubbard-Holstein)
+- `--adapt-pool uccsd` (`uccsd|cse|full_hamiltonian|hva|paop|paop_min|paop_std|paop_full`)
+- `--adapt-max-depth 20 --adapt-eps-grad 1e-4 --adapt-eps-energy 1e-8`
+- `--adapt-maxiter 300 --adapt-seed 7`
+- `--adapt-allow-repeats --adapt-finite-angle-fallback`
+- `--adapt-finite-angle 0.1 --adapt-finite-angle-min-improvement 1e-12`
+- `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
+- `--initial-state-source adapt_vqe` (`adapt_vqe|exact|hf`)
 
 ### Qiskit baseline pipeline
+
+> **HH scope:** The Qiskit baseline uses `FermiHubbardModel` and does not support
+> Hubbard-Holstein. Passing `--problem hh` will exit with an error message.
 
 ```bash
 python pipelines/qiskit_hubbard_baseline_pipeline.py --help
@@ -190,7 +298,7 @@ python pipelines/qiskit_hubbard_baseline_pipeline.py --help
 Defaults:
 
 - `--t 1.0 --u 4.0 --dv 0.0`
-- `--boundary periodic --ordering blocked`
+- `--boundary open --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`qiskit|sorted`)
@@ -200,6 +308,11 @@ Defaults:
 - Drive: disabled by default. Enable with `--enable-drive`.
 
 ### Compare runner
+
+> **HH scope:** The compare pipeline orchestrates both the hardcoded and Qiskit
+> baselines. Since the Qiskit baseline does not support HH, passing `--problem hh`
+> to the compare pipeline will exit with an error. Run HH directly via the
+> hardcoded pipeline.
 
 ```bash
 python pipelines/compare_hardcoded_vs_qiskit_pipeline.py --help
@@ -279,6 +392,20 @@ bash pipelines/run_L_drive_accurate.sh --L 5 --with-pdf
 bash pipelines/run_L_drive_accurate.sh --L 6 --budget-hours 12 --artifacts-dir artifacts
 ```
 
+HH mode (auto-defaults to `--vqe-ansatz hh_hva` when `--problem hh`):
+
+```bash
+bash pipelines/run_L_drive_accurate.sh --L 2 \
+  --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding unary
+```
+
+Scaling preset with HH (env-var driven):
+
+```bash
+PROBLEM=hh OMEGA0=1.0 G_EP=0.5 N_PH_MAX=1 BOSON_ENCODING=unary \
+  bash pipelines/run_scaling_preset_L2_L6.sh
+```
+
 ### 1) Run full compare for L=2,3,4 with locked heavy settings
 
 ```bash
@@ -335,6 +462,69 @@ python pipelines/hardcoded_hubbard_pipeline.py \
   --output-pdf artifacts/pdf/H_L2_vt_t1.0_U4.0_S64.pdf
 ```
 
+### 5b) Run hardcoded pipeline with Hubbard-Holstein model
+
+```bash
+python pipelines/hardcoded_hubbard_pipeline.py \
+  --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding binary \
+  --vqe-ansatz hh_hva --vqe-reps 2 --vqe-restarts 3 --vqe-maxiter 600 \
+  --initial-state-source vqe \
+  --output-json artifacts/json/H_L2_hh_t1.0_U4.0_S64.json \
+  --output-pdf artifacts/pdf/H_L2_hh_t1.0_U4.0_S64.pdf
+```
+
+### 5c) Run ADAPT-VQE pipeline (Hubbard, UCCSD pool)
+
+```bash
+python pipelines/hardcoded_adapt_pipeline.py \
+  --L 2 --problem hubbard --adapt-pool uccsd \
+  --adapt-max-depth 20 --adapt-eps-grad 1e-4 --adapt-maxiter 300 \
+  --initial-state-source adapt_vqe --skip-pdf \
+  --output-json artifacts/json/adapt_L2_uccsd.json
+```
+
+### 5d) Run ADAPT-VQE pipeline (HH, HVA pool)
+
+```bash
+python pipelines/hardcoded_adapt_pipeline.py \
+  --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
+  --adapt-pool hva --adapt-max-depth 30 --adapt-eps-grad 1e-5 --adapt-maxiter 600 \
+  --initial-state-source adapt_vqe \
+  --output-json artifacts/json/adapt_L2_hh_hva.json \
+  --output-pdf artifacts/pdf/adapt_L2_hh_hva.pdf
+```
+
+### 5e) Run ADAPT-VQE pipeline (HH, PAOP pool)
+
+```bash
+python pipelines/hardcoded_adapt_pipeline.py \
+  --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
+  --adapt-pool paop_std --paop-r 1 --paop-normalization none \
+  --adapt-max-depth 30 --adapt-eps-grad 1e-5 --adapt-maxiter 600 \
+  --initial-state-source adapt_vqe --skip-pdf \
+  --output-json artifacts/json/adapt_L2_hh_paop_std.json
+```
+
+### 5f) Run hardcoded pipeline with Hubbard-Holstein + drive + Trotter dynamics
+
+```bash
+python pipelines/hardcoded_hubbard_pipeline.py \
+  --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding unary \
+  --vqe-ansatz hh_hva --vqe-reps 2 --vqe-restarts 3 --vqe-maxiter 600 \
+  --enable-drive --drive-A 0.5 --drive-omega 2.0 --drive-tbar 3.0 \
+  --drive-pattern staggered --drive-time-sampling midpoint \
+  --t-final 10.0 --num-times 101 --trotter-steps 128 \
+  --exact-steps-multiplier 2 --suzuki-order 2 \
+  --initial-state-source vqe --skip-qpe \
+  --output-json artifacts/json/H_L2_hh_drive_t1.0_U4.0_S128.json \
+  --output-pdf artifacts/pdf/H_L2_hh_drive_t1.0_U4.0_S128.pdf
+```
+
+> **Note:** The drive operates on the full `nq_total = 2L + L×qpb` Hilbert space,
+> including phonon qubits. The reference propagator uses `expm_multiply` with
+> piecewise-constant H(t) when drive is enabled, matching the static
+> eigendecomposition reference when `A=0`.
+
 ### 6) Compare pipeline with drive enabled
 
 ```bash
@@ -388,7 +578,7 @@ bash pipelines/run_scaling_preset_L2_L6.sh
 
 Defaults in this runner:
 
-- Physics: `t=1.0, u=4.0, dv=0.0, periodic, blocked`.
+- Physics: `t=1.0, u=4.0, dv=0.0, open, blocked`.
 - Drive: enabled with `A=0.5, omega=2.0, tbar=3.0, phi=0.0, pattern=staggered`.
 - Error gate: `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-2`.
 - L=2..5 budget guard: `10` hours (`L25_BUDGET_HOURS`).

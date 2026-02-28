@@ -18,29 +18,10 @@ is expressed in that same spin-orbital ordering.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
-
-# HH qubit-count helper – imported lazily to avoid circular imports at module level.
-try:
-    from src.quantum.hubbard_latex_python_pairs import boson_qubits_per_site, n_sites_from_dims
-except Exception:  # pragma: no cover
-    def boson_qubits_per_site(n_ph_max: int, encoding: str = "binary") -> int:
-        d = int(n_ph_max) + 1
-        return max(1, int(math.ceil(math.log2(d))))
-
-    def n_sites_from_dims(dims):
-        if isinstance(dims, int):
-            return int(dims)
-        out = 1
-        for L in dims:
-            out *= int(L)
-        return out
-
-Dims = Union[int, Tuple[int, ...]]
 
 
 SpinParticles = Tuple[int, int]  # (n_alpha, n_beta)
@@ -174,65 +155,6 @@ def hartree_fock_circuit(
     for q in occ:
         qc.x(q)
     return qc
-
-
-# ---------------------------------------------------------------------------
-# Hubbard-Holstein reference state
-# ---------------------------------------------------------------------------
-
-def _half_filled_num_particles(n_sites: int) -> Tuple[int, int]:
-    """Default half-filling: ceil(L/2) alpha, floor(L/2) beta."""
-    L = int(n_sites)
-    if L <= 0:
-        raise ValueError("n_sites must be positive")
-    return ((L + 1) // 2, L // 2)
-
-
-def hubbard_holstein_reference_state(
-    *,
-    dims: Dims,
-    num_particles: Optional[SpinParticles] = None,
-    n_ph_max: int,
-    boson_encoding: str = "binary",
-    indexing: str = "blocked",
-) -> np.ndarray:
-    r"""
-    Hubbard-Holstein reference state = (fermionic HF determinant) ⊗ (phonon vacuum).
-
-    Qubit register layout (left = high, right = low):
-        [boson site-(L-1) | … | boson site-0 | fermion qubits]
-
-    Bitstring in q_{n-1}…q_0 order:
-        full_bitstring = "0" * n_bos_qubits + hf_fermion_bitstring
-
-    Dimension: 2^{n_ferm + n_bos}, normalised to ||ψ|| = 1.
-    """
-    n_sites = int(n_sites_from_dims(dims))
-    n_ferm = 2 * n_sites
-    qpb = int(boson_qubits_per_site(int(n_ph_max), str(boson_encoding)))
-    n_bos = n_sites * qpb
-    n_total = n_ferm + n_bos
-
-    if num_particles is None:
-        num_particles_i = _half_filled_num_particles(n_sites)
-    else:
-        num_particles_i = (int(num_particles[0]), int(num_particles[1]))
-
-    hf_fermion_bs = str(
-        hartree_fock_bitstring(
-            n_sites=n_sites,
-            num_particles=num_particles_i,
-            indexing=str(indexing),
-        )
-    )
-    full_bitstring = ("0" * n_bos) + hf_fermion_bs
-
-    # Build statevector: little-endian index = int(bitstring, 2)
-    dim = 1 << n_total
-    idx = int(full_bitstring, 2)
-    psi = np.zeros(dim, dtype=complex)
-    psi[idx] = 1.0 + 0.0j
-    return psi
 
 
 if __name__ == "__main__":

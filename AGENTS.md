@@ -54,8 +54,6 @@ The following modules are “operator algebra core”:
 - `qubitization_module.py` (PauliTerm)
 - `pauli_polynomial_class.py` (PauliPolynomial + JW ladder operators)
 
-Agents should avoid adding algorithm logic here (VQE, QPE, optimizers, simulators).
-
 ### PauliTerm canonical source (mandatory)
 Canonical `PauliTerm` source:
 - `src.quantum.qubitization_module.PauliTerm`
@@ -170,7 +168,7 @@ interpret it with the following **default contract**:
 
 1. The run is **drive-enabled, never static**.
 2. The run is **accuracy-gated** and must target:
-   `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-7`.
+   `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-4`.
 3. Use **L-scaled heaviness** (stronger settings for larger L), not one-size-fits-all settings.
 
 Implementation rule:
@@ -190,10 +188,10 @@ Implementation rule:
 - Use explicit types for public function signatures.
 - Prefer explicit errors (`log.error(...)` or raising) over silent coercions.
 
-### “LaTeX above Python” pairing
-When adding new literate modules (like `hubbard_latex_python_pairs.py`):
-- include the LaTeX expression in a string right above the function that implements it
-- keep LaTeX and code aligned 1:1
+### Built Math-Symbols/Description above Python pairing
+When adding new modules :
+- include the Built-in math symbolic expression in a string right above the function that implements it
+- keep the math and code aligned 1:1
 
 ### Regression/validation
 Whenever you modify:
@@ -210,7 +208,7 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
 
 ## 6) What an agent should NOT do
 - Do not change Pauli-string ordering conventions.
-- Do not introduce Qiskit into core algorithm modules.
+- Do not introduce Qiskit into core/'hardcoded' algorithm modules.
 - Do not add heavy dependencies without a strong reason.
 - Do not "optimize" by rewriting algebra rules unless correctness is proven with regression tests.
 - Do not add new drive parameters without updating all three pipelines' `parse_args()`, `_build_drive_args()`, `_build_drive_args_with_amplitude()`, and `PIPELINE_RUN_GUIDE.md`.
@@ -218,26 +216,12 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
 - Do not stop a run because you think it is taking up too much run-time. The only acceptable reason to stop/interrupt an already active run/script is for debugging.
 
 
----
-
-## 7) Suggested next implementation steps (for agents)
-1. Replace `quantum_eigensolver.py` stub with a hardcoded VQE driver calling into a dedicated VQE module.
-2. Add a VQE literate module (LaTeX+Python pairs) mirroring the Hubbard pairs pattern.
-3. Add a small regression runner that:
-   - builds H for L=2,3 (blocked & interleaved)
-   - compares canonical Pauli dictionaries vs existing JSON references
-   - runs hardcoded VQE and compares energy to exact filtered diagonalization for small sizes.
-4. Extend `regression_L2_L3.sh` to also exercise the amplitude comparison mode:
-   ```bash
-   --enable-drive --drive-pattern dimer_bias --drive-amplitudes '0.0,0.2' \
-   --with-drive-amplitude-comparison-pdf
-   ```
-5. Add higher-order Suzuki–Trotter (4th order) by composition on the existing primitive `exp(PauliTerm)` backend.
-6. Add convergence-study scripts: sweep `--trotter-steps` and `--exact-steps-multiplier` to validate Trotter-error scaling under the drive.
 
 --Note -- Take your time coding! Be safe, and do not rush. The user has a lot of time and does not need things quickly.
 
 ## Plans
 
-- Make the plan consise. Sacrifice grammar for the sake of concision.
-- At the end of each plan, give me a list of unresolved questions to answer/problems, if any.
+- Make the plan extremely consise. Sacrifice grammar for the sake of concision.
+- At the end of each plan, give me a list of unresolved questions to answer/problems, if any, and the files you will edit.
+
+

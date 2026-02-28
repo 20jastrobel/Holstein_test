@@ -52,6 +52,14 @@ DRIVE_T0="0.0"
 
 VQE_SEED="7"
 
+# HH optional flags (environment-variable driven, empty = Hubbard default)
+PROBLEM="${PROBLEM:-}"
+OMEGA0="${OMEGA0:-}"
+G_EP="${G_EP:-}"
+N_PH_MAX="${N_PH_MAX:-}"
+BOSON_ENCODING="${BOSON_ENCODING:-}"
+VQE_ANSATZ_OVERRIDE="${VQE_ANSATZ_OVERRIDE:-}"
+
 primary_params_for_L() {
   local L="$1"
   case "${L}" in
@@ -195,6 +203,29 @@ run_attempt() {
     --initial-state-source vqe
     --output-json "${json_path}"
   )
+
+  # HH flags (forwarded only when set)
+  if [[ -n "${PROBLEM}" ]]; then
+    cmd+=(--problem "${PROBLEM}")
+  fi
+  if [[ -n "${OMEGA0}" ]]; then
+    cmd+=(--omega0 "${OMEGA0}")
+  fi
+  if [[ -n "${G_EP}" ]]; then
+    cmd+=(--g-ep "${G_EP}")
+  fi
+  if [[ -n "${N_PH_MAX}" ]]; then
+    cmd+=(--n-ph-max "${N_PH_MAX}")
+  fi
+  if [[ -n "${BOSON_ENCODING}" ]]; then
+    cmd+=(--boson-encoding "${BOSON_ENCODING}")
+  fi
+  # VQE ansatz: auto-default to hh_hva for HH if not overridden
+  if [[ -n "${VQE_ANSATZ_OVERRIDE}" ]]; then
+    cmd+=(--vqe-ansatz "${VQE_ANSATZ_OVERRIDE}")
+  elif [[ "${PROBLEM}" == "hh" ]]; then
+    cmd+=(--vqe-ansatz hh_hva)
+  fi
 
   if [[ "${SKIP_PDF}" == "1" ]]; then
     cmd+=(--skip-pdf)
