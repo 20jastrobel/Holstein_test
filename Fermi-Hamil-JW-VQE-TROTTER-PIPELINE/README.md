@@ -135,6 +135,25 @@ Full command usage and all parameter options are documented in:
 
 - **[`pipelines/PIPELINE_RUN_GUIDE.md`](pipelines/PIPELINE_RUN_GUIDE.md)**
 
+## Codex Cloud / Fresh Machine Setup
+
+From this directory, run:
+
+```bash
+python3 -m pip install --user --upgrade pip
+bash scripts/bootstrap_cloud.sh
+source ../.venv/bin/activate
+```
+
+If you prefer a different environment path:
+
+```bash
+bash scripts/bootstrap_cloud.sh /path/to/venv
+source /path/to/venv/bin/activate
+```
+
+Then run any command from the Quick Start section.
+
 Quick start from this directory:
 
 ```bash

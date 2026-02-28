@@ -53,7 +53,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
-  if command -v python >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
     PYTHON_BIN="$(command -v python)"
   else
     echo "ERROR: python executable not found: ${PYTHON_BIN}" >&2
