@@ -1,0 +1,49 @@
+{
+  "fixed_physics": {
+    "L": 3,
+    "J": 1.0,
+    "U": 2.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "num_particles_half_filled": [
+      2,
+      1
+    ]
+  },
+  "results": [
+    {
+      "config": {
+        "name": "hh_hva",
+        "restarts": 3,
+        "method": "SLSQP",
+        "maxiter": 300,
+        "seed": 11
+      },
+      "num_parameters": 8,
+      "exact_energy_filtered": -0.6988083850995498,
+      "vqe_energy": 0.8554844192844585,
+      "delta_e_abs": 1.5542928043840083,
+      "sector_weight_target": 0.9999999999999999,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 62.57950088899997
+    },
+    {
+      "config": {
+        "name": "hh_full_termwise",
+        "restarts": 2,
+        "method": "SLSQP",
+        "maxiter": 200,
+        "seed": 11
+      },
+      "num_parameters": 30,
+      "exact_energy_filtered": -0.6988083850995498,
+      "vqe_energy": -1.562401287038754,
+      "delta_e_abs": 0.8635929019392042,
+      "sector_weight_target": 2.9780809528517676e-09,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 114.17991153699995
+    }
+  ]
+}
