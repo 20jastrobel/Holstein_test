@@ -27,14 +27,24 @@ from typing import Any
 
 import numpy as np
 
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+_MPL_IMPORT_ERROR: str | None = None
+try:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+    import matplotlib
 
-import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+    _HAS_MATPLOTLIB = True
+except Exception as exc:  # pragma: no cover - optional dependency
+    _HAS_MATPLOTLIB = False
+    _MPL_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    matplotlib = None
+    plt = None
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
+    class PdfPages:  # type: ignore[no-redef]
+        pass
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
@@ -57,6 +67,14 @@ from src.quantum.drives_time_potential import (
     evaluate_drive_waveform,
     reference_method_name,
 )
+
+def _require_matplotlib() -> None:
+    if not _HAS_MATPLOTLIB:
+        err = _MPL_IMPORT_ERROR or "not installed"
+        raise RuntimeError(
+            f"matplotlib is required for PDF output. "
+            f"Install matplotlib or run with --skip-pdf. Original error: {err}"
+        )
 
 
 def _ai_log(event: str, **fields: Any) -> None:
@@ -1523,6 +1541,7 @@ def _render_text_page(pdf: PdfPages, lines: list[str], *, fontsize: int = 10) ->
 
 
 def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: str) -> None:
+    _require_matplotlib()
     traj = payload["trajectory"]
     if len(traj) == 0:
         raise ValueError("Cannot render pipeline PDF: trajectory is empty.")

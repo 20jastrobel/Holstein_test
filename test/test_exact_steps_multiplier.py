@@ -36,6 +36,16 @@ import numpy as np
 # Path setup
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if not (REPO_ROOT / "src").is_dir():
+    cwd_root = Path.cwd().resolve()
+    for candidate in (cwd_root, cwd_root.parent, cwd_root.parent.parent):
+        if (candidate / "src").is_dir():
+            REPO_ROOT = candidate
+            break
+    else:
+        raise RuntimeError(
+            f"Cannot locate repository root containing src/ from {Path(__file__).resolve()}"
+        )
 PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
 
 for _p in (REPO_ROOT, PIPELINE_ROOT):

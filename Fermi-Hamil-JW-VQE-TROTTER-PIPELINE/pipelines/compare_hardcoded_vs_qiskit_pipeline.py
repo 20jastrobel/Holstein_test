@@ -29,14 +29,24 @@ from typing import Any
 
 import numpy as np
 
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+_MPL_IMPORT_ERROR: str | None = None
+try:
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+    import matplotlib
 
-import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+    _HAS_MATPLOTLIB = True
+except Exception as exc:  # pragma: no cover - optional dependency
+    _HAS_MATPLOTLIB = False
+    _MPL_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+    matplotlib = None
+    plt = None
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
+    class PdfPages:  # type: ignore[no-redef]
+        pass
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
@@ -46,6 +56,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.quantum.drives_time_potential import evaluate_drive_waveform
+
+
+def _require_matplotlib() -> None:
+    if not _HAS_MATPLOTLIB:
+        err = _MPL_IMPORT_ERROR or "not installed"
+        raise RuntimeError(
+            f"matplotlib is required for PDF output. "
+            f"Install matplotlib or run with --skip-pdf. Original error: {err}"
+        )
 
 THRESHOLDS = {
     "ground_state_energy_abs_delta": 1e-8,
@@ -610,6 +629,7 @@ def _write_comparison_pdf(
     run_command: str,
     t_hartree: float | None = None,
 ) -> None:
+    _require_matplotlib()
     h_rows = hardcoded["trajectory"]
     q_rows = qiskit["trajectory"]
     times = _arr(h_rows, "time")
@@ -860,6 +880,7 @@ def _write_bundle_pdf(
     run_command: str,
     t_hartree: float | None = None,
 ) -> None:
+    _require_matplotlib()
     lvals = [L for L, _h, _q, _m in per_l_data]
     exact_global = np.array([float(h["ground_state"]["exact_energy"]) for _L, h, _q, _m in per_l_data], dtype=float)
     exact_filtered = np.array(
@@ -1771,6 +1792,7 @@ def _write_amplitude_comparison_pdf(
     t_hartree: float | None = None,
 ) -> dict[str, Any]:
     """Write the amplitude-comparison PDF for a single *L* value."""
+    _require_matplotlib()
     disabled_hc = amp_data["disabled"]["hc"]
     disabled_qk = amp_data["disabled"]["qk"]
     a0_hc = amp_data["A0"]["hc"]
