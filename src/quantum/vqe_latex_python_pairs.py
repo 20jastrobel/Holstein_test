@@ -946,6 +946,186 @@ class HardcodedUCCSDLayerwiseAnsatz(HardcodedUCCSDAnsatz):
 
 
 # ---------------------------------------------------------------------------
+# Hubbard-Holstein termwise ansatz  (one θ per Pauli-term exponential)
+# ---------------------------------------------------------------------------
+
+class HubbardHolsteinTermwiseAnsatz:
+    r"""
+    Term-wise Hubbard-Holstein ansatz — one independent θ per Pauli exponential.
+
+    Per layer, apply all individual Pauli-term unitaries in deterministic order:
+      1) hopping terms     — each XX/YY pair from H_t gets its own θ
+      2) onsite-U terms    — each ZZ/Z/I term from H_U gets its own θ
+      3) potential terms    — each Z term from H_v gets its own θ (if present)
+      4) phonon terms       — each Z term from H_ph gets its own θ
+      5) e-ph coupling      — each term from H_g gets its own θ
+      6) drive terms        — each term from H_drive gets its own θ (if present)
+
+    This gives ~16 independent parameters per layer for L=2 n_ph_max=1 (vs ~4
+    in the layerwise ansatz), providing the expressivity needed to converge to
+    the ground state.
+
+    Compatible with time evolution: each unitary is exp(-i θ_k P_k).
+    """
+
+    def __init__(
+        self,
+        dims: Dims,
+        J: float,
+        U: float,
+        omega0: float,
+        g: float,
+        n_ph_max: int,
+        *,
+        boson_encoding: str = "binary",
+        v: SitePotential = None,
+        v_t: TimePotential = None,
+        v0: SitePotential = None,
+        t_eval: Optional[float] = None,
+        reps: int = 1,
+        repr_mode: str = "JW",
+        indexing: str = "blocked",
+        edges: Optional[Sequence[Tuple[int, int]]] = None,
+        pbc: Union[bool, Sequence[bool]] = True,
+        include_zero_point: bool = True,
+        coefficient_tolerance: float = 1e-12,
+        sort_terms: bool = True,
+    ):
+        self.dims = dims
+        self.n_sites = int(n_sites_from_dims(dims))
+        self.n_ferm = 2 * self.n_sites
+        self.n_ph_max = int(n_ph_max)
+        self.boson_encoding = str(boson_encoding)
+        self.qpb = int(boson_qubits_per_site(self.n_ph_max, self.boson_encoding))
+        self.n_total = self.n_ferm + self.n_sites * self.qpb
+        self.nq = int(self.n_total)
+
+        self.J = float(J)
+        self.U = float(U)
+        self.omega0 = float(omega0)
+        self.g = float(g)
+        self.v_list = _parse_site_potential(v, n_sites=self.n_sites)
+        self.v_t = v_t
+        self.v0 = v0
+        self.t_eval = t_eval
+        self.include_zero_point = bool(include_zero_point)
+
+        self.repr_mode = str(repr_mode)
+        self.indexing = str(indexing)
+        self.edges = list(edges) if edges is not None else bravais_nearest_neighbor_edges(dims, pbc=pbc)
+        self.reps = int(reps)
+        if self.reps <= 0:
+            log.error("reps must be positive")
+
+        self.coefficient_tolerance = float(coefficient_tolerance)
+        self.sort_terms = bool(sort_terms)
+
+        self.base_terms: List[AnsatzTerm] = []
+        self._build_base_terms()
+        self.num_parameters = self.reps * len(self.base_terms)
+
+    def _build_base_terms(self) -> None:
+        """Build one AnsatzTerm per individual Pauli exponential."""
+        tol = self.coefficient_tolerance
+        rm = self.repr_mode
+
+        def _add_terms_from_poly(label_prefix: str, poly: PauliPolynomial) -> None:
+            term_polys = _single_term_polynomials_sorted(
+                poly, repr_mode=rm, coefficient_tolerance=tol,
+            )
+            for i, tp in enumerate(term_polys):
+                self.base_terms.append(AnsatzTerm(
+                    label=f"{label_prefix}_{i}", polynomial=tp,
+                ))
+
+        # (1) hopping
+        hop_poly = build_hubbard_kinetic(
+            dims=self.dims, t=self.J,
+            repr_mode=rm, indexing=self.indexing,
+            edges=self.edges, pbc=True,
+            nq_override=self.n_total,
+        )
+        _add_terms_from_poly("hop", hop_poly)
+
+        # (2) onsite U
+        onsite_poly = build_hubbard_onsite(
+            dims=self.dims, U=self.U,
+            repr_mode=rm, indexing=self.indexing,
+            nq_override=self.n_total,
+        )
+        _add_terms_from_poly("onsite", onsite_poly)
+
+        # (3) fermion potential (optional)
+        potential_poly = build_hubbard_potential(
+            dims=self.dims, v=self.v_list,
+            repr_mode=rm, indexing=self.indexing,
+            nq_override=self.n_total,
+        )
+        _add_terms_from_poly("pot", potential_poly)
+
+        # (4) phonon energy
+        phonon_poly = build_holstein_phonon_energy(
+            dims=self.dims, omega0=self.omega0,
+            n_ph_max=self.n_ph_max, boson_encoding=self.boson_encoding,
+            repr_mode=rm, tol=tol,
+            zero_point=self.include_zero_point,
+        )
+        _add_terms_from_poly("phonon", phonon_poly)
+
+        # (5) electron-phonon coupling
+        eph_poly = build_holstein_coupling(
+            dims=self.dims, g=self.g,
+            n_ph_max=self.n_ph_max, boson_encoding=self.boson_encoding,
+            repr_mode=rm, indexing=self.indexing, tol=tol,
+        )
+        _add_terms_from_poly("eph", eph_poly)
+
+        # (6) drive (optional)
+        if self.v_t is not None or self.v0 is not None:
+            drive_poly = build_hubbard_holstein_drive(
+                dims=self.dims, v_t=self.v_t, v0=self.v0,
+                t=self.t_eval, repr_mode=rm,
+                indexing=self.indexing, nq_override=self.n_total,
+            )
+            _add_terms_from_poly("drive", drive_poly)
+
+        if not self.base_terms:
+            log.error("HubbardHolsteinTermwiseAnsatz produced no terms")
+
+    def prepare_state(
+        self,
+        theta: np.ndarray,
+        psi_ref: np.ndarray,
+        *,
+        ignore_identity: bool = True,
+        coefficient_tolerance: Optional[float] = None,
+        sort_terms: Optional[bool] = None,
+    ) -> np.ndarray:
+        if int(theta.size) != int(self.num_parameters):
+            log.error("theta has wrong length for this ansatz")
+        if int(psi_ref.size) != (1 << int(self.nq)):
+            log.error("psi_ref length must be 2^nq for HubbardHolsteinTermwiseAnsatz")
+
+        coeff_tol = self.coefficient_tolerance if coefficient_tolerance is None else float(coefficient_tolerance)
+        sort_flag = self.sort_terms if sort_terms is None else bool(sort_terms)
+
+        psi = np.array(psi_ref, copy=True)
+        k = 0
+        for _ in range(self.reps):
+            for term in self.base_terms:
+                psi = apply_exp_pauli_polynomial(
+                    psi,
+                    term.polynomial,
+                    float(theta[k]),
+                    ignore_identity=ignore_identity,
+                    coefficient_tolerance=coeff_tol,
+                    sort_terms=sort_flag,
+                )
+                k += 1
+        return psi
+
+
+# ---------------------------------------------------------------------------
 # Hubbard-Holstein layerwise ansatz
 # ---------------------------------------------------------------------------
 

@@ -266,10 +266,12 @@ def _resolve_hubbard_nq(n_sites: int, nq_override: Optional[int]) -> int:
 # ---------------------------------------------------------------------------
 
 def boson_qubits_per_site(n_ph_max: int, encoding: str = "binary") -> int:
-    """
+    r"""
     Qubits needed per site for a local truncated phonon Hilbert space.
 
-    d = n_ph_max + 1 Fock levels → ceil(log2(d)) qubits (binary encoding).
+    d = n\_ph\_max + 1 Fock levels.
+      - binary:  ceil(log2(d)) qubits
+      - unary:   d = n\_ph\_max + 1 qubits  (one-hot encoding)
     """
     n_ph_i = int(n_ph_max)
     if n_ph_i < 0:
@@ -277,6 +279,8 @@ def boson_qubits_per_site(n_ph_max: int, encoding: str = "binary") -> int:
     d = n_ph_i + 1
     if encoding == "binary":
         return max(1, int(math.ceil(math.log2(d))))
+    if encoding == "unary":
+        return d
     log.error("unknown boson encoding")
     return max(1, int(math.ceil(math.log2(d))))
 
@@ -460,10 +464,11 @@ def boson_operator(
     encoding: str,
     tol: float = 1e-12,
 ) -> PauliPolynomial:
-    """Bosonic operator embedded on selected global qubits (binary encoding)."""
-    if encoding != "binary":
-        log.error("only binary boson encoding is implemented")
+    """Bosonic operator embedded on selected global qubits.
 
+    Supports encoding in {"binary", "unary"}.
+    which in {"b", "bdag", "n", "x"}.
+    """
     qubits_i = [int(q) for q in qubits]
     if len(set(qubits_i)) != len(qubits_i):
         log.error("qubits for boson operator must be unique")
@@ -474,6 +479,31 @@ def boson_operator(
     expected_qpb = boson_qubits_per_site(int(n_ph_max), encoding=encoding)
     if qpb != expected_qpb:
         log.error("provided local boson qubit block does not match encoding size")
+
+    # ---- unary dispatch (direct Pauli construction, no matrix decomp) ----
+    if encoding == "unary":
+        if which == "n":
+            return boson_unary_number_operator(
+                repr_mode, int(nq_total), qubits_i, n_ph_max=int(n_ph_max)
+            )
+        if which == "x":
+            return boson_unary_displacement_operator(
+                repr_mode, int(nq_total), qubits_i, n_ph_max=int(n_ph_max)
+            )
+        if which == "bdag":
+            return boson_unary_bdag_operator(
+                repr_mode, int(nq_total), qubits_i, n_ph_max=int(n_ph_max)
+            )
+        if which == "b":
+            return boson_unary_b_operator(
+                repr_mode, int(nq_total), qubits_i, n_ph_max=int(n_ph_max)
+            )
+        log.error(f"unknown boson operator which='{which}' for unary encoding")
+        return PauliPolynomial(repr_mode)  # unreachable
+
+    # ---- binary dispatch (matrix → Pauli decomposition) ----
+    if encoding != "binary":
+        log.error(f"unknown boson encoding '{encoding}'")
 
     terms = boson_local_operator_pauli_decomp(
         which,
@@ -536,6 +566,191 @@ def boson_displacement_operator(
         encoding=encoding,
         tol=tol,
     )
+
+
+# ---------------------------------------------------------------------------
+# Unary (one-hot) boson operator helpers
+# ---------------------------------------------------------------------------
+#
+# Unary qubits for site i:
+#   q(i,n) = 2L + i*(N_b+1) + n,   n = 0..N_b
+#
+# Projector on Fock level n:
+#   n_{i,n} = |1><1|_{q(i,n)} = (I - Z_{q(i,n)})/2
+#
+# Number operator on the physical (one-hot) subspace:
+#   n_i = Σ_{n=0}^{N_b}  n · n_{i,n}
+#
+# Raising/lowering in unary:
+#   (+) = (X + iY)/2,   (-) = (X - iY)/2
+#   b_i† = Σ_{n=0}^{N_b-1} √(n+1) (+)_{q(i,n)} (-)_{q(i,n+1)}
+#   b_i  = Σ_{n=0}^{N_b-1} √(n+1) (-)_{q(i,n)} (+)_{q(i,n+1)}
+#
+# Displacement simplifies:
+#   x_i = b_i + b_i† = Σ_{n=0}^{N_b-1} √(n+1) (XX + YY)_{q(i,n),q(i,n+1)} / 2
+
+
+def _unary_site_qubits_check(qubits: Sequence[int], *, n_ph_max: int) -> None:
+    """Validate that ``qubits`` has the correct length for unary encoding."""
+    qpb_expected = int(n_ph_max) + 1
+    if len(qubits) != qpb_expected:
+        log.error(
+            f"unary qubits length must be N_b+1={qpb_expected}, got {len(qubits)}"
+        )
+
+
+def boson_unary_number_operator(
+    repr_mode: str,
+    nq_total: int,
+    qubits: Sequence[int],
+    *,
+    n_ph_max: int,
+) -> PauliPolynomial:
+    r"""
+    Unary number operator on the one-hot subspace:
+
+        n = \sum_{n=0}^{N_b} n \, \hat{n}_n,  \quad  \hat{n}_n = (I - Z_n)/2
+
+    This yields only I and Z terms (single-qubit).
+    """
+    _unary_site_qubits_check(qubits, n_ph_max=n_ph_max)
+
+    I = _identity_pauli_polynomial(repr_mode, int(nq_total))
+    H = PauliPolynomial(repr_mode)
+
+    # n_n = (I - Z_q)/2;  so Σ n·n_n  = (Σ n/2)·I  -  (1/2)·Σ n·Z_q
+    N_b = int(n_ph_max)
+    const = 0.0
+    for n_level in range(N_b + 1):
+        const += 0.5 * float(n_level)
+        if n_level == 0:
+            continue
+        # term: -(n_level/2) * Z_q
+        q = int(qubits[n_level])
+        H += (-(0.5 * float(n_level))) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {q: "Z"}
+        )
+
+    if abs(const) > 0.0:
+        H += float(const) * I
+
+    return H
+
+
+def boson_unary_displacement_operator(
+    repr_mode: str,
+    nq_total: int,
+    qubits: Sequence[int],
+    *,
+    n_ph_max: int,
+) -> PauliPolynomial:
+    r"""
+    Displacement operator x = b + b† in unary form:
+
+        x = \sum_{n=0}^{N_b-1} \sqrt{n+1}\, (XX_{n,n+1} + YY_{n,n+1})/2
+
+    Only real XX and YY terms on adjacent one-hot qubits.
+    """
+    _unary_site_qubits_check(qubits, n_ph_max=n_ph_max)
+
+    N_b = int(n_ph_max)
+    x = PauliPolynomial(repr_mode)
+
+    for n_level in range(N_b):
+        qn = int(qubits[n_level])
+        qp = int(qubits[n_level + 1])
+        w = 0.5 * math.sqrt(float(n_level + 1))
+
+        x += float(w) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "X", qp: "X"}
+        )
+        x += float(w) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "Y", qp: "Y"}
+        )
+
+    return x
+
+
+def boson_unary_bdag_operator(
+    repr_mode: str,
+    nq_total: int,
+    qubits: Sequence[int],
+    *,
+    n_ph_max: int,
+) -> PauliPolynomial:
+    r"""
+    Creation operator b† in unary form:
+
+        b^\dagger = \sum_{n=0}^{N_b-1} \sqrt{n+1}\, (+)_n (-)_{n+1}
+
+    where (+)=(X+iY)/2, (-)=(X-iY)/2.
+
+    Expand: (+)_a (-)_b = (1/4)[ XX - iXY + iYX + YY ]_{a,b}
+    """
+    _unary_site_qubits_check(qubits, n_ph_max=n_ph_max)
+
+    N_b = int(n_ph_max)
+    bdag = PauliPolynomial(repr_mode)
+
+    for n_level in range(N_b):
+        qn = int(qubits[n_level])
+        qp = int(qubits[n_level + 1])
+        c = 0.25 * math.sqrt(float(n_level + 1))
+
+        bdag += complex(c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "X", qp: "X"}
+        )
+        bdag += complex(-1j * c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "X", qp: "Y"}
+        )
+        bdag += complex(1j * c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "Y", qp: "X"}
+        )
+        bdag += complex(c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "Y", qp: "Y"}
+        )
+
+    return bdag
+
+
+def boson_unary_b_operator(
+    repr_mode: str,
+    nq_total: int,
+    qubits: Sequence[int],
+    *,
+    n_ph_max: int,
+) -> PauliPolynomial:
+    r"""
+    Annihilation operator b in unary form:
+
+        b = \sum_{n=0}^{N_b-1} \sqrt{n+1}\, (-)_n (+)_{n+1}
+
+    Expand: (-)_a (+)_b = (1/4)[ XX + iXY - iYX + YY ]_{a,b}
+    """
+    _unary_site_qubits_check(qubits, n_ph_max=n_ph_max)
+
+    N_b = int(n_ph_max)
+    b = PauliPolynomial(repr_mode)
+
+    for n_level in range(N_b):
+        qn = int(qubits[n_level])
+        qp = int(qubits[n_level + 1])
+        c = 0.25 * math.sqrt(float(n_level + 1))
+
+        b += complex(c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "X", qp: "X"}
+        )
+        b += complex(1j * c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "X", qp: "Y"}
+        )
+        b += complex(-1j * c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "Y", qp: "X"}
+        )
+        b += complex(c) * _pauli_monomial_global(
+            repr_mode, int(nq_total), {qn: "Y", qp: "Y"}
+        )
+
+    return b
 
 
 def build_hubbard_kinetic(

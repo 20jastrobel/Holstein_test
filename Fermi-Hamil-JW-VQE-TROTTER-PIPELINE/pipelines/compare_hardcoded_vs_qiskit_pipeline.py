@@ -1373,7 +1373,7 @@ _DRIVE_FLAG_DEFAULTS: dict[str, Any] = {
 
 
 def _parse_hardcoded_vqe_ansatzes(raw: str) -> list[str]:
-    allowed = {"uccsd", "hva"}
+    allowed = {"uccsd", "hva", "hh_hva", "hh_hva_tw"}
     vals = [str(x).strip().lower() for x in str(raw).split(",") if str(x).strip()]
     if not vals:
         raise ValueError("--hardcoded-vqe-ansatzes must contain at least one ansatz name.")

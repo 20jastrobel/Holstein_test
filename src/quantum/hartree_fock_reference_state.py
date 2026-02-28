@@ -188,6 +188,28 @@ def _half_filled_num_particles(n_sites: int) -> Tuple[int, int]:
     return ((L + 1) // 2, L // 2)
 
 
+def _phonon_vacuum_bitstring(n_sites: int, qpb: int, boson_encoding: str) -> str:
+    """
+    Phonon vacuum bitstring for the full boson register (q_{n-1}...q_0 order).
+
+    - binary:  all phonon qubits = 0  →  "0" * n_bos
+    - unary:   per-site one-hot |n=0⟩ = qubit[0]=1, rest=0
+               In bitstring notation the lowest-index qubit appears rightmost
+               inside each site's block, so per-site: "0"*(qpb-1) + "1".
+               Sites are ordered high-to-low (site L-1 leftmost).
+    """
+    encoding = str(boson_encoding).strip().lower()
+    if encoding == "binary":
+        return "0" * (int(n_sites) * int(qpb))
+    if encoding == "unary":
+        # Each site contributes qpb bits; vacuum = qubit[0]=1, rest=0.
+        # In bitstring (left=high, right=low), this is "0"*(qpb-1) + "1".
+        site_vac = ("0" * (int(qpb) - 1)) + "1"
+        # Sites ordered high-to-low: site (L-1) is leftmost.
+        return site_vac * int(n_sites)
+    raise ValueError(f"Unknown boson encoding '{boson_encoding}'")
+
+
 def hubbard_holstein_reference_state(
     *,
     dims: Dims,
@@ -203,7 +225,11 @@ def hubbard_holstein_reference_state(
         [boson site-(L-1) | … | boson site-0 | fermion qubits]
 
     Bitstring in q_{n-1}…q_0 order:
-        full_bitstring = "0" * n_bos_qubits + hf_fermion_bitstring
+        full_bitstring = phonon_vacuum_bitstring + hf_fermion_bitstring
+
+    Phonon vacuum:
+      - binary: all phonon qubits = 0
+      - unary:  per-site one-hot |n=0⟩ (qubit[0] = 1 within each site block)
 
     Dimension: 2^{n_ferm + n_bos}, normalised to ||ψ|| = 1.
     """
@@ -225,7 +251,8 @@ def hubbard_holstein_reference_state(
             indexing=str(indexing),
         )
     )
-    full_bitstring = ("0" * n_bos) + hf_fermion_bs
+    phonon_vac_bs = _phonon_vacuum_bitstring(n_sites, qpb, str(boson_encoding))
+    full_bitstring = phonon_vac_bs + hf_fermion_bs
 
     # Build statevector: little-endian index = int(bitstring, 2)
     dim = 1 << n_total

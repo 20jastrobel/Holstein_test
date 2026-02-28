@@ -636,6 +636,20 @@ class HubbardLayerwiseAnsatz(HubbardTermwiseAnsatz):
         return psi
 
 
+def _phonon_vacuum_bitstring(
+    n_sites: int, qpb: int, boson_encoding: str
+) -> str:
+    """Return the phonon-sector vacuum bitstring for *all* sites.
+
+    binary  → all zeros  (``"0" * n_sites * qpb``)
+    unary   → one-hot with qubit-0 of each site set to 1:
+              per-site block ``"0" * (qpb-1) + "1"`` repeated for each site.
+    """
+    if boson_encoding == "unary":
+        return ("0" * (qpb - 1) + "1") * int(n_sites)
+    return "0" * (int(n_sites) * qpb)
+
+
 def hubbard_holstein_reference_state(
     *,
     dims: Dims,
@@ -668,7 +682,8 @@ def hubbard_holstein_reference_state(
             indexing=str(indexing),
         )
     )
-    full_bitstring = ("0" * n_bos) + hf_fermion_bitstring
+    phonon_vac = _phonon_vacuum_bitstring(n_sites, qpb, str(boson_encoding))
+    full_bitstring = phonon_vac + hf_fermion_bitstring
     return basis_state(n_total, full_bitstring)
 
 

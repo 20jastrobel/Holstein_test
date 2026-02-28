@@ -1,3 +1,38 @@
+---
+
+## HH-First Workflow (Hubbard as limiting-case validation)
+
+Project convention moving forward:
+
+- Primary production model: **Hubbard-Holstein (HH)**.
+- Pure Hubbard is retained as a **validation limit** only.
+- Standard limit check: compare Hubbard vs HH at vanishing coupling/frequency:
+  - `g_ep = 0`
+  - `omega0 = 0`
+- Keep all other run-defining parameters identical (`L, t, U, dv, boundary, ordering, time-grid, trotter settings, VQE settings`) when making this comparison.
+
+### Why this check exists
+
+At `g_ep = 0` and `omega0 = 0`, HH should reduce to the corresponding Hubbard behavior under matched settings.
+This is used as a regression/consistency gate, not as a primary physics target.
+
+### Canonical validation recipe (copy/paste)
+
+#### 1) Hubbard reference run
+
+```bash
+python pipelines/hardcoded_hubbard_pipeline.py \
+  --L 2 \
+  --problem hubbard \
+  --t 1.0 --u 4.0 --dv 0.0 \
+  --boundary periodic --ordering blocked \
+  --vqe-ansatz uccsd --vqe-reps 2 --vqe-restarts 3 --vqe-maxiter 600 --vqe-seed 7 \
+  --t-final 10.0 --num-times 101 --suzuki-order 2 --trotter-steps 128 \
+  --initial-state-source vqe --skip-qpe \
+  --output-json artifacts/json/H_L2_hubbard_ref.json \
+  --output-pdf artifacts/pdf/H_L2_hubbard_ref.pdf
+
+
 # Hubbard Pipeline Run Guide
 
 This is the comprehensive runtime guide for the simplified repo layout.

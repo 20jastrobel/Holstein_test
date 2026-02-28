@@ -247,3 +247,10 @@ Legacy notebooks, old test harnesses, and prior report artifacts were moved (arc
 - `archive/pre_simplify_*`
 
 They are preserved for rollback/reference but are no longer part of the active runtime path.
+
+
+
+
+Current modeling convention: HH is primary; pure Hubbard runs are mainly used as limiting-case validation checks (e.g., HH at `g_ep=0`, `omega0=0` under matched settings).
+
+---

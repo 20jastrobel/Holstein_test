@@ -49,6 +49,7 @@ _BOSON_ENCODING = "binary"
 _BOUNDARY = "periodic"
 _ORDERING = "blocked"
 _HALF_FILL = (1, 1)  # n_alpha = n_beta = L//2  (half-filling: N_el = L)
+_ENCODINGS = ("binary", "unary")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -129,23 +130,27 @@ def _run_hubbard_vqe(
 class TestHHVQESmoke:
     """Minimal HH VQE converges to a finite energy below HF."""
 
-    def test_smoke_L2(self):
-        res = _run_hh_vqe(L=2, reps=2, restarts=2, maxiter=600, seed=42)
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_smoke_L2(self, enc):
+        res = _run_hh_vqe(L=2, reps=2, restarts=2, maxiter=600, seed=42,
+                           boson_encoding=enc)
         assert np.isfinite(res.energy), f"VQE energy not finite: {res.energy}"
         assert res.theta is not None
         assert res.theta.shape[0] > 0
 
-    def test_energy_below_hf(self):
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_energy_below_hf(self, enc):
         """VQE energy should be <= HF energy."""
-        H = _build_hh_hamiltonian()
+        H = _build_hh_hamiltonian(boson_encoding=enc)
         psi_hf = hubbard_holstein_reference_state(
-            dims=_L, n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+            dims=_L, n_ph_max=_N_PH_MAX, boson_encoding=enc,
             indexing=_ORDERING,
         )
         e_hf = expval_pauli_polynomial(psi_hf, H)
-        res = _run_hh_vqe(reps=2, restarts=3, maxiter=600, seed=42)
+        res = _run_hh_vqe(reps=2, restarts=3, maxiter=600, seed=42,
+                           boson_encoding=enc)
         assert res.energy <= e_hf + 1e-8, (
-            f"VQE energy {res.energy} exceeds HF energy {e_hf}"
+            f"[{enc}] VQE energy {res.energy} exceeds HF energy {e_hf}"
         )
 
 
@@ -155,9 +160,10 @@ class TestHHVQESmoke:
 class TestZeroCouplingLimit:
     """With g=0, omega0=0 the HH path must still run without error."""
 
-    def test_zero_coupling_runs(self):
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_zero_coupling_runs(self, enc):
         res = _run_hh_vqe(g_ep=0.0, omega0=0.0, reps=1, restarts=1,
-                           maxiter=100, seed=7)
+                           maxiter=100, seed=7, boson_encoding=enc)
         assert np.isfinite(res.energy)
 
 
@@ -224,16 +230,17 @@ class TestBackwardCompat:
 class TestThetaEnergyConsistency:
     """Returned theta reproduces reported energy via explicit expval."""
 
-    def test_theta_reproduces_energy(self):
-        H = _build_hh_hamiltonian()
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_theta_reproduces_energy(self, enc):
+        H = _build_hh_hamiltonian(boson_encoding=enc)
         ansatz = HubbardHolsteinLayerwiseAnsatz(
             dims=_L, J=_T, U=_U, omega0=_OMEGA0, g=_G_EP,
-            n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+            n_ph_max=_N_PH_MAX, boson_encoding=enc,
             reps=2, indexing=_ORDERING,
             pbc=(_BOUNDARY == "periodic"),
         )
         psi_ref = hubbard_holstein_reference_state(
-            dims=_L, n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+            dims=_L, n_ph_max=_N_PH_MAX, boson_encoding=enc,
             indexing=_ORDERING,
         )
         res = vqe_minimize(H, ansatz, psi_ref,
@@ -242,7 +249,7 @@ class TestThetaEnergyConsistency:
         psi_opt = ansatz.prepare_state(res.theta, psi_ref)
         e_check = expval_pauli_polynomial(psi_opt, H)
         assert abs(e_check - res.energy) < 1e-10, (
-            f"theta-recomputed energy {e_check} != reported {res.energy}"
+            f"[{enc}] theta-recomputed energy {e_check} != reported {res.energy}"
         )
 
 
@@ -252,16 +259,18 @@ class TestThetaEnergyConsistency:
 class TestVariationalBound:
     """VQE energy must satisfy the variational bound vs exact sector energy."""
 
-    def test_hh_variational_bound(self):
-        H = _build_hh_hamiltonian()
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_hh_variational_bound(self, enc):
+        H = _build_hh_hamiltonian(boson_encoding=enc)
         e_exact = exact_ground_energy_sector_hh(
             H, num_sites=_L, num_particles=_HALF_FILL,
-            n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+            n_ph_max=_N_PH_MAX, boson_encoding=enc,
             indexing=_ORDERING,
         )
-        res = _run_hh_vqe(reps=2, restarts=3, maxiter=600, seed=42)
+        res = _run_hh_vqe(reps=2, restarts=3, maxiter=600, seed=42,
+                           boson_encoding=enc)
         assert res.energy >= e_exact - 1e-8, (
-            f"VQE energy {res.energy} below exact {e_exact} by more than tolerance"
+            f"[{enc}] VQE energy {res.energy} below exact {e_exact} by more than tolerance"
         )
 
     def test_hubbard_variational_bound(self):
