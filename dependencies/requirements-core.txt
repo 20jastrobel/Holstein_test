@@ -1,0 +1,12 @@
+cython
+colorlog
+numpy
+PyYAML
+pylatexenc
+pytest
+pytest-mpi
+qiskit==0.45.1
+qiskit-aer==0.13.3
+qiskit-algorithms
+qiskit-nature
+scipy

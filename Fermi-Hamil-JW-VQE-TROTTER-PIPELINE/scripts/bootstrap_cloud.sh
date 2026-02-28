@@ -28,8 +28,24 @@ fi
 
 source "${VENV_DIR}/bin/activate"
 
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r "${REPO_ROOT}/dependencies/requirements.txt"
+CORE_REQ="${REPO_ROOT}/dependencies/requirements-core.txt"
+FULL_REQ="${REPO_ROOT}/dependencies/requirements.txt"
+PIP="${VENV_DIR}/bin/pip"
+
+${PIP} install --upgrade pip setuptools wheel
+${PIP} install -r "${CORE_REQ}"
+
+if ${PIP} install "matplotlib"; then
+  echo "Optional dependency matplotlib installed."
+else
+  echo "Warning: matplotlib installation failed (proxy/network restriction)."
+  echo "Cloud runs will continue with JSON-first outputs."
+  echo "Install matplotlib later if available and needed for richer plotting."
+fi
 
 echo "Cloud environment ready. Activate with:"
 echo "  source ${VENV_DIR}/bin/activate"
+
+if [ -f "${FULL_REQ}" ]; then
+  echo "Reference requirements file: ${FULL_REQ}"
+fi
