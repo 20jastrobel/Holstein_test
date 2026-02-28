@@ -61,7 +61,8 @@ echo "Running L=2 hardcoded pipeline..."
   --qpe-seed "${QPE_SEED}" \
   --initial-state-source vqe \
   --output-json "artifacts/json/H_L2_static_t${T_VAL}_U${U_VAL}_S${L2_TROTTER_STEPS}.json" \
-  --output-pdf "artifacts/pdf/H_L2_static_t${T_VAL}_U${U_VAL}_S${L2_TROTTER_STEPS}.pdf"
+  --output-pdf "artifacts/pdf/H_L2_static_t${T_VAL}_U${U_VAL}_S${L2_TROTTER_STEPS}.pdf" \
+  --skip-pdf
 
 echo "Running L=2 qiskit pipeline..."
 "${PYTHON_BIN}" pipelines/qiskit_hubbard_baseline_pipeline.py \
@@ -84,7 +85,8 @@ echo "Running L=2 qiskit pipeline..."
   --qpe-seed "${QPE_SEED}" \
   --initial-state-source vqe \
   --output-json "artifacts/json/Q_L2_static_t${T_VAL}_U${U_VAL}_S${L2_TROTTER_STEPS}.json" \
-  --output-pdf "artifacts/pdf/Q_L2_static_t${T_VAL}_U${U_VAL}_S${L2_TROTTER_STEPS}.pdf"
+  --output-pdf "artifacts/pdf/Q_L2_static_t${T_VAL}_U${U_VAL}_S${L2_TROTTER_STEPS}.pdf" \
+  --skip-pdf
 
 echo "Running L=3 hardcoded pipeline..."
 "${PYTHON_BIN}" pipelines/hardcoded_hubbard_pipeline.py \
@@ -107,7 +109,8 @@ echo "Running L=3 hardcoded pipeline..."
   --qpe-seed "${QPE_SEED}" \
   --initial-state-source vqe \
   --output-json "artifacts/json/H_L3_static_t${T_VAL}_U${U_VAL}_S${L3_TROTTER_STEPS}.json" \
-  --output-pdf "artifacts/pdf/H_L3_static_t${T_VAL}_U${U_VAL}_S${L3_TROTTER_STEPS}.pdf"
+  --output-pdf "artifacts/pdf/H_L3_static_t${T_VAL}_U${U_VAL}_S${L3_TROTTER_STEPS}.pdf" \
+  --skip-pdf
 
 echo "Running L=3 qiskit pipeline..."
 "${PYTHON_BIN}" pipelines/qiskit_hubbard_baseline_pipeline.py \
@@ -130,7 +133,8 @@ echo "Running L=3 qiskit pipeline..."
   --qpe-seed "${QPE_SEED}" \
   --initial-state-source vqe \
   --output-json "artifacts/json/Q_L3_static_t${T_VAL}_U${U_VAL}_S${L3_TROTTER_STEPS}.json" \
-  --output-pdf "artifacts/pdf/Q_L3_static_t${T_VAL}_U${U_VAL}_S${L3_TROTTER_STEPS}.pdf"
+  --output-pdf "artifacts/pdf/Q_L3_static_t${T_VAL}_U${U_VAL}_S${L3_TROTTER_STEPS}.pdf" \
+  --skip-pdf
 
 # No copy bridge needed: files are written directly to the paths
 # that the compare pipeline expects under artifacts/json/.
@@ -144,7 +148,7 @@ echo "Running compare pipeline for L=2..."
   --trotter-steps "${L2_TROTTER_STEPS}" \
   --t "${T_VAL}" --u "${U_VAL}" \
   --artifacts-dir artifacts \
-  --with-per-l-pdfs
+  --skip-pdf
 
 echo "Running compare pipeline for L=3..."
 "${PYTHON_BIN}" pipelines/compare_hardcoded_vs_qiskit_pipeline.py \
@@ -153,7 +157,7 @@ echo "Running compare pipeline for L=3..."
   --trotter-steps "${L3_TROTTER_STEPS}" \
   --t "${T_VAL}" --u "${U_VAL}" \
   --artifacts-dir artifacts \
-  --with-per-l-pdfs
+  --skip-pdf
 
 overall_pass=1
 if [[ ! -f artifacts/json/HvQ_summary.json ]]; then
@@ -387,7 +391,7 @@ echo "Running compare pipeline for drive L=2,3..."
   --u "${U_VAL}" \
   --trotter-steps "${DRIVE_TROTTER_STEPS}" \
   --enable-drive \
-  --with-per-l-pdfs
+  --skip-pdf
 
 drive_compare_pass="$("${PYTHON_BIN}" - <<'PY'
 import json

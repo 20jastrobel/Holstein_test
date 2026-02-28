@@ -489,6 +489,9 @@ def _load_hardcoded_vqe_namespace() -> dict[str, Any]:
         "hartree_fock_bitstring",
         "basis_state",
         "HardcodedUCCSDAnsatz",
+        "HardcodedUCCSDLayerwiseAnsatz",
+        "HubbardLayerwiseAnsatz",
+        "exact_ground_energy_sector",
         "vqe_minimize",
     ]
     missing = [name for name in required if name not in ns]
@@ -501,12 +504,17 @@ def _run_hardcoded_vqe(
     *,
     num_sites: int,
     ordering: str,
+    boundary: str,
+    hopping_t: float,
+    onsite_u: float,
+    potential_dv: float,
     h_poly: Any,
     reps: int,
     restarts: int,
     seed: int,
     maxiter: int,
     method: str,
+    ansatz_name: str,
 ) -> tuple[dict[str, Any], np.ndarray]:
     t0 = time.perf_counter()
     _ai_log(
@@ -518,22 +526,42 @@ def _run_hardcoded_vqe(
         maxiter=int(maxiter),
         seed=int(seed),
         method=str(method),
+        ansatz=str(ansatz_name),
     )
     ns = _load_hardcoded_vqe_namespace()
+    ansatz_name_s = str(ansatz_name).strip().lower()
+    if ansatz_name_s not in {"uccsd", "hva"}:
+        raise ValueError(f"Unsupported --vqe-ansatz '{ansatz_name}'. Expected one of: uccsd, hva.")
+
     num_particles = tuple(ns["half_filled_num_particles"](int(num_sites)))
     hf_bits = str(ns["hartree_fock_bitstring"](n_sites=int(num_sites), num_particles=num_particles, indexing=ordering))
     nq = 2 * int(num_sites)
     psi_ref = np.asarray(ns["basis_state"](nq, hf_bits), dtype=complex)
 
-    ansatz = ns["HardcodedUCCSDAnsatz"](
-        dims=int(num_sites),
-        num_particles=num_particles,
-        reps=int(reps),
-        repr_mode="JW",
-        indexing=ordering,
-        include_singles=True,
-        include_doubles=True,
-    )
+    if ansatz_name_s == "uccsd":
+        ansatz = ns["HardcodedUCCSDLayerwiseAnsatz"](
+            dims=int(num_sites),
+            num_particles=num_particles,
+            reps=int(reps),
+            repr_mode="JW",
+            indexing=ordering,
+            include_singles=True,
+            include_doubles=True,
+        )
+        method_name = "hardcoded_uccsd_layerwise_statevector"
+    else:
+        ansatz = ns["HubbardLayerwiseAnsatz"](
+            dims=int(num_sites),
+            t=float(hopping_t),
+            U=float(onsite_u),
+            v=float(potential_dv),
+            reps=int(reps),
+            repr_mode="JW",
+            indexing=ordering,
+            pbc=(str(boundary).strip().lower() == "periodic"),
+            include_potential_terms=True,
+        )
+        method_name = "hardcoded_hva_layerwise_statevector"
 
     result = ns["vqe_minimize"](
         h_poly,
@@ -548,11 +576,22 @@ def _run_hardcoded_vqe(
     theta = np.asarray(result.theta, dtype=float)
     psi_vqe = np.asarray(ansatz.prepare_state(theta, psi_ref), dtype=complex).reshape(-1)
     psi_vqe = _normalize_state(psi_vqe)
+    exact_filtered_energy = float(
+        ns["exact_ground_energy_sector"](
+            h_poly,
+            num_sites=int(num_sites),
+            num_particles=num_particles,
+            indexing=ordering,
+        )
+    )
 
     payload = {
         "success": True,
-        "method": "hardcoded_uccsd_notebook_statevector",
+        "method": method_name,
         "energy": float(result.energy),
+        "ansatz": str(ansatz_name_s),
+        "parameterization": "layerwise",
+        "exact_filtered_energy": float(exact_filtered_energy),
         "best_restart": int(getattr(result, "best_restart", 0)),
         "nfev": int(getattr(result, "nfev", 0)),
         "nit": int(getattr(result, "nit", 0)),
@@ -564,11 +603,28 @@ def _run_hardcoded_vqe(
         "optimal_point": [float(x) for x in theta.tolist()],
         "hf_bitstring_qn_to_q0": hf_bits,
     }
+    if ansatz_name_s == "hva" and int(num_sites) == 2:
+        delta_vs_exact = float(payload["energy"]) - float(exact_filtered_energy)
+        if np.isfinite(delta_vs_exact) and delta_vs_exact > 1e-3:
+            payload["warning"] = (
+                "L=2 strict layer-wise HVA may be expressivity-limited under shared-parameter tying; "
+                "large positive gap vs filtered-sector exact energy can be expected."
+            )
+            payload["warning_delta_vs_exact_filtered"] = float(delta_vs_exact)
+            _ai_log(
+                "hardcoded_vqe_layerwise_hva_l2_warning",
+                L=int(num_sites),
+                energy=float(payload["energy"]),
+                exact_filtered_energy=float(exact_filtered_energy),
+                delta_vs_exact_filtered=float(delta_vs_exact),
+            )
     _ai_log(
         "hardcoded_vqe_done",
         L=int(num_sites),
+        ansatz=str(ansatz_name_s),
         success=True,
         energy=float(result.energy),
+        exact_filtered_energy=float(exact_filtered_energy),
         best_restart=int(getattr(result, "best_restart", 0)),
         nfev=int(getattr(result, "nfev", 0)),
         nit=int(getattr(result, "nit", 0)),
@@ -1311,6 +1367,15 @@ def _render_command_page(pdf: PdfPages, command: str) -> None:
     plt.close(fig)
 
 
+def _render_text_page(pdf: PdfPages, lines: list[str], *, fontsize: int = 10) -> None:
+    fig = plt.figure(figsize=(11.0, 8.5))
+    ax = fig.add_subplot(111)
+    ax.axis("off")
+    ax.text(0.03, 0.97, "\n".join(lines), va="top", ha="left", family="monospace", fontsize=fontsize)
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: str) -> None:
     traj = payload["trajectory"]
     if len(traj) == 0:
@@ -1471,9 +1536,35 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         f"N_up={vqe_sector.get('n_up','?')}, N_dn={vqe_sector.get('n_dn','?')}"
         if vqe_sector else "half-filled"
     )
+    settings = payload.get("settings", {})
+    ansatz_label = str(payload.get("vqe", {}).get("ansatz", settings.get("vqe_ansatz", "unknown"))).strip().lower()
+    vqe_method = payload.get("vqe", {}).get("method", "unknown")
+    run_mode = "drive-enabled" if isinstance(settings.get("drive"), dict) else "static"
+    _ = run_command  # command text is preserved in CLI logs; PDF starts with summary
 
     with PdfPages(str(pdf_path)) as pdf:
-        _render_command_page(pdf, run_command)
+        summary_lines = [
+            f"Hardcoded Hubbard Summary (L={settings.get('L')})",
+            "",
+            "Ansatz Used:",
+            f"  - hardcoded ansatz: {ansatz_label}",
+            f"  - vqe method: {vqe_method}",
+            "",
+            "Run Settings:",
+            f"  - mode: {run_mode}",
+            f"  - t={settings.get('t')}  u={settings.get('u')}  dv={settings.get('dv')}",
+            f"  - boundary={settings.get('boundary')}  ordering={settings.get('ordering')}",
+            f"  - trotter_steps={settings.get('trotter_steps')}  suzuki_order={settings.get('suzuki_order')}",
+            f"  - t_final={settings.get('t_final')}  num_times={settings.get('num_times')}",
+            f"  - initial_state_source={settings.get('initial_state_source')}",
+            "",
+            "Topline:",
+            f"  - subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"  - vqe_energy: {payload.get('vqe', {}).get('energy')}",
+            f"  - exact_filtered_energy: {payload['ground_state'].get('exact_energy_filtered')}",
+            f"  - qpe_energy_estimate: {payload.get('qpe', {}).get('energy_estimate')}",
+        ]
+        _render_text_page(pdf, summary_lines, fontsize=10)
 
         # ------------------------------------------------------------------
         # Front matter: 3D pages first (non-redundant)
@@ -1800,32 +1891,33 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         pdf.savefig(figv)
         plt.close(figv)
 
-        fig2 = plt.figure(figsize=(11.0, 8.5))
-        ax2 = fig2.add_subplot(111)
-        ax2.axis("off")
         lines = [
             "Hardcoded Hubbard pipeline summary",
             "",
-            f"settings: {json.dumps(payload['settings'])}",
-            f"exact_trajectory_label: {EXACT_LABEL}",
-            f"exact_trajectory_method: {EXACT_METHOD}",
-            f"fidelity_definition: {payload['settings'].get('fidelity_definition')}",
-            f"subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
-            f"energy_t0_exact_gs: {float(e_exact[0]) if e_exact.size > 0 else None}",
-            f"energy_t0_exact_ansatz: {float(e_exact_ans[0]) if e_exact_ans.size > 0 else None}",
-            f"energy_t0_trotter: {float(e_trot[0]) if e_trot.size > 0 else None}",
-            f"ground_state_exact_energy (full Hilbert): {payload['ground_state']['exact_energy']:.12f}",
-            f"ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
-            f"filtered_sector: {payload['ground_state'].get('filtered_sector')}",
-            f"vqe_energy: {payload['vqe'].get('energy')}",
-            f"qpe_energy_estimate: {payload['qpe'].get('energy_estimate')}",
-            f"initial_state_source: {payload['initial_state']['source']}",
-            f"hamiltonian_terms: {payload['hamiltonian']['num_terms']}",
-            f"reference_sanity: {payload['sanity']['jw_reference']}",
+            "Ansatz:",
+            f"  - hardcoded ansatz: {ansatz_label}",
+            f"  - vqe method: {vqe_method}",
+            "",
+            "Energy + Fidelity:",
+            f"  - subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"  - energy_t0_exact_gs: {float(e_exact[0]) if e_exact.size > 0 else None}",
+            f"  - energy_t0_exact_ansatz: {float(e_exact_ans[0]) if e_exact_ans.size > 0 else None}",
+            f"  - energy_t0_trotter: {float(e_trot[0]) if e_trot.size > 0 else None}",
+            f"  - ground_state_exact_energy_full_hilbert: {payload['ground_state']['exact_energy']:.12f}",
+            f"  - ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
+            f"  - filtered_sector: {payload['ground_state'].get('filtered_sector')}",
+            f"  - vqe_energy: {payload['vqe'].get('energy')}",
+            f"  - qpe_energy_estimate: {payload['qpe'].get('energy_estimate')}",
+            "",
+            "Config:",
+            f"  - initial_state_source: {payload['initial_state']['source']}",
+            f"  - exact_trajectory_label: {EXACT_LABEL}",
+            f"  - exact_trajectory_method: {EXACT_METHOD}",
+            f"  - fidelity_definition: {payload['settings'].get('fidelity_definition')}",
+            f"  - hamiltonian_terms: {payload['hamiltonian']['num_terms']}",
+            f"  - reference_sanity: {payload['sanity']['jw_reference']}",
         ]
-        ax2.text(0.02, 0.98, "\n".join(lines), va="top", ha="left", family="monospace", fontsize=9)
-        pdf.savefig(fig2)
-        plt.close(fig2)
+        _render_text_page(pdf, lines, fontsize=9)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1892,7 +1984,14 @@ def parse_args() -> argparse.Namespace:
             "exact eigendecomposition)."
         ),
     )
-    parser.add_argument("--vqe-reps", type=int, default=2, help="Number of UCCSD repetitions (ansatz depth).")
+    parser.add_argument(
+        "--vqe-ansatz",
+        type=str,
+        default="uccsd",
+        choices=["uccsd", "hva"],
+        help="Hardcoded VQE ansatz family (mapped to layer-wise implementations).",
+    )
+    parser.add_argument("--vqe-reps", type=int, default=2, help="Number of ansatz repetitions (layer depth).")
     parser.add_argument("--vqe-restarts", type=int, default=1)
     parser.add_argument("--vqe-seed", type=int, default=7)
     parser.add_argument("--vqe-maxiter", type=int, default=120)
@@ -2016,18 +2115,26 @@ def main() -> None:
         vqe_payload, psi_vqe = _run_hardcoded_vqe(
             num_sites=int(args.L),
             ordering=str(args.ordering),
+            boundary=str(args.boundary),
+            hopping_t=float(args.t),
+            onsite_u=float(args.u),
+            potential_dv=float(args.dv),
             h_poly=h_poly,
             reps=int(args.vqe_reps),
             restarts=int(args.vqe_restarts),
             seed=int(args.vqe_seed),
             maxiter=int(args.vqe_maxiter),
             method=str(args.vqe_method),
+            ansatz_name=str(args.vqe_ansatz),
         )
     except Exception as exc:
         _ai_log("hardcoded_vqe_failed", L=int(args.L), error=str(exc))
         vqe_payload = {
             "success": False,
-            "method": "hardcoded_uccsd_notebook_statevector",
+            "method": "hardcoded_layerwise_statevector",
+            "ansatz": str(args.vqe_ansatz),
+            "parameterization": "layerwise",
+            "exact_filtered_energy": None,
             "energy": None,
             "error": str(exc),
         }
@@ -2121,6 +2228,7 @@ def main() -> None:
         "suzuki_order": int(args.suzuki_order),
         "trotter_steps": int(args.trotter_steps),
         "term_order": str(args.term_order),
+        "vqe_ansatz": str(args.vqe_ansatz),
         "initial_state_source": str(args.initial_state_source),
         "skip_qpe": bool(args.skip_qpe),
         "fidelity_definition_short": (

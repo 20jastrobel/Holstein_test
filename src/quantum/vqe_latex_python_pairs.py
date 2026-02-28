@@ -470,7 +470,7 @@ class HubbardTermwiseAnsatz:
         sort_terms: bool = True,
     ) -> np.ndarray:
         if int(theta.size) != int(self.num_parameters):
-        log.error("theta has wrong length for this ansatz")
+            log.error("theta has wrong length for this ansatz")
         psi = np.array(psi_ref, copy=True)
         k = 0
         for _ in range(self.reps):
@@ -483,6 +483,91 @@ class HubbardTermwiseAnsatz:
                     coefficient_tolerance=coefficient_tolerance,
                     sort_terms=sort_terms,
                 )
+                k += 1
+        return psi
+
+
+class HubbardLayerwiseAnsatz(HubbardTermwiseAnsatz):
+    """
+    Layer-wise Hubbard ansatz with shared parameters per physical term group.
+
+    Per layer:
+      1) one shared theta over all hopping primitives
+      2) one shared theta over all onsite-U primitives
+      3) one shared theta over all potential primitives (if present)
+    """
+
+    def _build_base_terms(self) -> None:
+        nq = int(self.nq)
+        n_sites = int(self.n_sites)
+
+        hop_terms: List[AnsatzTerm] = []
+        onsite_terms: List[AnsatzTerm] = []
+        potential_terms: List[AnsatzTerm] = []
+
+        for (i, j) in self.edges:
+            for spin in (SPIN_UP, SPIN_DN):
+                p_i = mode_index(int(i), int(spin), indexing=self.indexing, n_sites=n_sites)
+                p_j = mode_index(int(j), int(spin), indexing=self.indexing, n_sites=n_sites)
+                poly = hubbard_hop_term(nq, p_i, p_j, t=self.t, repr_mode=self.repr_mode)
+                hop_terms.append(AnsatzTerm(label=f"hop(i={i},j={j},spin={spin})", polynomial=poly))
+
+        for i in range(n_sites):
+            p_up = mode_index(i, SPIN_UP, indexing=self.indexing, n_sites=n_sites)
+            p_dn = mode_index(i, SPIN_DN, indexing=self.indexing, n_sites=n_sites)
+            poly = hubbard_onsite_term(nq, p_up, p_dn, U=self.U, repr_mode=self.repr_mode)
+            onsite_terms.append(AnsatzTerm(label=f"onsite(i={i})", polynomial=poly))
+
+        if self.include_potential_terms:
+            for i in range(n_sites):
+                vi = float(self.v_list[i])
+                if abs(vi) < 1e-15:
+                    continue
+                for spin in (SPIN_UP, SPIN_DN):
+                    p_mode = mode_index(i, spin, indexing=self.indexing, n_sites=n_sites)
+                    poly = hubbard_potential_term(nq, p_mode, v_i=vi, repr_mode=self.repr_mode)
+                    potential_terms.append(AnsatzTerm(label=f"pot(i={i},spin={spin})", polynomial=poly))
+
+        self.layer_term_groups: List[Tuple[str, List[AnsatzTerm]]] = []
+        if hop_terms:
+            self.layer_term_groups.append(("hop_layer", hop_terms))
+        if onsite_terms:
+            self.layer_term_groups.append(("onsite_layer", onsite_terms))
+        if potential_terms:
+            self.layer_term_groups.append(("potential_layer", potential_terms))
+
+        # Aggregated representative list retained for parameter counting.
+        self.base_terms = [
+            AnsatzTerm(label=group_name, polynomial=group_terms[0].polynomial)
+            for group_name, group_terms in self.layer_term_groups
+        ]
+
+    def prepare_state(
+        self,
+        theta: np.ndarray,
+        psi_ref: np.ndarray,
+        *,
+        ignore_identity: bool = True,
+        coefficient_tolerance: float = 1e-12,
+        sort_terms: bool = True,
+    ) -> np.ndarray:
+        if int(theta.size) != int(self.num_parameters):
+            log.error("theta has wrong length for this ansatz")
+
+        psi = np.array(psi_ref, copy=True)
+        k = 0
+        for _ in range(self.reps):
+            for _group_name, group_terms in self.layer_term_groups:
+                theta_shared = float(theta[k])
+                for term in group_terms:
+                    psi = apply_exp_pauli_polynomial(
+                        psi,
+                        term.polynomial,
+                        theta_shared,
+                        ignore_identity=ignore_identity,
+                        coefficient_tolerance=coefficient_tolerance,
+                        sort_terms=sort_terms,
+                    )
                 k += 1
         return psi
 
@@ -664,6 +749,138 @@ class HardcodedUCCSDAnsatz:
                     coefficient_tolerance=coefficient_tolerance,
                     sort_terms=sort_terms,
                 )
+                k += 1
+        return psi
+
+
+class HardcodedUCCSDLayerwiseAnsatz(HardcodedUCCSDAnsatz):
+    """
+    Layer-wise UCCSD ansatz with one shared parameter per excitation group.
+
+    Per layer:
+      1) one shared theta across all singles generators (if enabled/present)
+      2) one shared theta across all doubles generators (if enabled/present)
+    """
+
+    def _build_base_terms(self) -> None:
+        n_sites = int(self.n_sites)
+        n_alpha, n_beta = self.num_particles
+
+        alpha_all = [mode_index(i, SPIN_UP, indexing=self.indexing, n_sites=n_sites) for i in range(n_sites)]
+        beta_all = [mode_index(i, SPIN_DN, indexing=self.indexing, n_sites=n_sites) for i in range(n_sites)]
+
+        alpha_occ = alpha_all[:n_alpha]
+        beta_occ = beta_all[:n_beta]
+
+        alpha_virt = alpha_all[n_alpha:]
+        beta_virt = beta_all[n_beta:]
+
+        singles_terms: List[AnsatzTerm] = []
+        doubles_terms: List[AnsatzTerm] = []
+
+        if self.include_singles:
+            for i_occ in alpha_occ:
+                for a_virt in alpha_virt:
+                    gen = self._single_generator(i_occ, a_virt)
+                    singles_terms.append(
+                        AnsatzTerm(label=f"uccsd_sing(alpha:{i_occ}->{a_virt})", polynomial=gen)
+                    )
+
+            for i_occ in beta_occ:
+                for a_virt in beta_virt:
+                    gen = self._single_generator(i_occ, a_virt)
+                    singles_terms.append(
+                        AnsatzTerm(label=f"uccsd_sing(beta:{i_occ}->{a_virt})", polynomial=gen)
+                    )
+
+        if self.include_doubles:
+            for i_pos in range(len(alpha_occ)):
+                for j_pos in range(i_pos + 1, len(alpha_occ)):
+                    i_occ = alpha_occ[i_pos]
+                    j_occ = alpha_occ[j_pos]
+                    for a_pos in range(len(alpha_virt)):
+                        for b_pos in range(a_pos + 1, len(alpha_virt)):
+                            a_virt = alpha_virt[a_pos]
+                            b_virt = alpha_virt[b_pos]
+                            gen = self._double_generator(i_occ, j_occ, a_virt, b_virt)
+                            doubles_terms.append(
+                                AnsatzTerm(
+                                    label=(
+                                        f"uccsd_dbl(aa:{i_occ},{j_occ}->{a_virt},{b_virt})"
+                                    ),
+                                    polynomial=gen,
+                                )
+                            )
+
+            for i_pos in range(len(beta_occ)):
+                for j_pos in range(i_pos + 1, len(beta_occ)):
+                    i_occ = beta_occ[i_pos]
+                    j_occ = beta_occ[j_pos]
+                    for a_pos in range(len(beta_virt)):
+                        for b_pos in range(a_pos + 1, len(beta_virt)):
+                            a_virt = beta_virt[a_pos]
+                            b_virt = beta_virt[b_pos]
+                            gen = self._double_generator(i_occ, j_occ, a_virt, b_virt)
+                            doubles_terms.append(
+                                AnsatzTerm(
+                                    label=(
+                                        f"uccsd_dbl(bb:{i_occ},{j_occ}->{a_virt},{b_virt})"
+                                    ),
+                                    polynomial=gen,
+                                )
+                            )
+
+            for i_occ in alpha_occ:
+                for j_occ in beta_occ:
+                    for a_virt in alpha_virt:
+                        for b_virt in beta_virt:
+                            gen = self._double_generator(i_occ, j_occ, a_virt, b_virt)
+                            doubles_terms.append(
+                                AnsatzTerm(
+                                    label=(
+                                        f"uccsd_dbl(ab:{i_occ},{j_occ}->{a_virt},{b_virt})"
+                                    ),
+                                    polynomial=gen,
+                                )
+                            )
+
+        self.layer_term_groups: List[Tuple[str, List[AnsatzTerm]]] = []
+        if singles_terms:
+            self.layer_term_groups.append(("uccsd_singles_layer", singles_terms))
+        if doubles_terms:
+            self.layer_term_groups.append(("uccsd_doubles_layer", doubles_terms))
+
+        self.base_terms = [
+            AnsatzTerm(label=group_name, polynomial=group_terms[0].polynomial)
+            for group_name, group_terms in self.layer_term_groups
+        ]
+
+    def prepare_state(
+        self,
+        theta: np.ndarray,
+        psi_ref: np.ndarray,
+        *,
+        ignore_identity: bool = True,
+        coefficient_tolerance: float = 1e-12,
+        sort_terms: bool = True,
+    ) -> np.ndarray:
+        if int(theta.size) != int(self.num_parameters):
+            log.error("theta has wrong length for this ansatz")
+
+        psi = np.array(psi_ref, copy=True)
+        k = 0
+        for _ in range(self.reps):
+            for _group_name, group_terms in self.layer_term_groups:
+                theta_shared = float(theta[k])
+                for term in group_terms:
+                    psi = apply_exp_pauli_polynomial(
+                        psi,
+                        term.polynomial,
+                        theta_shared,
+                        ignore_identity=ignore_identity,
+                        coefficient_tolerance=coefficient_tolerance,
+                        sort_terms=sort_terms,
+                    )
                 k += 1
         return psi
 

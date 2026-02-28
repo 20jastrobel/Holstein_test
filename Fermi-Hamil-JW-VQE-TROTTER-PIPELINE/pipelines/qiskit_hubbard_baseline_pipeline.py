@@ -1411,6 +1411,15 @@ def _render_command_page(pdf: PdfPages, command: str) -> None:
     plt.close(fig)
 
 
+def _render_text_page(pdf: PdfPages, lines: list[str], *, fontsize: int = 10) -> None:
+    fig = plt.figure(figsize=(11.0, 8.5))
+    ax = fig.add_subplot(111)
+    ax.axis("off")
+    ax.text(0.03, 0.97, "\n".join(lines), va="top", ha="left", family="monospace", fontsize=fontsize)
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: str) -> None:
     traj = payload["trajectory"]
     times = np.array([float(r["time"]) for r in traj], dtype=float)
@@ -1438,9 +1447,33 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         f"N_up={vqe_sector.get('n_up','?')}, N_dn={vqe_sector.get('n_dn','?')}"
         if vqe_sector else "half-filled"
     )
+    settings = payload.get("settings", {})
+    qiskit_ansatz = str(payload.get("vqe", {}).get("method", "unknown")).strip().lower()
+    run_mode = "drive-enabled" if isinstance(settings.get("drive"), dict) else "static"
+    _ = run_command  # command text is preserved in CLI logs; PDF starts with summary
 
     with PdfPages(str(pdf_path)) as pdf:
-        _render_command_page(pdf, run_command)
+        summary_lines = [
+            f"Qiskit Hubbard Summary (L={settings.get('L')})",
+            "",
+            "Ansatz Used:",
+            f"  - qiskit ansatz/method: {qiskit_ansatz}",
+            "",
+            "Run Settings:",
+            f"  - mode: {run_mode}",
+            f"  - t={settings.get('t')}  u={settings.get('u')}  dv={settings.get('dv')}",
+            f"  - boundary={settings.get('boundary')}  ordering={settings.get('ordering')}",
+            f"  - trotter_steps={settings.get('trotter_steps')}  suzuki_order={settings.get('suzuki_order')}",
+            f"  - t_final={settings.get('t_final')}  num_times={settings.get('num_times')}",
+            f"  - initial_state_source={settings.get('initial_state_source')}",
+            "",
+            "Topline:",
+            f"  - subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"  - vqe_energy: {payload.get('vqe', {}).get('energy')}",
+            f"  - exact_filtered_energy: {payload['ground_state'].get('exact_energy_filtered')}",
+            f"  - qpe_energy_estimate: {payload.get('qpe', {}).get('energy_estimate')}",
+        ]
+        _render_text_page(pdf, summary_lines, fontsize=10)
 
         fig, axes = plt.subplots(2, 2, figsize=(11.0, 8.5), sharex=True)
         ax00, ax01 = axes[0, 0], axes[0, 1]
@@ -1519,29 +1552,29 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         pdf.savefig(figv)
         plt.close(figv)
 
-        fig2 = plt.figure(figsize=(11.0, 8.5))
-        ax2 = fig2.add_subplot(111)
-        ax2.axis("off")
         lines = [
             "Qiskit Hubbard baseline pipeline summary",
             "",
-            f"settings: {json.dumps(payload['settings'])}",
-            f"exact_trajectory_label: {EXACT_LABEL}",
-            f"exact_trajectory_method: {EXACT_METHOD}",
-            f"fidelity_definition: {payload['settings'].get('fidelity_definition')}",
-            f"subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
-            f"ground_state_exact_energy (full Hilbert): {payload['ground_state']['exact_energy']:.12f}",
-            f"ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
-            f"filtered_sector: {payload['ground_state'].get('filtered_sector')}",
-            f"vqe_energy: {payload['vqe'].get('energy')}",
-            f"qpe_energy_estimate: {payload['qpe'].get('energy_estimate')}",
-            f"initial_state_source: {payload['initial_state']['source']}",
-            f"hamiltonian_terms: {payload['hamiltonian']['num_terms']}",
-            f"reference_sanity: {payload['sanity']['jw_reference']}",
+            "Ansatz:",
+            f"  - qiskit ansatz/method: {qiskit_ansatz}",
+            "",
+            "Energy + Fidelity:",
+            f"  - subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"  - ground_state_exact_energy_full_hilbert: {payload['ground_state']['exact_energy']:.12f}",
+            f"  - ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
+            f"  - filtered_sector: {payload['ground_state'].get('filtered_sector')}",
+            f"  - vqe_energy: {payload['vqe'].get('energy')}",
+            f"  - qpe_energy_estimate: {payload['qpe'].get('energy_estimate')}",
+            "",
+            "Config:",
+            f"  - initial_state_source: {payload['initial_state']['source']}",
+            f"  - exact_trajectory_label: {EXACT_LABEL}",
+            f"  - exact_trajectory_method: {EXACT_METHOD}",
+            f"  - fidelity_definition: {payload['settings'].get('fidelity_definition')}",
+            f"  - hamiltonian_terms: {payload['hamiltonian']['num_terms']}",
+            f"  - reference_sanity: {payload['sanity']['jw_reference']}",
         ]
-        ax2.text(0.02, 0.98, "\n".join(lines), va="top", ha="left", family="monospace", fontsize=9)
-        pdf.savefig(fig2)
-        plt.close(fig2)
+        _render_text_page(pdf, lines, fontsize=9)
 
 
 def parse_args() -> argparse.Namespace:

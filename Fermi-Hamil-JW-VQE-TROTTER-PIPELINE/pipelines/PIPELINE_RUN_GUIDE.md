@@ -15,6 +15,7 @@ Run from the sub-repo root (`Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/`).
 | `pipelines/compare_hardcoded_vs_qiskit_pipeline.py` | Orchestrator — runs both, compares metrics, writes comparison PDFs |
 | `pipelines/manual_compare_jsons.py` | Standalone JSON-vs-JSON consistency checker |
 | `pipelines/regression_L2_L3.sh` | Automated L=2/L=3 regression harness |
+| `pipelines/run_hva_uccsd_qiskit_L2_L3.sh` | Repro runner for hardcoded layer-wise UCCSD/HVA vs shared qiskit baseline on L=2,3 |
 | `pipelines/run_L_drive_accurate.sh` | Shorthand runner for “run L”: drive-only, accuracy-gated (`delta_e < 1e-7`) with L-scaled heaviness |
 | `pipelines/run_scaling_preset_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
 
@@ -85,6 +86,7 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 | Flag | Type | Default (HC) | Default (QK) | Description |
 |------|------|-------------|-------------|-------------|
+| `--vqe-ansatz` | choice | `uccsd` | n/a | Hardcoded-only ansatz family: `uccsd` or `hva` (both map to layer-wise implementations) |
 | `--vqe-reps` | int | `2` | `2` | Number of ansatz repetitions (circuit depth) |
 | `--vqe-restarts` | int | `1` | `3` | Number of independent VQE optimisation restarts |
 | `--vqe-seed` | int | `7` | `7` | Random seed for VQE parameter initialisation |
@@ -94,6 +96,7 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--hardcoded-vqe-ansatzes` | str | `"uccsd"` | Comma-separated hardcoded ansatz set (shared qiskit baseline). |
 | `--hardcoded-vqe-reps` | int | `2` | HC ansatz repetitions |
 | `--hardcoded-vqe-restarts` | int | `3` | HC restarts |
 | `--hardcoded-vqe-seed` | int | `7` | HC seed |
@@ -145,6 +148,16 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 | `--report-verbose` | flag | `false` | Verbose report mode; forces full safe-test detail plots. |
 | `--safe-test-near-threshold-factor` | float | `100.0` | Safe-test detail page gate: render when `max_safe_delta >= threshold/factor` (also on fail or `--report-verbose`). |
 
+### Hardcoded layer-wise ansatz mapping
+
+- `--vqe-ansatz uccsd` -> `HardcodedUCCSDLayerwiseAnsatz`
+- `--vqe-ansatz hva` -> `HubbardLayerwiseAnsatz`
+- Legacy term-wise classes remain available in `src/quantum/vqe_latex_python_pairs.py`, but runtime defaults route to the layer-wise classes above.
+- Hardcoded VQE JSON now includes:
+  - `vqe.ansatz`
+  - `vqe.parameterization` (currently `"layerwise"`)
+  - `vqe.exact_filtered_energy`
+
 ---
 
 ## Full CLI (defaults)
@@ -162,6 +175,7 @@ Defaults:
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`native|sorted`)
+- `--vqe-ansatz uccsd` (`uccsd|hva`)
 - `--vqe-reps 2 --vqe-restarts 1 --vqe-seed 7 --vqe-maxiter 120`
 - `--qpe-eval-qubits 6 --qpe-shots 1024 --qpe-seed 11`
 - `--initial-state-source vqe`
@@ -199,6 +213,7 @@ Defaults:
 - `--boundary periodic --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--fidelity-subspace-energy-tol 1e-8`
+- `--hardcoded-vqe-ansatzes uccsd` (set `uccsd,hva` for 3-way hardcoded-vs-qiskit runs)
 - `--hardcoded-vqe-reps 2 --hardcoded-vqe-restarts 3 --hardcoded-vqe-seed 7 --hardcoded-vqe-maxiter 600`
 - `--qiskit-vqe-reps 2 --qiskit-vqe-restarts 3 --qiskit-vqe-seed 7 --qiskit-vqe-maxiter 600`
 - `--qpe-eval-qubits 5 --qpe-shots 256 --qpe-seed 11`
@@ -207,6 +222,8 @@ Defaults:
 - Drive: disabled by default. Enable with `--enable-drive`.
 - Amplitude comparison: disabled by default. Enable with `--with-drive-amplitude-comparison-pdf`.
 - `--drive-amplitudes "0.0,0.2"` (only used when amplitude comparison is enabled)
+- Compare acceptance now includes the VQE sanity condition for each hardcoded ansatz and qiskit:
+  `vqe.energy >= exact_filtered_energy - 1e-8`
 
 ---
 
@@ -216,6 +233,18 @@ Defaults:
 
 ```bash
 bash pipelines/run_L_drive_accurate.sh --L 4
+```
+
+### 0b) HVA/UCCSD layer-wise L=2,3 runner
+
+```bash
+bash pipelines/run_hva_uccsd_qiskit_L2_L3.sh
+```
+
+Heavy preset:
+
+```bash
+bash pipelines/run_hva_uccsd_qiskit_L2_L3.sh --heavy
 ```
 
 This enforces the default shorthand contract:

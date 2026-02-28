@@ -73,12 +73,12 @@ EXACT_METHOD = "python_matrix_eigendecomposition"
 @dataclass
 class RunArtifacts:
     L: int
-    hc_json: Path
-    hc_pdf: Path
+    hc_json_by_ansatz: dict[str, Path]
+    hc_pdf_by_ansatz: dict[str, Path]
     qk_json: Path
     qk_pdf: Path
     metrics_json: Path
-    compare_pdf: Path
+    compare_pdf_by_ansatz: dict[str, Path]
 
 
 def _artifact_tag(args: argparse.Namespace, L: int) -> str:
@@ -133,9 +133,99 @@ def _require_exact_filtered_energy(qiskit_payload: dict[str, Any], *, L: int | N
     return val
 
 
+def _vqe_energy_sanity(
+    payload: dict[str, Any],
+    *,
+    method_label: str,
+    L: int | None = None,
+) -> dict[str, Any]:
+    """Check vqe.energy >= exact_filtered_energy - 1e-8 and return structured diagnostics."""
+    suffix = f" for L={L}" if L is not None else ""
+    vqe_block = payload.get("vqe")
+    out: dict[str, Any] = {
+        "method_label": str(method_label),
+        "energy": None,
+        "exact_filtered_energy": None,
+        "delta_energy_minus_exact_filtered": None,
+        "threshold": 1e-8,
+        "passes_lower_bound": False,
+        "reason": "",
+    }
+    if not isinstance(vqe_block, dict):
+        out["reason"] = f"missing vqe payload{suffix}"
+        return out
+
+    energy_raw = vqe_block.get("energy")
+    exact_raw = vqe_block.get("exact_filtered_energy")
+    if energy_raw is None:
+        out["reason"] = f"missing vqe.energy{suffix}"
+        return out
+    if exact_raw is None:
+        out["reason"] = f"missing vqe.exact_filtered_energy{suffix}"
+        return out
+
+    energy = float(energy_raw)
+    exact_filtered = float(exact_raw)
+    out["energy"] = energy
+    out["exact_filtered_energy"] = exact_filtered
+    if not np.isfinite(energy) or not np.isfinite(exact_filtered):
+        out["reason"] = f"non-finite energy/exact_filtered_energy{suffix}"
+        return out
+
+    delta = float(energy - exact_filtered)
+    out["delta_energy_minus_exact_filtered"] = delta
+    passes = bool(energy >= (exact_filtered - 1e-8))
+    out["passes_lower_bound"] = passes
+    out["reason"] = "ok" if passes else f"violates energy >= exact_filtered - 1e-8{suffix}"
+    return out
+
+
 def _fp(x: float) -> str:
     # Round-trip-safe float text; avoids presentation rounding like %.12e.
     return repr(float(x))
+
+
+def _hardcoded_ansatz_label(hardcoded: dict[str, Any]) -> str:
+    """Return normalized hardcoded ansatz label for PDF/report headers."""
+    vqe_block = hardcoded.get("vqe")
+    if isinstance(vqe_block, dict):
+        ans = vqe_block.get("ansatz")
+        if isinstance(ans, str) and ans.strip():
+            return str(ans).strip().lower()
+    settings = hardcoded.get("settings")
+    if isinstance(settings, dict):
+        ans = settings.get("vqe_ansatz")
+        if isinstance(ans, str) and ans.strip():
+            return str(ans).strip().lower()
+    return "unknown"
+
+
+def _normalize_ansatz_token(raw: Any) -> str:
+    """Map arbitrary ansatz-ish labels to a compact token for report text."""
+    txt = str(raw).strip().lower()
+    if not txt:
+        return "unknown"
+    if "uccsd" in txt:
+        return "uccsd"
+    if "hva" in txt:
+        return "hva"
+    return txt
+
+
+def _qiskit_ansatz_label(qiskit: dict[str, Any]) -> str:
+    """Best-effort ansatz label extraction for qiskit payloads."""
+    settings = qiskit.get("settings")
+    if isinstance(settings, dict):
+        ans = settings.get("vqe_ansatz")
+        if isinstance(ans, str) and ans.strip():
+            return _normalize_ansatz_token(ans)
+    vqe_block = qiskit.get("vqe")
+    if isinstance(vqe_block, dict):
+        for key in ("ansatz", "ansatz_name", "ansatz_label", "method"):
+            val = vqe_block.get(key)
+            if isinstance(val, str) and val.strip():
+                return _normalize_ansatz_token(val)
+    return "unknown"
 
 
 def _delta_metric_definition_text() -> str:
@@ -248,12 +338,25 @@ def _current_command_string() -> str:
     return " ".join(shlex.quote(x) for x in [sys.executable, *sys.argv])
 
 
-def _render_command_page(pdf: "PdfPages", command: str) -> None:
+def _render_command_page(
+    pdf: "PdfPages",
+    command: str,
+    *,
+    hardcoded_ansatz: str | None = None,
+) -> None:
     lines = [
         "Executed Command",
         "",
         "Reference: pipelines/PIPELINE_RUN_GUIDE.md",
         "Script: pipelines/compare_hardcoded_vs_qiskit_pipeline.py",
+    ]
+    if hardcoded_ansatz is not None:
+        ans = str(hardcoded_ansatz).strip().lower() or "unknown"
+        lines += [
+            f"Hardcoded ansatz: {ans}",
+            f"Compare mode: Hardcoded({ans}) vs Qiskit baseline",
+        ]
+    lines += [
         "",
         command,
     ]
@@ -316,6 +419,13 @@ def _compare_payloads(hardcoded: dict[str, Any], qiskit: dict[str, Any]) -> dict
         "abs_delta": float(abs(gs_h - gs_q)),
     }
 
+    hardcoded_sanity = _vqe_energy_sanity(hardcoded, method_label="hardcoded")
+    qiskit_sanity = _vqe_energy_sanity(qiskit, method_label="qiskit")
+    out["vqe_sanity"] = {
+        "hardcoded": hardcoded_sanity,
+        "qiskit": qiskit_sanity,
+    }
+
     checks = {
         "ground_state_energy_abs_delta": out["ground_state_energy"]["abs_delta"] <= THRESHOLDS["ground_state_energy_abs_delta"],
         "fidelity_max_abs_delta": out["trajectory_deltas"]["fidelity"]["max_abs_delta"] <= THRESHOLDS["fidelity_max_abs_delta"],
@@ -323,6 +433,8 @@ def _compare_payloads(hardcoded: dict[str, Any], qiskit: dict[str, Any]) -> dict
         "n_up_site0_trotter_max_abs_delta": out["trajectory_deltas"]["n_up_site0_trotter"]["max_abs_delta"] <= THRESHOLDS["n_up_site0_trotter_max_abs_delta"],
         "n_dn_site0_trotter_max_abs_delta": out["trajectory_deltas"]["n_dn_site0_trotter"]["max_abs_delta"] <= THRESHOLDS["n_dn_site0_trotter_max_abs_delta"],
         "doublon_trotter_max_abs_delta": out["trajectory_deltas"]["doublon_trotter"]["max_abs_delta"] <= THRESHOLDS["doublon_trotter_max_abs_delta"],
+        "vqe_energy_lower_bound_hardcoded": bool(hardcoded_sanity["passes_lower_bound"]),
+        "vqe_energy_lower_bound_qiskit": bool(qiskit_sanity["passes_lower_bound"]),
     }
     # Add energy_total_trotter pass/fail gate when data is available.
     if "energy_total_trotter" in out["trajectory_deltas"]:
@@ -349,6 +461,7 @@ def _sci(x: float) -> str:
 
 _INFO_BOX_SETTINGS_KEYS = [
     "L", "t", "u", "dv", "boundary", "ordering",
+    "vqe_ansatz",
     "initial_state_source", "t_final", "num_times",
     "suzuki_order", "trotter_steps",
 ]
@@ -513,13 +626,45 @@ def _write_comparison_pdf(
     qk_vqe = qiskit.get("vqe", {}).get("energy")
     hc_vqe_val = float(hc_vqe) if hc_vqe is not None else np.nan
     qk_vqe_val = float(qk_vqe) if qk_vqe is not None else np.nan
+    hardcoded_ansatz = _hardcoded_ansatz_label(hardcoded)
+    qiskit_ansatz = _qiskit_ansatz_label(qiskit)
+    verdict = "PASS" if bool(metrics["acceptance"]["pass"]) else "FAIL"
+    settings = hardcoded.get("settings", {})
+    _ = run_command  # kept for signature compatibility; command text is logged to commands.txt
 
     with PdfPages(str(pdf_path)) as pdf:
-        _render_command_page(pdf, run_command)
+        summary_lines = [
+            f"Comparison Report Summary (L={L})",
+            "",
+            "Ansatz Used:",
+            f"  - Hardcoded: {hardcoded_ansatz}",
+            f"  - Qiskit baseline: {qiskit_ansatz}",
+            "",
+            "Run Settings:",
+            f"  - t={settings.get('t')}  u={settings.get('u')}  dv={settings.get('dv')}",
+            f"  - boundary={settings.get('boundary')}  ordering={settings.get('ordering')}",
+            f"  - trotter_steps={settings.get('trotter_steps')}  suzuki_order={settings.get('suzuki_order')}",
+            f"  - t_final={settings.get('t_final')}  num_times={settings.get('num_times')}",
+            f"  - initial_state_source={settings.get('initial_state_source')}",
+            "",
+            "Topline:",
+            f"  - overall_result: {verdict}",
+            f"  - ground_state_energy_abs_delta: {_fp(metrics['ground_state_energy']['abs_delta'])}",
+            f"  - max_abs_delta_fidelity: {_fp(metrics['trajectory_deltas']['fidelity']['max_abs_delta'])}",
+            "",
+            "Reference:",
+            "  - Full executed commands are recorded in artifacts/commands.txt",
+        ]
+        _render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.029, max_line_width=112)
+
         _info_text = _build_info_box_text(hardcoded.get("settings", {}), metrics)
 
         # --- Dedicated info page (no overlap with plots) ---
-        _render_info_page(pdf, _info_text, title=f"L={L} Run Settings & Metrics Summary")
+        _render_info_page(
+            pdf,
+            _info_text,
+            title=f"L={L} Run Settings & Metrics Summary (HC ansatz: {hardcoded_ansatz})",
+        )
 
         # --- Page A: Subspace Fidelity + Energy (1x2) ---
         figA, (axF, axE) = plt.subplots(1, 2, figsize=(11.0, 8.5), sharex=True)
@@ -556,7 +701,11 @@ def _write_comparison_pdf(
         axE.legend(fontsize=7)
         _autozoom(axE, h("energy_static_trotter"), q("energy_static_trotter"), h("energy_static_exact"), q("energy_static_exact"))
 
-        figA.suptitle(f"Pipeline Comparison L={L}: Hardcoded vs Qiskit (Subspace Fidelity & Energy)", fontsize=13)
+        figA.suptitle(
+            f"Pipeline Comparison L={L} [HC ansatz={hardcoded_ansatz}]: "
+            "Hardcoded vs Qiskit (Subspace Fidelity & Energy)",
+            fontsize=13,
+        )
         figA.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
         pdf.savefig(figA)
         plt.close(figA)
@@ -594,7 +743,11 @@ def _write_comparison_pdf(
         axD.legend(fontsize=7)
         _autozoom(axD, h("doublon_trotter"), q("doublon_trotter"), h("doublon_exact"), q("doublon_exact"))
 
-        figB.suptitle(f"Pipeline Comparison L={L}: Occupations & Doublon (auto-zoomed)", fontsize=13)
+        figB.suptitle(
+            f"Pipeline Comparison L={L} [HC ansatz={hardcoded_ansatz}]: "
+            "Occupations & Doublon (auto-zoomed)",
+            fontsize=13,
+        )
         figB.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
         pdf.savefig(figB)
         plt.close(figB)
@@ -655,7 +808,7 @@ def _write_comparison_pdf(
         bx11.set_xlabel("Time")
         bx11.grid(alpha=0.25)
 
-        fig2.suptitle(f"Delta Diagnostics L={L}", fontsize=14)
+        fig2.suptitle(f"Delta Diagnostics L={L} [HC ansatz={hardcoded_ansatz}]", fontsize=14)
         fig2.text(
             0.5, 0.93,
             "ΔX(t) = |X_hc(t) − X_qk(t)|, where X_pipeline(t) is that pipeline's stored trajectory value.",
@@ -668,6 +821,7 @@ def _write_comparison_pdf(
         td = metrics["trajectory_deltas"]
         lines = [
             f"L={L} metrics summary",
+            f"hardcoded_ansatz: {hardcoded_ansatz}",
             "",
             "Delta metric definitions:",
             *_delta_metric_definition_text().splitlines(),
@@ -733,33 +887,52 @@ def _write_bundle_pdf(
         dtype=float,
     )
     has_qpe_data = bool(np.isfinite(hc_qpe).any() or np.isfinite(qk_qpe).any())
+    hardcoded_ansatzes = overall_summary.get("requested_run_settings", {}).get("hardcoded_vqe_ansatzes", [])
+    primary_hardcoded_ansatz = overall_summary.get("requested_run_settings", {}).get("primary_hardcoded_ansatz")
+    qiskit_ansatzes = sorted({_qiskit_ansatz_label(q) for _L, _h, q, _m in per_l_data})
+    _ = run_command  # kept for signature compatibility; command text is logged to commands.txt
 
     with PdfPages(str(bundle_path)) as pdf:
-        _render_command_page(pdf, run_command)
         lines = [
             "Hardcoded vs Qiskit Pipeline Comparison Summary",
             "",
-            f"generated_utc: {overall_summary['generated_utc']}",
-            f"all_pass: {overall_summary['all_pass']}",
-            f"l_values: {overall_summary['l_values']}",
-            "trajectory_comparison_basis: trotter trajectories start from",
-            "  each pipeline's selected initial_state_source (default: vqe)",
-            f"exact_trajectory_labels: {EXACT_LABEL_HARDCODE}, {EXACT_LABEL_QISKIT}",
-            f"exact_trajectory_method: {EXACT_METHOD}",
+            "Run Header:",
+            f"  - generated_utc: {overall_summary['generated_utc']}",
+            f"  - all_pass: {overall_summary['all_pass']}",
+            f"  - l_values: {overall_summary['l_values']}",
             "",
-            "thresholds:",
+            "Ansatz Used:",
+            f"  - hardcoded set: {hardcoded_ansatzes}",
+            f"  - hardcoded primary: {primary_hardcoded_ansatz}",
+            f"  - qiskit baseline: {qiskit_ansatzes}",
+            "",
+            "Comparison Basis:",
+            "  - trotter trajectories start from each pipeline's selected initial_state_source",
+            f"  - exact_trajectory_labels: {EXACT_LABEL_HARDCODE}, {EXACT_LABEL_QISKIT}",
+            f"  - exact_trajectory_method: {EXACT_METHOD}",
+            "",
+            "Thresholds:",
             *_fmt_obj(THRESHOLDS).splitlines(),
             "",
-            "hardcoded_qiskit_import_isolation:",
+            "Hardcoded/Qiskit Import Isolation:",
             *_fmt_obj(isolation_check).splitlines(),
             "",
             "Delta metric definitions:",
             *_delta_metric_definition_text().splitlines(),
             "",
-            "Per-L pass flags:",
+            "Per-L pages include explicit 'HC ansatz=...' labels in titles.",
+            "",
+            "Per-L Pass Flags:",
         ]
         for row in overall_summary["results"]:
-            lines.append(f"L={row['L']} pass={row['pass']} metrics_json={row['metrics_json']}")
+            pass_by_ansatz = row.get("pass_by_ansatz")
+            if isinstance(pass_by_ansatz, dict):
+                lines.append(
+                    f"L={row['L']} pass={row['pass']} pass_by_ansatz={pass_by_ansatz} "
+                    f"metrics_json={row['metrics_json']}"
+                )
+            else:
+                lines.append(f"L={row['L']} pass={row['pass']} metrics_json={row['metrics_json']}")
         lines.extend(_chemical_accuracy_lines(t_hartree))
         _render_text_page(pdf, lines)
 
@@ -921,11 +1094,16 @@ def _write_comparison_pages_into_pdf(
     qk_vqe = qiskit.get("vqe", {}).get("energy")
     hc_vqe_val = float(hc_vqe) if hc_vqe is not None else np.nan
     qk_vqe_val = float(qk_vqe) if qk_vqe is not None else np.nan
+    hardcoded_ansatz = _hardcoded_ansatz_label(hardcoded)
 
     _info_text = _build_info_box_text(hardcoded.get("settings", {}), metrics)
 
     # --- Dedicated info page (no overlap with plots) ---
-    _render_info_page(pdf, _info_text, title=f"Bundle L={L}: Run Settings & Metrics Summary")
+    _render_info_page(
+        pdf,
+        _info_text,
+        title=f"Bundle L={L}: Run Settings & Metrics Summary (HC ansatz: {hardcoded_ansatz})",
+    )
 
     # --- Page A: Subspace Fidelity + Energy (1x2) ---
     figA, (axF, axE) = plt.subplots(1, 2, figsize=(11.0, 8.5), sharex=True)
@@ -948,7 +1126,10 @@ def _write_comparison_pages_into_pdf(
     axE.legend(fontsize=8)
     _autozoom(axE, h("energy_static_trotter"), q("energy_static_trotter"), h("energy_static_exact"), q("energy_static_exact"))
 
-    figA.suptitle(f"Bundle Page: L={L} Subspace Fidelity & Energy", fontsize=14)
+    figA.suptitle(
+        f"Bundle Page: L={L} [HC ansatz={hardcoded_ansatz}] Subspace Fidelity & Energy",
+        fontsize=14,
+    )
     figA.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
     pdf.savefig(figA)
     plt.close(figA)
@@ -986,7 +1167,10 @@ def _write_comparison_pages_into_pdf(
     axD.legend(fontsize=7)
     _autozoom(axD, h("doublon_trotter"), q("doublon_trotter"), h("doublon_exact"), q("doublon_exact"))
 
-    figB.suptitle(f"Bundle Page: L={L} Occupations & Doublon (auto-zoomed)", fontsize=13)
+    figB.suptitle(
+        f"Bundle Page: L={L} [HC ansatz={hardcoded_ansatz}] Occupations & Doublon (auto-zoomed)",
+        fontsize=13,
+    )
     figB.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
     pdf.savefig(figB)
     plt.close(figB)
@@ -1047,7 +1231,7 @@ def _write_comparison_pages_into_pdf(
     bx11.set_xlabel("Time")
     bx11.grid(alpha=0.25)
 
-    fig2.suptitle(f"Bundle Delta Diagnostics L={L}", fontsize=14)
+    fig2.suptitle(f"Bundle Delta Diagnostics L={L} [HC ansatz={hardcoded_ansatz}]", fontsize=14)
     fig2.text(
         0.5, 0.93,
         "ΔX(t) = |X_hc(t) − X_qk(t)|, where X_pipeline(t) is that pipeline's stored trajectory value.",
@@ -1060,6 +1244,7 @@ def _write_comparison_pages_into_pdf(
     td = metrics["trajectory_deltas"]
     lines = [
         f"Bundle metrics page L={L}",
+        f"hardcoded_ansatz: {hardcoded_ansatz}",
         "",
         "Trotterization comparison uses each path's configured initial state.",
         f"Trajectory labels: {EXACT_LABEL_HARDCODE} and {EXACT_LABEL_QISKIT}.",
@@ -1164,6 +1349,20 @@ _DRIVE_FLAG_DEFAULTS: dict[str, Any] = {
     "drive_t0": 0.0,
     "exact_steps_multiplier": 1,
 }
+
+
+def _parse_hardcoded_vqe_ansatzes(raw: str) -> list[str]:
+    allowed = {"uccsd", "hva"}
+    vals = [str(x).strip().lower() for x in str(raw).split(",") if str(x).strip()]
+    if not vals:
+        raise ValueError("--hardcoded-vqe-ansatzes must contain at least one ansatz name.")
+    out: list[str] = []
+    for name in vals:
+        if name not in allowed:
+            raise ValueError(f"Unsupported ansatz '{name}' in --hardcoded-vqe-ansatzes; allowed: {sorted(allowed)}")
+        if name not in out:
+            out.append(name)
+    return out
 
 
 def _build_drive_args(args: argparse.Namespace) -> list[str]:
@@ -1454,6 +1653,7 @@ def _run_amplitude_comparison_for_l(
     A0: float,
     A1: float,
     json_dir: Path,
+    hardcoded_vqe_ansatz: str,
 ) -> dict[str, Any]:
     """Run hardcoded + qiskit pipelines three times for *L*: disabled, A0, A1.
 
@@ -1471,8 +1671,8 @@ def _run_amplitude_comparison_for_l(
     """
     tag = _artifact_tag(args, L)
 
-    def _base_cmd(pipeline_file: str, json_out: Path) -> list[str]:
-        return [
+    def _base_cmd(pipeline_file: str, json_out: Path, *, include_hardcoded_ansatz: bool) -> list[str]:
+        cmd = [
             sys.executable,
             f"pipelines/{pipeline_file}",
             "--L", str(L),
@@ -1498,9 +1698,12 @@ def _run_amplitude_comparison_for_l(
             "--skip-pdf",
             "--skip-qpe",
         ]
+        if include_hardcoded_ansatz:
+            cmd += ["--vqe-ansatz", str(hardcoded_vqe_ansatz)]
+        return cmd
 
     def _base_cmd_qk(json_out: Path) -> list[str]:
-        cmd = _base_cmd("qiskit_hubbard_baseline_pipeline.py", json_out)
+        cmd = _base_cmd("qiskit_hubbard_baseline_pipeline.py", json_out, include_hardcoded_ansatz=False)
         # Replace hardcoded VQE args with qiskit-specific ones at the right positions
         for flag in ["--vqe-reps", "--vqe-restarts", "--vqe-seed", "--vqe-maxiter"]:
             idx = cmd.index(flag)
@@ -1527,7 +1730,11 @@ def _run_amplitude_comparison_for_l(
         hc_json = json_dir / f"amp_H_{tag}_{slug}.json"
         qk_json = json_dir / f"amp_Q_{tag}_{slug}.json"
 
-        hc_cmd = _base_cmd("hardcoded_hubbard_pipeline.py", hc_json) + drive_tokens
+        hc_cmd = _base_cmd(
+            "hardcoded_hubbard_pipeline.py",
+            hc_json,
+            include_hardcoded_ansatz=True,
+        ) + drive_tokens
         _ai_log("amp_cmp_run_start", L=int(L), label=label, pipeline="hardcoded")
         code, out, err = _run_command(hc_cmd)
         if code != 0:
@@ -1709,10 +1916,33 @@ def _write_amplitude_comparison_pdf(
         "safe_test_detail_page_rendered": bool(show_safe_page),
         "safe_test_max_abs": float(max_safe) if np.isfinite(max_safe) else float("nan"),
     }
+    hardcoded_ansatz = _hardcoded_ansatz_label(a1_hc)
+    qiskit_ansatz = _qiskit_ansatz_label(a1_qk)
+    _ = run_command  # kept for signature compatibility; command text is logged to commands.txt
 
     with PdfPages(str(pdf_path)) as pdf:
-        # --- Page 1: command ---
-        _render_command_page(pdf, run_command)
+        # --- Page 1: summary ---
+        summary_lines = [
+            f"Amplitude Comparison Summary (L={L})",
+            "",
+            "Ansatz Used:",
+            f"  - Hardcoded: {hardcoded_ansatz}",
+            f"  - Qiskit baseline: {qiskit_ansatz}",
+            "",
+            "Amplitude Cases:",
+            f"  - A0 (safe-test): {A0}",
+            f"  - A1 (active): {A1}",
+            "",
+            "Topline:",
+            f"  - safe_test: {'PASS' if safe['passed'] else 'FAIL'}",
+            f"  - max_safe_delta: {_fmt_metric(max_safe)}",
+            f"  - delta_vqe_hc_minus_qk_at_A0: {_fmt_metric(delta_vqe_a0)}",
+            f"  - delta_vqe_hc_minus_qk_at_A1: {_fmt_metric(delta_vqe_a1)}",
+            "",
+            "Reference:",
+            "  - Full executed commands are recorded in artifacts/commands.txt",
+        ]
+        _render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.029, max_line_width=112)
 
         # --- Page 2: settings / knobs ---
         settings_lines = [
@@ -2129,6 +2359,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include per-L comparison pages inside the bundle and emit standalone per-L comparison PDFs.",
     )
+    parser.add_argument(
+        "--skip-pdf",
+        action="store_true",
+        default=False,
+        help="Skip all compare-generated PDFs (bundle/per-L/amplitude). JSON artifacts are still written.",
+    )
 
     parser.add_argument("--t", type=float, default=1.0)
     parser.add_argument("--u", type=float, default=4.0)
@@ -2158,6 +2394,16 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="COBYLA",
         choices=["SLSQP", "COBYLA", "L-BFGS-B", "Powell", "Nelder-Mead"],
+    )
+    parser.add_argument(
+        "--hardcoded-vqe-ansatzes",
+        type=str,
+        default="uccsd",
+        metavar="A0,A1,...",
+        help=(
+            "Comma-separated hardcoded ansatz list to benchmark against one shared qiskit baseline. "
+            "Allowed values: uccsd,hva."
+        ),
     )
 
     parser.add_argument("--qiskit-vqe-reps", type=int, default=2)
@@ -2322,55 +2568,88 @@ def main() -> None:
 
     command_log_path = artifacts_dir / "commands.txt"
     command_log: list[str] = []
+    hardcoded_ansatzes = _parse_hardcoded_vqe_ansatzes(str(args.hardcoded_vqe_ansatzes))
+    primary_hardcoded_ansatz = "uccsd" if "uccsd" in hardcoded_ansatzes else hardcoded_ansatzes[0]
+    ordered_hardcoded_ansatzes = [primary_hardcoded_ansatz] + [
+        name for name in hardcoded_ansatzes if name != primary_hardcoded_ansatz
+    ]
+    _ai_log(
+        "compare_hardcoded_ansatzes",
+        ansatzes=ordered_hardcoded_ansatzes,
+        primary=primary_hardcoded_ansatz,
+    )
 
     run_artifacts: list[RunArtifacts] = []
     for L in l_values:
         _ai_log("compare_l_start", L=int(L))
         tag = _artifact_tag(args, L)
-        hc_json = json_dir / f"H_{tag}.json"
-        hc_pdf = pdf_dir / f"H_{tag}.pdf"
         qk_json = json_dir / f"Q_{tag}.json"
         qk_pdf = pdf_dir / f"Q_{tag}.pdf"
         metrics_json = json_dir / f"HvQ_{tag}_metrics.json"
-        compare_pdf = pdf_dir / f"HvQ_{tag}.pdf"
+        hc_json_by_ansatz: dict[str, Path] = {}
+        hc_pdf_by_ansatz: dict[str, Path] = {}
+        compare_pdf_by_ansatz: dict[str, Path] = {}
+        for ansatz_name in ordered_hardcoded_ansatzes:
+            if ansatz_name == primary_hardcoded_ansatz:
+                hc_json = json_dir / f"H_{tag}.json"
+                hc_pdf = pdf_dir / f"H_{tag}.pdf"
+                compare_pdf = pdf_dir / f"HvQ_{tag}.pdf"
+            else:
+                hc_json = json_dir / f"H_{ansatz_name}_{tag}.json"
+                hc_pdf = pdf_dir / f"H_{ansatz_name}_{tag}.pdf"
+                compare_pdf = pdf_dir / f"HvQ_{ansatz_name}_{tag}.pdf"
+            hc_json_by_ansatz[ansatz_name] = hc_json
+            hc_pdf_by_ansatz[ansatz_name] = hc_pdf
+            compare_pdf_by_ansatz[ansatz_name] = compare_pdf
 
         if args.run_pipelines:
-            hc_cmd = [
-                sys.executable,
-                "pipelines/hardcoded_hubbard_pipeline.py",
-                "--L", str(L),
-                "--t", str(args.t),
-                "--u", str(args.u),
-                "--dv", str(args.dv),
-                "--boundary", str(args.boundary),
-                "--ordering", str(args.ordering),
-                "--t-final", str(args.t_final),
-                "--num-times", str(args.num_times),
-                "--suzuki-order", str(args.suzuki_order),
-                "--trotter-steps", str(args.trotter_steps),
-                "--fidelity-subspace-energy-tol", str(args.fidelity_subspace_energy_tol),
-                "--term-order", "sorted",
-                "--vqe-reps", str(args.hardcoded_vqe_reps),
-                "--vqe-restarts", str(args.hardcoded_vqe_restarts),
-                "--vqe-seed", str(args.hardcoded_vqe_seed),
-                "--vqe-maxiter", str(args.hardcoded_vqe_maxiter),
-                "--vqe-method", str(args.hardcoded_vqe_method),
-                "--qpe-eval-qubits", str(args.qpe_eval_qubits),
-                "--qpe-shots", str(args.qpe_shots),
-                "--qpe-seed", str(args.qpe_seed),
-                "--initial-state-source", str(args.initial_state_source),
-                "--output-json", str(hc_json),
-                "--output-pdf", str(hc_pdf),
-                "--skip-pdf",
-            ]
-            if args.skip_qpe:
-                hc_cmd.append("--skip-qpe")
-            hc_cmd.extend(_build_drive_args(args))
-            command_log.append(" ".join(hc_cmd))
-            code, out, err = _run_command(hc_cmd)
-            if code != 0:
-                raise RuntimeError(f"Hardcoded pipeline failed for L={L}.\nSTDOUT:\n{out}\nSTDERR:\n{err}")
-            _ai_log("compare_l_hardcoded_done", L=int(L), json_path=str(hc_json))
+            for ansatz_name in ordered_hardcoded_ansatzes:
+                hc_json = hc_json_by_ansatz[ansatz_name]
+                hc_pdf = hc_pdf_by_ansatz[ansatz_name]
+                hc_cmd = [
+                    sys.executable,
+                    "pipelines/hardcoded_hubbard_pipeline.py",
+                    "--L", str(L),
+                    "--t", str(args.t),
+                    "--u", str(args.u),
+                    "--dv", str(args.dv),
+                    "--boundary", str(args.boundary),
+                    "--ordering", str(args.ordering),
+                    "--t-final", str(args.t_final),
+                    "--num-times", str(args.num_times),
+                    "--suzuki-order", str(args.suzuki_order),
+                    "--trotter-steps", str(args.trotter_steps),
+                    "--fidelity-subspace-energy-tol", str(args.fidelity_subspace_energy_tol),
+                    "--term-order", "sorted",
+                    "--vqe-ansatz", str(ansatz_name),
+                    "--vqe-reps", str(args.hardcoded_vqe_reps),
+                    "--vqe-restarts", str(args.hardcoded_vqe_restarts),
+                    "--vqe-seed", str(args.hardcoded_vqe_seed),
+                    "--vqe-maxiter", str(args.hardcoded_vqe_maxiter),
+                    "--vqe-method", str(args.hardcoded_vqe_method),
+                    "--qpe-eval-qubits", str(args.qpe_eval_qubits),
+                    "--qpe-shots", str(args.qpe_shots),
+                    "--qpe-seed", str(args.qpe_seed),
+                    "--initial-state-source", str(args.initial_state_source),
+                    "--output-json", str(hc_json),
+                    "--output-pdf", str(hc_pdf),
+                    "--skip-pdf",
+                ]
+                if args.skip_qpe:
+                    hc_cmd.append("--skip-qpe")
+                hc_cmd.extend(_build_drive_args(args))
+                command_log.append(" ".join(hc_cmd))
+                code, out, err = _run_command(hc_cmd)
+                if code != 0:
+                    raise RuntimeError(
+                        f"Hardcoded pipeline failed for L={L}, ansatz={ansatz_name}.\nSTDOUT:\n{out}\nSTDERR:\n{err}"
+                    )
+                _ai_log(
+                    "compare_l_hardcoded_done",
+                    L=int(L),
+                    ansatz=str(ansatz_name),
+                    json_path=str(hc_json),
+                )
 
             qk_cmd = [
                 sys.executable,
@@ -2412,12 +2691,12 @@ def main() -> None:
         run_artifacts.append(
             RunArtifacts(
                 L=L,
-                hc_json=hc_json,
-                hc_pdf=hc_pdf,
+                hc_json_by_ansatz=hc_json_by_ansatz,
+                hc_pdf_by_ansatz=hc_pdf_by_ansatz,
                 qk_json=qk_json,
                 qk_pdf=qk_pdf,
                 metrics_json=metrics_json,
-                compare_pdf=compare_pdf,
+                compare_pdf_by_ansatz=compare_pdf_by_ansatz,
             )
         )
         _ai_log("compare_l_collection_done", L=int(L))
@@ -2431,57 +2710,100 @@ def main() -> None:
     results_rows: list[dict[str, Any]] = []
 
     for row in run_artifacts:
-        if not row.hc_json.exists():
-            raise FileNotFoundError(f"Missing hardcoded JSON for L={row.L}: {row.hc_json}")
         if not row.qk_json.exists():
             raise FileNotFoundError(f"Missing qiskit JSON for L={row.L}: {row.qk_json}")
 
-        hardcoded = json.loads(row.hc_json.read_text(encoding="utf-8"))
         qiskit = json.loads(row.qk_json.read_text(encoding="utf-8"))
-        metrics = _compare_payloads(hardcoded, qiskit)
-        _ai_log(
-            "compare_l_metrics",
-            L=int(row.L),
-            passed=bool(metrics["acceptance"]["pass"]),
-            gs_abs_delta=float(metrics["ground_state_energy"]["abs_delta"]),
-            fidelity_max_abs_delta=float(metrics["trajectory_deltas"]["fidelity"]["max_abs_delta"]),
-            energy_static_trotter_max_abs_delta=float(metrics["trajectory_deltas"]["energy_static_trotter"]["max_abs_delta"]),
-        )
+        hardcoded_by_ansatz: dict[str, dict[str, Any]] = {}
+        metrics_by_ansatz: dict[str, dict[str, Any]] = {}
 
+        for ansatz_name in ordered_hardcoded_ansatzes:
+            hc_json = row.hc_json_by_ansatz.get(ansatz_name)
+            if hc_json is None or not hc_json.exists():
+                raise FileNotFoundError(f"Missing hardcoded JSON for L={row.L}, ansatz={ansatz_name}: {hc_json}")
+            hardcoded = json.loads(hc_json.read_text(encoding="utf-8"))
+            metrics = _compare_payloads(hardcoded, qiskit)
+            hardcoded_by_ansatz[ansatz_name] = hardcoded
+            metrics_by_ansatz[ansatz_name] = metrics
+            _ai_log(
+                "compare_l_metrics",
+                L=int(row.L),
+                ansatz=str(ansatz_name),
+                passed=bool(metrics["acceptance"]["pass"]),
+                gs_abs_delta=float(metrics["ground_state_energy"]["abs_delta"]),
+                fidelity_max_abs_delta=float(metrics["trajectory_deltas"]["fidelity"]["max_abs_delta"]),
+                energy_static_trotter_max_abs_delta=float(metrics["trajectory_deltas"]["energy_static_trotter"]["max_abs_delta"]),
+            )
+
+        primary_metrics = metrics_by_ansatz[primary_hardcoded_ansatz]
+        primary_hardcoded = hardcoded_by_ansatz[primary_hardcoded_ansatz]
         metrics_payload = {
             "generated_utc": datetime.now(timezone.utc).isoformat(),
             "L": int(row.L),
-            "hc_json": str(row.hc_json),
+            "primary_hardcoded_ansatz": str(primary_hardcoded_ansatz),
+            "hc_json_by_ansatz": {
+                ans: str(path) for ans, path in row.hc_json_by_ansatz.items()
+            },
             "qk_json": str(row.qk_json),
-            "metrics": metrics,
+            # Backward-compatible single-metrics view (primary ansatz).
+            "metrics": primary_metrics,
+            "metrics_by_ansatz": metrics_by_ansatz,
         }
         print(f"Delta metric definitions (L={row.L}):")
         print(_delta_metric_definition_text())
         row.metrics_json.write_text(json.dumps(metrics_payload, indent=2), encoding="utf-8")
 
-        if args.with_per_l_pdfs:
-            _write_comparison_pdf(
-                pdf_path=row.compare_pdf,
-                L=row.L,
-                hardcoded=hardcoded,
-                qiskit=qiskit,
-                metrics=metrics,
-                run_command=run_command,
-                t_hartree=args.t_hartree,
-            )
+        if args.with_per_l_pdfs and (not args.skip_pdf):
+            for ansatz_name in ordered_hardcoded_ansatzes:
+                _write_comparison_pdf(
+                    pdf_path=row.compare_pdf_by_ansatz[ansatz_name],
+                    L=row.L,
+                    hardcoded=hardcoded_by_ansatz[ansatz_name],
+                    qiskit=qiskit,
+                    metrics=metrics_by_ansatz[ansatz_name],
+                    run_command=run_command,
+                    t_hartree=args.t_hartree,
+                )
 
-        per_l_data.append((row.L, hardcoded, qiskit, metrics))
+        per_l_data.append((row.L, primary_hardcoded, qiskit, primary_metrics))
+        pass_by_ansatz = {
+            ansatz_name: bool(metrics_by_ansatz[ansatz_name]["acceptance"]["pass"])
+            for ansatz_name in ordered_hardcoded_ansatzes
+        }
         results_rows.append(
             {
                 "L": int(row.L),
-                "pass": bool(metrics["acceptance"]["pass"]),
+                "pass": bool(all(pass_by_ansatz.values())),
+                "pass_by_ansatz": pass_by_ansatz,
+                "primary_hardcoded_ansatz": str(primary_hardcoded_ansatz),
                 "metrics_json": str(row.metrics_json),
-                "comparison_pdf": (str(row.compare_pdf) if args.with_per_l_pdfs else None),
-                "hardcoded_settings": hardcoded.get("settings", {}),
+                "comparison_pdf_by_ansatz": {
+                    ansatz_name: (
+                        str(row.compare_pdf_by_ansatz[ansatz_name])
+                        if (args.with_per_l_pdfs and (not args.skip_pdf))
+                        else None
+                    )
+                    for ansatz_name in ordered_hardcoded_ansatzes
+                },
+                "hardcoded_settings_by_ansatz": {
+                    ansatz_name: hardcoded_by_ansatz[ansatz_name].get("settings", {})
+                    for ansatz_name in ordered_hardcoded_ansatzes
+                },
                 "qiskit_settings": qiskit.get("settings", {}),
-                "ground_state_energy_abs_delta": float(metrics["ground_state_energy"]["abs_delta"]),
-                "trajectory_max_abs_deltas": {
-                    key: float(metrics["trajectory_deltas"][key]["max_abs_delta"]) for key in TARGET_METRICS
+                "ground_state_energy_abs_delta_by_ansatz": {
+                    ansatz_name: float(metrics_by_ansatz[ansatz_name]["ground_state_energy"]["abs_delta"])
+                    for ansatz_name in ordered_hardcoded_ansatzes
+                },
+                "trajectory_max_abs_deltas_by_ansatz": {
+                    ansatz_name: {
+                        key: float(metrics_by_ansatz[ansatz_name]["trajectory_deltas"][key]["max_abs_delta"])
+                        for key in TARGET_METRICS
+                    }
+                    for ansatz_name in ordered_hardcoded_ansatzes
+                },
+                "vqe_sanity_by_ansatz": {
+                    ansatz_name: metrics_by_ansatz[ansatz_name].get("vqe_sanity", {})
+                    for ansatz_name in ordered_hardcoded_ansatzes
                 },
             }
         )
@@ -2490,7 +2812,7 @@ def main() -> None:
 
     summary = {
         "generated_utc": datetime.now(timezone.utc).isoformat(),
-        "description": "Hardcoded-first vs Qiskit Hubbard pipeline comparison.",
+        "description": "Hardcoded-first (HVA/UCCSD layer-wise) vs Qiskit Hubbard pipeline comparison.",
         "l_values": l_values,
         "thresholds": THRESHOLDS,
         "requested_run_settings": {
@@ -2503,8 +2825,11 @@ def main() -> None:
             "num_times": int(args.num_times),
             "suzuki_order": int(args.suzuki_order),
             "trotter_steps": int(args.trotter_steps),
+            "hardcoded_vqe_ansatzes": ordered_hardcoded_ansatzes,
+            "primary_hardcoded_ansatz": str(primary_hardcoded_ansatz),
             "initial_state_source": str(args.initial_state_source),
             "skip_qpe": bool(args.skip_qpe),
+            "skip_pdf": bool(args.skip_pdf),
             **(
                 {
                     "drive": {
@@ -2533,34 +2858,47 @@ def main() -> None:
     summary_json_path = json_dir / "HvQ_summary.json"
     summary_json_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
-    bundle_pdf_path = pdf_dir / "HvQ_bundle.pdf"
-    _write_bundle_pdf(
-        bundle_path=bundle_pdf_path,
-        per_l_data=per_l_data,
-        overall_summary=summary,
-        isolation_check=isolation_check,
-        include_per_l_pages=True,
-        run_command=run_command,
-        t_hartree=args.t_hartree,
-    )
+    bundle_pdf_path: Path | None = None
+    if not args.skip_pdf:
+        bundle_pdf_path = pdf_dir / "HvQ_bundle.pdf"
+        _write_bundle_pdf(
+            bundle_path=bundle_pdf_path,
+            per_l_data=per_l_data,
+            overall_summary=summary,
+            isolation_check=isolation_check,
+            include_per_l_pages=True,
+            run_command=run_command,
+            t_hartree=args.t_hartree,
+        )
     _ai_log(
         "compare_main_done",
         summary_json=str(summary_json_path),
-        bundle_pdf=str(bundle_pdf_path),
+        bundle_pdf=(str(bundle_pdf_path) if bundle_pdf_path is not None else None),
         all_pass=bool(summary["all_pass"]),
+        skip_pdf=bool(args.skip_pdf),
     )
 
     print(f"Wrote summary JSON: {summary_json_path}")
-    print(f"Wrote bundle PDF:   {bundle_pdf_path}")
+    if bundle_pdf_path is not None:
+        print(f"Wrote bundle PDF:   {bundle_pdf_path}")
+    else:
+        print("Skipped all compare-generated PDFs (--skip-pdf).")
     if command_log:
         print(f"Wrote command log:  {command_log_path}")
     for row in results_rows:
-        print(f"L={row['L']}: pass={row['pass']} metrics={row['metrics_json']} pdf={row['comparison_pdf']}")
+        print(
+            f"L={row['L']}: pass={row['pass']} pass_by_ansatz={row['pass_by_ansatz']} "
+            f"metrics={row['metrics_json']} pdfs={row['comparison_pdf_by_ansatz']}"
+        )
 
     # ------------------------------------------------------------------
     # Amplitude-comparison PDFs (additive, opt-in via CLI flag)
     # ------------------------------------------------------------------
     if bool(getattr(args, "with_drive_amplitude_comparison_pdf", False)):
+        if bool(args.skip_pdf):
+            _ai_log("amp_cmp_skipped_due_skip_pdf", l_values=l_values)
+            print("Skipped amplitude-comparison PDFs because --skip-pdf was set.")
+            return
         raw_amps = str(args.drive_amplitudes).split(",")
         if len(raw_amps) != 2:
             raise ValueError(
@@ -2572,7 +2910,14 @@ def main() -> None:
 
         for L in l_values:
             _ai_log("amp_cmp_l_start", L=int(L), A0=A0, A1=A1)
-            amp_data = _run_amplitude_comparison_for_l(args, L, A0, A1, json_dir)
+            amp_data = _run_amplitude_comparison_for_l(
+                args,
+                L,
+                A0,
+                A1,
+                json_dir,
+                hardcoded_vqe_ansatz=str(primary_hardcoded_ansatz),
+            )
             tag = _artifact_tag(args, L)
             amp_pdf_path = pdf_dir / f"amp_{tag}.pdf"
             amp_metrics = _write_amplitude_comparison_pdf(

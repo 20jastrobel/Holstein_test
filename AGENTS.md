@@ -32,6 +32,18 @@ If you need number operators, implement:
 - `n_p = (I - Z_p)/2`
 in a way consistent with the Pauli-string convention above.
 
+### PDF artifact parameter manifest (mandatory)
+Every generated PDF artifact must include a **clear, list-style parameter manifest at the start of the document** (first page or first text-summary page), not just a raw command dump.
+
+Required fields:
+- Model family/name (for this repo: `Hubbard` unless/ until additional models are added)
+- Ansatz type(s) used
+- Whether drive is enabled (`--enable-drive` true/false)
+- Core physical parameters: `t`, `U`, `dv`
+- Any other run-defining parameters needed to reproduce the physics for that PDF
+
+This rule applies to all PDF outputs (single-pipeline PDFs, compare PDFs, bundle PDFs, amplitude-comparison PDFs, and future report PDFs).
+
 ---
 
 ## 2) Keep the operator layer clean
@@ -203,6 +215,8 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
 - Do not "optimize" by rewriting algebra rules unless correctness is proven with regression tests.
 - Do not add new drive parameters without updating all three pipelines' `parse_args()`, `_build_drive_args()`, `_build_drive_args_with_amplitude()`, and `PIPELINE_RUN_GUIDE.md`.
 - Do not break the safe-test invariant (A=0 drive must equal no-drive to machine precision).
+- Do not stop a run because you think it is taking up too much run-time. The only acceptable reason to stop/interrupt an already active run/script is for debugging.
+
 
 ---
 
