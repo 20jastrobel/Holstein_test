@@ -21,10 +21,8 @@ import numpy as np
 
 # ── path setup ──────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
-for p in (REPO_ROOT, REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"):
-    ps = str(p)
-    if ps not in sys.path:
-        sys.path.insert(0, ps)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # ── imports ─────────────────────────────────────────────────────────────────
 from src.quantum.hubbard_latex_python_pairs import (

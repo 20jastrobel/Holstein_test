@@ -11,20 +11,11 @@ import numpy as np
 
 
 def _add_repo_paths() -> Path:
-    """Add repo root and available project roots to sys.path."""
+    """Add repo root to sys.path."""
     repo_root = Path(__file__).resolve().parent.parent
-    candidate_roots = [
-        repo_root,
-        repo_root / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE",
-    ]
-
-    for candidate in candidate_roots:
-        if not candidate.exists():
-            continue
-        candidate_str = str(candidate)
-        if candidate_str not in sys.path:
-            sys.path.insert(0, candidate_str)
-
+    repo_str = str(repo_root)
+    if repo_str not in sys.path:
+        sys.path.insert(0, repo_str)
     return repo_root
 
 

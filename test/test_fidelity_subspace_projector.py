@@ -11,14 +11,10 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-for p in (REPO_ROOT, PIPELINE_ROOT):
-    ps = str(p)
-    if ps not in sys.path:
-        sys.path.insert(0, ps)
-
-import pipelines.hardcoded_hubbard_pipeline as hp
+import pipelines.hardcoded.hubbard_pipeline as hp
 
 
 class TestProjectorFidelityMath(unittest.TestCase):

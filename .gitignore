@@ -5,4 +5,4 @@
 *.pyc
 *.log
 *.swp
-Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/artifacts/
+artifacts/

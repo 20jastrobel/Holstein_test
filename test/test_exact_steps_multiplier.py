@@ -46,12 +46,8 @@ if not (REPO_ROOT / "src").is_dir():
         raise RuntimeError(
             f"Cannot locate repository root containing src/ from {Path(__file__).resolve()}"
         )
-PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
-
-for _p in (REPO_ROOT, PIPELINE_ROOT):
-    _ps = str(_p)
-    if _ps not in sys.path:
-        sys.path.insert(0, _ps)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.quantum.drives_time_potential import (
     REFERENCE_METHOD_NAMES,
@@ -66,7 +62,7 @@ from src.quantum.drives_time_potential import (
 
 def _import_evolve_piecewise_exact():
     """Lazily import _evolve_piecewise_exact from the hardcoded pipeline."""
-    import pipelines.hardcoded_hubbard_pipeline as hp
+    import pipelines.hardcoded.hubbard_pipeline as hp
     return hp._evolve_piecewise_exact
 
 
@@ -291,12 +287,12 @@ class TestCompareRunnerDefaults(unittest.TestCase):
     """Verify the compare runner updated _DRIVE_FLAG_DEFAULTS."""
 
     def test_exact_steps_multiplier_in_defaults(self) -> None:
-        import pipelines.compare_hardcoded_vs_qiskit_pipeline as cmp
+        import pipelines.qiskit_archive.compare_hc_vs_qk as cmp
         self.assertIn("exact_steps_multiplier", cmp._DRIVE_FLAG_DEFAULTS)
         self.assertEqual(cmp._DRIVE_FLAG_DEFAULTS["exact_steps_multiplier"], 1)
 
     def test_build_drive_args_includes_multiplier_flag(self) -> None:
-        import pipelines.compare_hardcoded_vs_qiskit_pipeline as cmp
+        import pipelines.qiskit_archive.compare_hc_vs_qk as cmp
         ns = types.SimpleNamespace(
             enable_drive=True,
             drive_A=0.2,
@@ -316,7 +312,7 @@ class TestCompareRunnerDefaults(unittest.TestCase):
         self.assertEqual(tokens[idx + 1], "4")
 
     def test_build_drive_args_multiplier_default_1(self) -> None:
-        import pipelines.compare_hardcoded_vs_qiskit_pipeline as cmp
+        import pipelines.qiskit_archive.compare_hc_vs_qk as cmp
         ns = types.SimpleNamespace(
             enable_drive=True,
             drive_A=0.2,
@@ -335,7 +331,7 @@ class TestCompareRunnerDefaults(unittest.TestCase):
         self.assertEqual(tokens[idx + 1], "1")
 
     def test_build_drive_args_disabled_empty(self) -> None:
-        import pipelines.compare_hardcoded_vs_qiskit_pipeline as cmp
+        import pipelines.qiskit_archive.compare_hc_vs_qk as cmp
         ns = types.SimpleNamespace(
             enable_drive=False,
             drive_A=0.2,

@@ -20,12 +20,8 @@ import numpy as np
 # Path setup (same pattern as test_integration.py)
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
-
-for p in (REPO_ROOT, PIPELINE_ROOT):
-    ps = str(p)
-    if ps not in sys.path:
-        sys.path.insert(0, ps)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.quantum.drives_time_potential import (
     DensityDriveTemplate,
@@ -78,7 +74,7 @@ class TestDriveOnlyPhase(unittest.TestCase):
     """Evolve basis states under drive only (no static H) and verify phases."""
 
     def test_drive_only_phase_L2_blocked_and_interleaved(self) -> None:
-        import pipelines.hardcoded_hubbard_pipeline as hp
+        import pipelines.hardcoded.hubbard_pipeline as hp
 
         dt = 0.25
         t_mid = 0.5 * dt
@@ -162,7 +158,7 @@ class TestQuadratureOrder(unittest.TestCase):
     """Verify midpoint is 2nd-order and left is 1st-order."""
 
     def test_midpoint_vs_left_quadrature_order(self) -> None:
-        import pipelines.hardcoded_hubbard_pipeline as hp
+        import pipelines.hardcoded.hubbard_pipeline as hp
 
         # Single-qubit commuting test: H(t) = t² Z.
         # Exact relative phase = exp(-i · 2·T³/3).
@@ -211,7 +207,7 @@ class TestPiecewiseExact(unittest.TestCase):
 
     def test_single_qubit_z_drive(self) -> None:
         """H(t) = t · Z on one qubit. Exact: ψ(T) = exp(-i T²/2 Z) ψ₀."""
-        import pipelines.hardcoded_hubbard_pipeline as hp
+        import pipelines.hardcoded.hubbard_pipeline as hp
 
         psi0 = np.array([1.0, 1.0], dtype=complex) / math.sqrt(2.0)
         T = 2.0

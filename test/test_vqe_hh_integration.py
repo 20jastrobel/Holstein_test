@@ -11,12 +11,10 @@ Tests:
 """
 from __future__ import annotations
 
-import math
 import numpy as np
 import pytest
 
 from src.quantum.hubbard_latex_python_pairs import (
-    boson_qubits_per_site,
     build_hubbard_hamiltonian,
     build_hubbard_holstein_hamiltonian,
 )
@@ -26,6 +24,7 @@ from src.quantum.hartree_fock_reference_state import (
 )
 from src.quantum.vqe_latex_python_pairs import (
     HubbardHolsteinLayerwiseAnsatz,
+    HubbardHolsteinTermwiseAnsatz,
     HubbardLayerwiseAnsatz,
     HardcodedUCCSDLayerwiseAnsatz,
     VQEResult,
@@ -36,7 +35,7 @@ from src.quantum.vqe_latex_python_pairs import (
 )
 
 # ────────────────────────────────────────────────────────────────────────────
-# Constants
+# Constants  (canonical values live in test/conftest.py)
 # ────────────────────────────────────────────────────────────────────────────
 _L = 2
 _T = 1.0
@@ -48,7 +47,7 @@ _N_PH_MAX = 1
 _BOSON_ENCODING = "binary"
 _BOUNDARY = "periodic"
 _ORDERING = "blocked"
-_HALF_FILL = (1, 1)  # n_alpha = n_beta = L//2  (half-filling: N_el = L)
+_HALF_FILL = (1, 1)  # n_alpha = n_beta = L//2
 _ENCODINGS = ("binary", "unary")
 
 
@@ -284,4 +283,102 @@ class TestVariationalBound:
         res = _run_hubbard_vqe(reps=2, restarts=3, maxiter=600, seed=42)
         assert res.energy >= e_exact - 1e-8, (
             f"VQE energy {res.energy} below exact {e_exact} by more than tolerance"
+        )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Termwise ansatz helper
+# ────────────────────────────────────────────────────────────────────────────
+
+def _run_hh_vqe_termwise(
+    L=_L, t=_T, U=_U, dv=_DV, omega0=_OMEGA0, g_ep=_G_EP,
+    n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+    boundary=_BOUNDARY, ordering=_ORDERING,
+    reps=2, restarts=3, seed=42, maxiter=1500,
+) -> VQEResult:
+    H = _build_hh_hamiltonian(L, t, U, dv, omega0, g_ep, n_ph_max,
+                               boson_encoding, boundary, ordering)
+    ansatz = HubbardHolsteinTermwiseAnsatz(
+        dims=L, J=t, U=U, omega0=omega0, g=g_ep,
+        n_ph_max=n_ph_max, boson_encoding=boson_encoding,
+        reps=reps, indexing=ordering,
+        pbc=(boundary == "periodic"),
+    )
+    psi_ref = hubbard_holstein_reference_state(
+        dims=L, n_ph_max=n_ph_max, boson_encoding=boson_encoding,
+        indexing=ordering,
+    )
+    return vqe_minimize(
+        H, ansatz, psi_ref,
+        restarts=restarts, seed=seed, maxiter=maxiter,
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 7. Termwise ansatz tests
+# ────────────────────────────────────────────────────────────────────────────
+class TestTermwiseAnsatz:
+    """HubbardHolsteinTermwiseAnsatz: more parameters, much better accuracy."""
+
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_termwise_smoke(self, enc):
+        """Termwise ansatz converges to finite energy."""
+        res = _run_hh_vqe_termwise(reps=1, restarts=1, maxiter=300,
+                                    seed=42, boson_encoding=enc)
+        assert np.isfinite(res.energy)
+        assert res.theta is not None
+        assert res.theta.shape[0] > 0
+
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_termwise_has_more_params_than_layerwise(self, enc):
+        """Termwise must have strictly more parameters than layerwise at same reps."""
+        lw = HubbardHolsteinLayerwiseAnsatz(
+            dims=_L, J=_T, U=_U, omega0=_OMEGA0, g=_G_EP,
+            n_ph_max=_N_PH_MAX, boson_encoding=enc,
+            reps=2, indexing=_ORDERING, pbc=True,
+        )
+        tw = HubbardHolsteinTermwiseAnsatz(
+            dims=_L, J=_T, U=_U, omega0=_OMEGA0, g=_G_EP,
+            n_ph_max=_N_PH_MAX, boson_encoding=enc,
+            reps=2, indexing=_ORDERING, pbc=True,
+        )
+        assert tw.num_parameters > lw.num_parameters, (
+            f"[{enc}] termwise npar={tw.num_parameters} should exceed "
+            f"layerwise npar={lw.num_parameters}"
+        )
+
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_termwise_variational_bound(self, enc):
+        """Termwise VQE energy >= exact sector energy."""
+        H = _build_hh_hamiltonian(boson_encoding=enc)
+        e_exact = exact_ground_energy_sector_hh(
+            H, num_sites=_L, num_particles=_HALF_FILL,
+            n_ph_max=_N_PH_MAX, boson_encoding=enc,
+            indexing=_ORDERING,
+        )
+        res = _run_hh_vqe_termwise(reps=2, restarts=3, maxiter=1500,
+                                    seed=42, boson_encoding=enc)
+        assert res.energy >= e_exact - 1e-8, (
+            f"[{enc}] termwise VQE {res.energy} below exact {e_exact}"
+        )
+
+    @pytest.mark.parametrize("enc", _ENCODINGS)
+    def test_termwise_theta_consistency(self, enc):
+        """Returned theta reproduces reported energy."""
+        H = _build_hh_hamiltonian(boson_encoding=enc)
+        ansatz = HubbardHolsteinTermwiseAnsatz(
+            dims=_L, J=_T, U=_U, omega0=_OMEGA0, g=_G_EP,
+            n_ph_max=_N_PH_MAX, boson_encoding=enc,
+            reps=2, indexing=_ORDERING, pbc=True,
+        )
+        psi_ref = hubbard_holstein_reference_state(
+            dims=_L, n_ph_max=_N_PH_MAX, boson_encoding=enc,
+            indexing=_ORDERING,
+        )
+        res = vqe_minimize(H, ansatz, psi_ref,
+                           restarts=2, seed=42, maxiter=800)
+        psi_opt = ansatz.prepare_state(res.theta, psi_ref)
+        e_check = expval_pauli_polynomial(psi_opt, H)
+        assert abs(e_check - res.energy) < 1e-10, (
+            f"[{enc}] theta-recomputed {e_check} != reported {res.energy}"
         )

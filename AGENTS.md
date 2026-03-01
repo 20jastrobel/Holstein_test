@@ -148,11 +148,11 @@ Three built-in patterns (`--drive-pattern`):
 The compare pipeline supports `--with-drive-amplitude-comparison-pdf` which:
 1. Runs both pipelines 3× per L: drive-disabled, A0-enabled, A1-enabled (6 sub-runs total per L).
 2. Generates a multi-page physics-facing PDF per L with scoreboard tables, drive waveform, response deltas, and a combined HC/QK overlay.
-3. Writes `json/amp_{tag}_metrics.json` with `safe_test`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1`.
+3. Writes `json/amp_cmp_hubbard_{tag}_metrics.json` with `safe_test`, `delta_vqe_hc_minus_qk_at_A0`, `delta_vqe_hc_minus_qk_at_A1`.
 
 ### Rules for agents modifying amplitude comparison
-- All artifacts go to `json/` or `pdf/` subdirectories. Filenames use the tag convention `L{L}_{vt|static}_t{t}_U{u}_S{steps}`.
-- Intermediate JSON files use the `amp_H_` / `amp_Q_` prefix: `json/amp_H_L2_static_t1.0_U4.0_S32_disabled.json`, `json/amp_Q_L2_static_t1.0_U4.0_S32_A0.json`, etc.
+- All artifacts go to `json/` or `pdf/` subdirectories. Filenames use the tag convention `L{L}_{drive|static}_t{t}_U{u}_S{steps}`.
+- Intermediate JSON files use the `amp_hc_hubbard_` / `amp_qk_hubbard_` prefix: `json/amp_hc_hubbard_L2_static_t1.0_U4.0_S32_disabled.json`, `json/amp_qk_hubbard_L2_static_t1.0_U4.0_S32_A0.json`, etc.
 - Safe-test scalar metrics must always be reported on the scoreboard table. The full safe-test timeseries page is conditional (fail, near-threshold, or `--report-verbose`).
 - VQE delta is defined as `ΔE = VQE_hardcoded − VQE_qiskit` (the sector-filtered energy, not full-Hilbert).
 - New amplitude comparison CLI args: `--drive-amplitudes A0,A1`, `--with-drive-amplitude-comparison-pdf`, `--report-verbose`, and `--safe-test-near-threshold-factor`.
@@ -177,6 +177,87 @@ Implementation rule:
   - drive enabled with scaling profile defaults,
   - per-L parameter table,
   - fallback escalation until the `1e-7` gate passes or budget is exhausted.
+
+## 4d) Mandatory minimum VQE / Trotter parameters per L
+
+**Agents must never run a pipeline with settings weaker than the table below.**
+Under-parameterised runs waste wall-clock time and produce unconverged results
+that are useless for diagnostics — you cannot tell whether a failure is a code
+bug or just insufficient optimiser effort.
+
+If in doubt, **round up** to the next row.
+
+### Hubbard (pure) — minimum settings
+
+| L | `--trotter-steps` | `--exact-steps-multiplier` | `--num-times` | `--vqe-reps` | `--vqe-restarts` | `--vqe-maxiter` | optimizer | `--t-final` |
+|---|---|---|---|---|---|---|---|---|
+| 2 | 64 | 2 | 201 | 2 | 2 | 600 | COBYLA | 10.0 |
+| 3 | 128 | 2 | 201 | 2 | 3 | 1200 | COBYLA | 15.0 |
+| 4 | 256 | 3 | 241 | 3 | 4 | 6000 | SLSQP | 20.0 |
+| 5 | 384 | 3 | 301 | 3 | 5 | 8000 | SLSQP | 20.0 |
+| 6 | 512 | 4 | 361 | 4 | 6 | 10000 | SLSQP | 20.0 |
+
+### Hubbard-Holstein (HH) — minimum settings
+
+HH requires heavier settings than pure Hubbard at the same L due to
+the enlarged Hilbert space (phonon modes).
+
+| L | `--n-ph-max` | `--trotter-steps` | `--vqe-reps` | `--vqe-restarts` | `--vqe-maxiter` | optimizer |
+|---|---|---|---|---|---|---|
+| 2 | 1 | 64 | 2 | 3 | 800 | COBYLA |
+| 2 | 2 | 128 | 3 | 4 | 1500 | COBYLA |
+| 3 | 1 | 192 | 2 | 4 | 2400 | COBYLA |
+
+### Rules
+
+1. **Never use L=2 defaults for L≥3.** The Hilbert space grows as $2^{2L}$
+   (Hubbard) or $2^{2L} \cdot (n_{ph}+1)^L$ (HH). Parameters that converge
+   at L=2 are catastrophically insufficient at L=3+.
+2. If the user says "run L=3" without specifying parameters, use this table
+   (or `run_L_drive_accurate.sh`) — do not invent lighter settings.
+3. For validation / smoke-test runs that intentionally use weak settings,
+   add an explicit comment: `# SMOKE TEST — intentionally weak settings`.
+4. When writing tests, light settings (e.g., `maxiter=40`) are acceptable
+   because tests verify implementation correctness, not convergence quality.
+   But pipeline runs and demo artifacts must meet the table above.
+
+## 4e) Cross-check suite (`pipelines/exact_bench/cross_check_suite.py`)
+
+The cross-check suite compares **all available ansätze × VQE modes** against
+exact ED for a given L, with Trotter dynamics and multi-page PDF output.
+
+### Usage
+
+```bash
+# Pure Hubbard, auto-scaled parameters from §4d:
+python pipelines/exact_bench/cross_check_suite.py --L 2 --problem hubbard
+
+# Hubbard-Holstein:
+python pipelines/exact_bench/cross_check_suite.py --L 2 --problem hh --omega0 1.0 --g-ep 0.5
+
+# Override auto-scaled params (e.g. for smoke tests):
+python pipelines/exact_bench/cross_check_suite.py --L 2 --problem hubbard \
+  --vqe-reps 1 --vqe-restarts 1 --vqe-maxiter 40 --trotter-steps 8
+```
+
+### Shorthand convention
+
+When the user says "run cross-check L=3" or "cross-check L 4":
+1. Run `cross_check_suite.py --L <L> --problem hubbard` (auto-scaled from §4d).
+2. If the user says "cross-check HH L=2", add `--problem hh`.
+3. Do **not** override `--vqe-maxiter` or `--trotter-steps` below §4d minimums.
+
+### Trial matrix
+
+| Problem | Ansätze |
+|---------|---------|
+| `hubbard` | HVA-Layerwise, UCCSD-Layerwise, ADAPT(UCCSD), ADAPT(full_H) |
+| `hh` | HH-Termwise, HH-Layerwise, ADAPT(full_H) |
+
+### Output
+
+- JSON: `<output-dir>/xchk_L{L}_{problem}_t{t}_U{U}.json`
+- PDF: same path with `.pdf` — parameter manifest, scoreboard table, per-ansatz 3-panel trajectory plots (fidelity, energy, occupation), fidelity/energy/doublon overlay pages, command page.
 
 ---
 
@@ -214,6 +295,7 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
 - Do not add new drive parameters without updating all three pipelines' `parse_args()`, `_build_drive_args()`, `_build_drive_args_with_amplitude()`, and `PIPELINE_RUN_GUIDE.md`.
 - Do not break the safe-test invariant (A=0 drive must equal no-drive to machine precision).
 - Do not stop a run because you think it is taking up too much run-time. The only acceptable reason to stop/interrupt an already active run/script is for debugging.
+- **Do not run a pipeline with parameters below the §4d minimum table.** If the user does not specify parameters, look up the table — never guess or use L=2 defaults for larger L.
 
 
 

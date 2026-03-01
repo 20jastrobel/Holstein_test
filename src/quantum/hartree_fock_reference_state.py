@@ -19,8 +19,7 @@ is expressed in that same spin-orbital ordering.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, Sequence, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -152,28 +151,6 @@ def hartree_fock_statevector(
     psi = np.zeros(dim, dtype=complex)
     psi[basis_index] = 1.0 + 0.0j
     return psi
-
-
-def hartree_fock_circuit(
-    n_sites: int,
-    num_particles: SpinParticles,
-    *,
-    indexing: str = "blocked",
-):
-    """
-    Return a Qiskit QuantumCircuit that prepares the HF determinant by X-flipping occupied qubits.
-
-    Kept optional: Qiskit is imported inside the function.
-    """
-    from qiskit import QuantumCircuit  # local import keeps core module dependency-light
-
-    n_qubits = 2 * int(n_sites)
-    occ = hartree_fock_occupied_qubits(n_sites, num_particles, indexing=indexing)
-
-    qc = QuantumCircuit(n_qubits, name="HF")
-    for q in occ:
-        qc.x(q)
-    return qc
 
 
 # ---------------------------------------------------------------------------

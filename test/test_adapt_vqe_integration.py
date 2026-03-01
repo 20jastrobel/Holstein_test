@@ -36,17 +36,10 @@ from src.quantum.vqe_latex_python_pairs import (
 )
 
 # Import ADAPT pipeline internals
-PIPELINE_DIR = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE" / "pipelines"
-if str(PIPELINE_DIR.parent) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_DIR.parent))
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-# Import directly from the adapt pipeline module
 import importlib.util
 _spec = importlib.util.spec_from_file_location(
     "hardcoded_adapt_pipeline",
-    str(PIPELINE_DIR / "hardcoded_adapt_pipeline.py"),
+    str(REPO_ROOT / "pipelines" / "hardcoded" / "adapt_pipeline.py"),
 )
 _adapt_mod = importlib.util.module_from_spec(_spec)
 sys.modules["hardcoded_adapt_pipeline"] = _adapt_mod

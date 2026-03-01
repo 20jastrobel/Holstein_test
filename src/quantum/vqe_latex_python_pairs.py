@@ -110,6 +110,42 @@ except Exception:  # pragma: no cover
     build_hubbard_potential = _missing_hh
 
 
+__all__ = [
+    # Statevector primitives
+    "basis_state",
+    "apply_pauli_string",
+    "expval_pauli_string",
+    "expval_pauli_polynomial",
+    "apply_pauli_rotation",
+    "apply_exp_pauli_polynomial",
+    # Hamiltonian term builders
+    "half_filled_num_particles",
+    "jw_number_operator",
+    "hubbard_hop_term",
+    "hubbard_onsite_term",
+    "hubbard_potential_term",
+    # Ansatz classes (Hubbard)
+    "AnsatzTerm",
+    "HubbardTermwiseAnsatz",
+    "HubbardLayerwiseAnsatz",
+    "HardcodedUCCSDAnsatz",
+    "HardcodedUCCSDLayerwiseAnsatz",
+    # Ansatz classes (Hubbard-Holstein)
+    "HubbardHolsteinTermwiseAnsatz",
+    "HubbardHolsteinLayerwiseAnsatz",
+    # VQE driver
+    "VQEResult",
+    "vqe_minimize",
+    # Dense Hamiltonian / exact diag helpers
+    "pauli_matrix",
+    "hamiltonian_matrix",
+    "exact_ground_energy_sector",
+    "exact_ground_energy_sector_hh",
+    # Display
+    "show_latex_and_code",
+    "show_vqe_latex_python_pairs",
+]
+
 LATEX_TERMS: Dict[str, Dict[str, str]] = {
     "hamiltonian_sum": {
         "title": "Hamiltonian (Pauli Expansion)",

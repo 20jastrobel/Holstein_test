@@ -39,6 +39,20 @@ from src.quantum.hubbard_latex_python_pairs import (
 SitePotential = Optional[Union[float, Sequence[float], Dict[int, float]]]
 MatrixLike = Union[np.ndarray, "spmatrix"]
 
+__all__ = [
+    # Data structures
+    "HHPhysicalState",
+    "HHEDBasis",
+    # Encoding / basis construction
+    "encode_state_to_qubit_index",
+    "build_hh_sector_basis",
+    # Hamiltonian
+    "build_hh_sector_hamiltonian_ed",
+    # Utilities
+    "matrix_to_dense",
+    "hermiticity_residual",
+]
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Data structures

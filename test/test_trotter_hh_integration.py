@@ -26,11 +26,8 @@ import numpy as np
 
 # ── Path setup ─────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
-for p in (REPO_ROOT, PIPELINE_ROOT):
-    ps = str(p)
-    if ps not in sys.path:
-        sys.path.insert(0, ps)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # ── Imports from src/quantum ───────────────────────────────────────────────
 from src.quantum.hubbard_latex_python_pairs import (
@@ -44,12 +41,11 @@ from src.quantum.hartree_fock_reference_state import (
 from src.quantum.vqe_latex_python_pairs import (
     HubbardHolsteinLayerwiseAnsatz,
     vqe_minimize,
-    expval_pauli_polynomial,
     exact_ground_energy_sector_hh,
 )
 
 # ── Imports from hardcoded pipeline ────────────────────────────────────────
-import pipelines.hardcoded_hubbard_pipeline as hc_pipe
+import pipelines.hardcoded.hubbard_pipeline as hc_pipe
 
 _sector_basis_indices_hh = hc_pipe._sector_basis_indices_hh
 _ground_manifold_basis_sector_filtered_hh = hc_pipe._ground_manifold_basis_sector_filtered_hh
@@ -57,13 +53,13 @@ _collect_hardcoded_terms_exyz = hc_pipe._collect_hardcoded_terms_exyz
 _build_hamiltonian_matrix = hc_pipe._build_hamiltonian_matrix
 
 # ── Imports from compare pipeline (pure function, no side effects) ─────────
-import pipelines.compare_hardcoded_vs_qiskit_pipeline as cmp_pipe
+import pipelines.qiskit_archive.compare_hc_vs_qk as cmp_pipe
 
 # ── Imports from Qiskit baseline pipeline ──────────────────────────────────
 # The Qiskit baseline has top-level qiskit_algorithms imports that may not
 # be installed.  We import it lazily and skip tests when unavailable.
 try:
-    import pipelines.qiskit_hubbard_baseline_pipeline as qk_pipe
+    import pipelines.qiskit_archive.qiskit_baseline as qk_pipe
     _HAS_QK_PIPE = True
 except (ImportError, ModuleNotFoundError):
     qk_pipe = None  # type: ignore[assignment]

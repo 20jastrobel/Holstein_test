@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dry-run tests for drive flag passthrough in compare_hardcoded_vs_qiskit_pipeline.py.
+"""Dry-run tests for drive flag passthrough in compare_hc_vs_qk.py.
 
 Strategy
 --------
@@ -43,16 +43,13 @@ from pathlib import Path
 # Path setup
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
-for p in (REPO_ROOT, PIPELINE_ROOT):
-    ps = str(p)
-    if ps not in sys.path:
-        sys.path.insert(0, ps)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # Import only the pure functions — no side-effect module-level code is
-# triggered by the import because compare_hardcoded_vs_qiskit_pipeline.py
+# triggered by the import because compare_hc_vs_qk.py
 # guards its main() behind ``if __name__ == "__main__":``
-import pipelines.compare_hardcoded_vs_qiskit_pipeline as cmp
+import pipelines.qiskit_archive.compare_hc_vs_qk as cmp
 
 _build_drive_args = cmp._build_drive_args
 _DRIVE_FLAG_DEFAULTS = cmp._DRIVE_FLAG_DEFAULTS
@@ -221,7 +218,7 @@ class TestParseDriveDefaults(unittest.TestCase):
     def setUpClass(cls) -> None:
         # parse_args() reads sys.argv; inject a minimal valid argv.
         cls._orig_argv = sys.argv[:]
-        sys.argv = ["compare_hardcoded_vs_qiskit_pipeline.py"]
+        sys.argv = ["compare_hc_vs_qk.py"]
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -292,7 +289,7 @@ class TestCommandStructure(unittest.TestCase):
         """Mirror the hc_cmd construction from main(), without subprocess."""
         cmd = [
             sys.executable,
-            "pipelines/hardcoded_hubbard_pipeline.py",
+            "pipelines/hardcoded/hubbard_pipeline.py",
             "--L", "2",
             "--t", "1.0",
             "--u", "4.0",
@@ -384,7 +381,7 @@ class TestCommandStructure(unittest.TestCase):
         # Build both commands and extract their drive suffixes.
         hc = self._build_hc_cmd(args)
         # qk_cmd is identical in structure; reuse same helper with different script.
-        qk = [t.replace("hardcoded_hubbard_pipeline", "qiskit_hubbard_baseline_pipeline")
+        qk = [t.replace("hardcoded/hubbard_pipeline", "qiskit_archive/qiskit_baseline")
               for t in hc]
 
         # Both contain identical drive tokens.

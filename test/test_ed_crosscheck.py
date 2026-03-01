@@ -13,7 +13,6 @@ pipeline for Hubbard-Holstein is correct.
 """
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -29,7 +28,6 @@ for p in (REPO_ROOT,):
 
 # ── Pauli-polynomial path ─────────────────────────────────────────────────
 from src.quantum.hubbard_latex_python_pairs import (
-    boson_qubits_per_site,
     build_hubbard_holstein_hamiltonian,
 )
 from src.quantum.vqe_latex_python_pairs import hamiltonian_matrix

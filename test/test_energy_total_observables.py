@@ -24,12 +24,8 @@ import numpy as np
 # Path setup (mirrors existing test conventions)
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_ROOT = REPO_ROOT / "Fermi-Hamil-JW-VQE-TROTTER-PIPELINE"
-
-for p in (REPO_ROOT, PIPELINE_ROOT):
-    ps = str(p)
-    if ps not in sys.path:
-        sys.path.insert(0, ps)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.quantum.drives_time_potential import (
     build_gaussian_sinusoid_density_drive,
@@ -37,7 +33,7 @@ from src.quantum.drives_time_potential import (
 )
 from src.quantum.hubbard_latex_python_pairs import build_hubbard_hamiltonian
 
-import pipelines.hardcoded_hubbard_pipeline as hp
+import pipelines.hardcoded.hubbard_pipeline as hp
 
 
 # ---------------------------------------------------------------------------
