@@ -558,6 +558,90 @@ def _state_to_amplitudes_qn_to_q0(psi: np.ndarray, cutoff: float = 1e-12) -> dic
     return out
 
 
+def _state_from_amplitudes_qn_to_q0(
+    amplitudes_qn_to_q0: dict[str, Any],
+    nq_total: int,
+) -> np.ndarray:
+    if not isinstance(amplitudes_qn_to_q0, dict) or len(amplitudes_qn_to_q0) == 0:
+        raise ValueError("Missing or empty initial_state.amplitudes_qn_to_q0 in ADAPT JSON.")
+    dim = 1 << int(nq_total)
+    psi = np.zeros(dim, dtype=complex)
+    for bitstr, comp in amplitudes_qn_to_q0.items():
+        if not isinstance(bitstr, str) or len(bitstr) != int(nq_total) or any(ch not in "01" for ch in bitstr):
+            raise ValueError(f"Invalid bitstring key in ADAPT amplitudes: {bitstr!r}")
+        if not isinstance(comp, dict):
+            raise ValueError(f"Amplitude payload for bitstring {bitstr!r} must be a dict.")
+        re_val = float(comp.get("re", 0.0))
+        im_val = float(comp.get("im", 0.0))
+        idx = int(bitstr, 2)
+        psi[idx] = complex(re_val, im_val)
+    return _normalize_state(psi)
+
+
+def _load_adapt_initial_state(
+    adapt_json_path: Path,
+    nq_total: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if not adapt_json_path.exists():
+        raise FileNotFoundError(f"ADAPT input JSON not found: {adapt_json_path}")
+    raw = json.loads(adapt_json_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("ADAPT input JSON must be a top-level object.")
+    initial_state = raw.get("initial_state")
+    if not isinstance(initial_state, dict):
+        raise ValueError("ADAPT input JSON missing object key: initial_state")
+    amplitudes = initial_state.get("amplitudes_qn_to_q0")
+    psi = _state_from_amplitudes_qn_to_q0(amplitudes, int(nq_total))
+    meta = {
+        "settings": raw.get("settings", {}),
+        "adapt_vqe": raw.get("adapt_vqe", {}),
+        "initial_state_source": initial_state.get("source"),
+    }
+    return psi, meta
+
+
+def _validate_adapt_metadata(
+    *,
+    adapt_settings: dict[str, Any],
+    args: argparse.Namespace,
+    is_hh: bool,
+    float_tol: float = 1e-10,
+) -> list[str]:
+    if not isinstance(adapt_settings, dict):
+        return ["settings missing from ADAPT input JSON"]
+
+    mismatches: list[str] = []
+
+    def _cmp_scalar(field: str, expected: Any, actual: Any) -> None:
+        if actual != expected:
+            mismatches.append(f"{field}: expected={expected!r} adapt_json={actual!r}")
+
+    def _cmp_float(field: str, expected: float, actual_raw: Any) -> None:
+        try:
+            actual = float(actual_raw)
+        except Exception:
+            mismatches.append(f"{field}: expected={expected!r} adapt_json={actual_raw!r}")
+            return
+        if abs(float(expected) - actual) > float(float_tol):
+            mismatches.append(f"{field}: expected={float(expected)!r} adapt_json={actual!r}")
+
+    _cmp_scalar("L", int(args.L), adapt_settings.get("L"))
+    _cmp_scalar("problem", str(args.problem).strip().lower(), str(adapt_settings.get("problem", "")).strip().lower())
+    _cmp_scalar("ordering", str(args.ordering), adapt_settings.get("ordering"))
+    _cmp_scalar("boundary", str(args.boundary), adapt_settings.get("boundary"))
+    _cmp_float("t", float(args.t), adapt_settings.get("t"))
+    _cmp_float("u", float(args.u), adapt_settings.get("u"))
+    _cmp_float("dv", float(args.dv), adapt_settings.get("dv"))
+
+    if bool(is_hh):
+        _cmp_float("omega0", float(args.omega0), adapt_settings.get("omega0"))
+        _cmp_float("g_ep", float(args.g_ep), adapt_settings.get("g_ep"))
+        _cmp_scalar("n_ph_max", int(args.n_ph_max), adapt_settings.get("n_ph_max"))
+        _cmp_scalar("boson_encoding", str(args.boson_encoding), adapt_settings.get("boson_encoding"))
+
+    return mismatches
+
+
 def _load_hardcoded_vqe_namespace() -> dict[str, Any]:
     from src.quantum import vqe_latex_python_pairs as vqe_mod
 
@@ -796,6 +880,69 @@ def _run_hardcoded_vqe(
         elapsed_sec=round(time.perf_counter() - t0, 6),
     )
     return payload, psi_vqe
+
+
+def _run_internal_adapt_paop(
+    *,
+    h_poly: Any,
+    num_sites: int,
+    ordering: str,
+    problem: str,
+    t: float,
+    u: float,
+    dv: float,
+    boundary: str,
+    omega0: float,
+    g_ep: float,
+    n_ph_max: int,
+    boson_encoding: str,
+    adapt_pool: str,
+    adapt_max_depth: int,
+    adapt_eps_grad: float,
+    adapt_eps_energy: float,
+    adapt_maxiter: int,
+    adapt_seed: int,
+    adapt_allow_repeats: bool,
+    adapt_finite_angle_fallback: bool,
+    adapt_finite_angle: float,
+    adapt_finite_angle_min_improvement: float,
+    paop_r: int,
+    paop_split_paulis: bool,
+    paop_prune_eps: float,
+    paop_normalization: str,
+    adapt_disable_hh_seed: bool,
+) -> tuple[dict[str, Any], np.ndarray]:
+    from pipelines.hardcoded import adapt_pipeline as adapt_mod
+
+    return adapt_mod._run_hardcoded_adapt_vqe(
+        h_poly=h_poly,
+        num_sites=int(num_sites),
+        ordering=str(ordering),
+        problem=str(problem),
+        adapt_pool=str(adapt_pool),
+        t=float(t),
+        u=float(u),
+        dv=float(dv),
+        boundary=str(boundary),
+        omega0=float(omega0),
+        g_ep=float(g_ep),
+        n_ph_max=int(n_ph_max),
+        boson_encoding=str(boson_encoding),
+        max_depth=int(adapt_max_depth),
+        eps_grad=float(adapt_eps_grad),
+        eps_energy=float(adapt_eps_energy),
+        maxiter=int(adapt_maxiter),
+        seed=int(adapt_seed),
+        allow_repeats=bool(adapt_allow_repeats),
+        finite_angle_fallback=bool(adapt_finite_angle_fallback),
+        finite_angle=float(adapt_finite_angle),
+        finite_angle_min_improvement=float(adapt_finite_angle_min_improvement),
+        paop_r=int(paop_r),
+        paop_split_paulis=bool(paop_split_paulis),
+        paop_prune_eps=float(paop_prune_eps),
+        paop_normalization=str(paop_normalization),
+        disable_hh_seed=bool(adapt_disable_hh_seed),
+    )
 
 
 def _run_qpe_adapter_qiskit(
@@ -1138,7 +1285,10 @@ def _simulate_trajectory(
     *,
     num_sites: int,
     ordering: str,
-    psi0_ansatz_trot: np.ndarray,
+    psi0_legacy_trot: np.ndarray,
+    psi0_paop_trot: np.ndarray,
+    psi0_hva_trot: np.ndarray,
+    legacy_branch_label: str,
     psi0_exact_ref: np.ndarray,
     fidelity_subspace_basis_v0: np.ndarray,
     fidelity_subspace_energy_tol: float,
@@ -1167,7 +1317,7 @@ def _simulate_trajectory(
     stride = max(1, n_times // 20)
     t0 = time.perf_counter()
     basis_v0 = np.asarray(fidelity_subspace_basis_v0, dtype=complex)
-    if basis_v0.ndim != 2 or basis_v0.shape[0] != psi0_ansatz_trot.size:
+    if basis_v0.ndim != 2 or basis_v0.shape[0] != psi0_legacy_trot.size:
         raise ValueError("fidelity_subspace_basis_v0 must have shape (dim, k) with matching dim.")
     if basis_v0.shape[1] <= 0:
         raise ValueError("fidelity_subspace_basis_v0 must contain at least one basis vector.")
@@ -1200,57 +1350,45 @@ def _simulate_trajectory(
     for idx, time_val in enumerate(times):
         t = float(time_val)
 
+        def _exact_from_initial(psi0_branch: np.ndarray) -> np.ndarray:
+            if not has_drive:
+                psi_out = evecs @ (np.exp(-1j * evals * t) * (evecs_dag @ psi0_branch))
+                return _normalize_state(psi_out)
+            return _evolve_piecewise_exact(
+                psi0=psi0_branch,
+                hmat_static=hmat,
+                drive_coeff_provider_exyz=drive_coeff_provider_exyz,
+                time_value=t,
+                trotter_steps=reference_steps,
+                t0=float(drive_t0),
+                time_sampling=str(drive_time_sampling),
+            )
+
+        def _trotter_from_initial(psi0_branch: np.ndarray) -> np.ndarray:
+            return _evolve_trotter_suzuki2_absolute(
+                psi0_branch,
+                ordered_labels_exyz,
+                coeff_map_exyz,
+                compiled,
+                t,
+                int(trotter_steps),
+                drive_coeff_provider_exyz=drive_coeff_provider_exyz,
+                t0=float(drive_t0),
+                time_sampling=str(drive_time_sampling),
+            )
+
         # --- exact / reference propagation (filtered-sector GS branch) ---
-        if not has_drive:
-            # Time-independent: eigendecomposition shortcut (exact to machine
-            # precision — does not depend on exact_steps_multiplier).
-            psi_exact = evecs @ (np.exp(-1j * evals * t) * (evecs_dag @ psi0_exact_ref))
-            psi_exact = _normalize_state(psi_exact)
-        else:
-            # Time-dependent: piecewise-constant matrix-exponential reference
-            # (exponential midpoint / Magnus-2 when time_sampling="midpoint").
-            # reference_steps = exact_steps_multiplier * trotter_steps so that
-            # this can be made arbitrarily accurate independently of the
-            # Trotter circuit discretization.
-            psi_exact = _evolve_piecewise_exact(
-                psi0=psi0_exact_ref,
-                hmat_static=hmat,
-                drive_coeff_provider_exyz=drive_coeff_provider_exyz,
-                time_value=t,
-                trotter_steps=reference_steps,
-                t0=float(drive_t0),
-                time_sampling=str(drive_time_sampling),
-            )
+        psi_exact = _exact_from_initial(psi0_exact_ref)
+        psi_exact_legacy = _exact_from_initial(psi0_legacy_trot)
+        psi_exact_paop = _exact_from_initial(psi0_paop_trot)
+        psi_exact_hva = _exact_from_initial(psi0_hva_trot)
 
-        # --- exact propagation from the same ansatz initial state ---
-        if not has_drive:
-            psi_exact_ansatz = evecs @ (np.exp(-1j * evals * t) * (evecs_dag @ psi0_ansatz_trot))
-            psi_exact_ansatz = _normalize_state(psi_exact_ansatz)
-        else:
-            psi_exact_ansatz = _evolve_piecewise_exact(
-                psi0=psi0_ansatz_trot,
-                hmat_static=hmat,
-                drive_coeff_provider_exyz=drive_coeff_provider_exyz,
-                time_value=t,
-                trotter_steps=reference_steps,
-                t0=float(drive_t0),
-                time_sampling=str(drive_time_sampling),
-            )
-
-        psi_trot = _evolve_trotter_suzuki2_absolute(
-            psi0_ansatz_trot,
-            ordered_labels_exyz,
-            coeff_map_exyz,
-            compiled,
-            t,
-            int(trotter_steps),
-            drive_coeff_provider_exyz=drive_coeff_provider_exyz,
-            t0=float(drive_t0),
-            time_sampling=str(drive_time_sampling),
-        )
+        psi_trot_legacy = _trotter_from_initial(psi0_legacy_trot)
+        psi_trot_paop = _trotter_from_initial(psi0_paop_trot)
+        psi_trot_hva = _trotter_from_initial(psi0_hva_trot)
 
         # --- norm-drift diagnostic ---
-        norm_before = float(np.linalg.norm(psi_trot))
+        norm_before = float(np.linalg.norm(psi_trot_legacy))
         norm_drift = abs(norm_before - 1.0)
         if norm_drift > 1e-6:
             _ai_log(
@@ -1264,7 +1402,7 @@ def _simulate_trajectory(
             phases = np.exp(-1j * evals * t).reshape(-1, 1)
             basis_t = evecs @ (phases * static_basis_eig)
         else:
-            basis_t = np.zeros((psi_trot.size, basis_v0.shape[1]), dtype=complex)
+            basis_t = np.zeros((psi_trot_legacy.size, basis_v0.shape[1]), dtype=complex)
             for col in range(basis_v0.shape[1]):
                 basis_t[:, col] = _evolve_piecewise_exact(
                     psi0=basis_v0[:, col],
@@ -1284,34 +1422,9 @@ def _simulate_trajectory(
                 original_dimension=int(basis_v0.shape[1]),
                 effective_dimension=int(basis_t_orth.shape[1]),
             )
-        fidelity = _projector_fidelity_from_basis(basis_t_orth, psi_trot)
-        n_up_exact_site, n_dn_exact_site, doublon_exact = _site_resolved_number_observables(
-            psi_exact,
-            num_sites,
-            ordering,
-        )
-        n_up_exact_ansatz_site, n_dn_exact_ansatz_site, doublon_exact_ansatz = _site_resolved_number_observables(
-            psi_exact_ansatz,
-            num_sites,
-            ordering,
-        )
-        n_up_trot_site, n_dn_trot_site, doublon_trot = _site_resolved_number_observables(
-            psi_trot,
-            num_sites,
-            ordering,
-        )
-        n_exact_site = n_up_exact_site + n_dn_exact_site
-        n_exact_ansatz_site = n_up_exact_ansatz_site + n_dn_exact_ansatz_site
-        n_trot_site = n_up_trot_site + n_dn_trot_site
-        n_up_exact = float(n_up_exact_site[0]) if n_up_exact_site.size > 0 else float("nan")
-        n_dn_exact = float(n_dn_exact_site[0]) if n_dn_exact_site.size > 0 else float("nan")
-        n_up_exact_ansatz = float(n_up_exact_ansatz_site[0]) if n_up_exact_ansatz_site.size > 0 else float("nan")
-        n_dn_exact_ansatz = float(n_dn_exact_ansatz_site[0]) if n_dn_exact_ansatz_site.size > 0 else float("nan")
-        n_up_trot = float(n_up_trot_site[0]) if n_up_trot_site.size > 0 else float("nan")
-        n_dn_trot = float(n_dn_trot_site[0]) if n_dn_trot_site.size > 0 else float("nan")
-        energy_static_exact = _expectation_hamiltonian(psi_exact, hmat)
-        energy_static_exact_ansatz = _expectation_hamiltonian(psi_exact_ansatz, hmat)
-        energy_static_trotter = _expectation_hamiltonian(psi_trot, hmat)
+        fidelity = _projector_fidelity_from_basis(basis_t_orth, psi_trot_legacy)
+        fidelity_paop = _projector_fidelity_from_basis(basis_t_orth, psi_trot_paop)
+        fidelity_hva = _projector_fidelity_from_basis(basis_t_orth, psi_trot_hva)
 
         # --- total (instantaneous) energy: H_static + H_drive(t) ---
         # The physical time for the drive at observation time t is
@@ -1323,47 +1436,114 @@ def _simulate_trajectory(
             )
             hmat_total_t = hmat + hmat_drive_t
             energy_total_exact = _expectation_hamiltonian(psi_exact, hmat_total_t)
-            energy_total_exact_ansatz = _expectation_hamiltonian(psi_exact_ansatz, hmat_total_t)
-            energy_total_trotter = _expectation_hamiltonian(psi_trot, hmat_total_t)
         else:
-            energy_total_exact = energy_static_exact
-            energy_total_exact_ansatz = energy_static_exact_ansatz
-            energy_total_trotter = energy_static_trotter
+            hmat_total_t = hmat
+            energy_total_exact = _expectation_hamiltonian(psi_exact, hmat_total_t)
+
+        def _branch_observables(psi_branch: np.ndarray) -> dict[str, Any]:
+            n_up_site, n_dn_site, doublon = _site_resolved_number_observables(
+                psi_branch,
+                num_sites,
+                ordering,
+            )
+            n_site = n_up_site + n_dn_site
+            return {
+                "n_up_site": n_up_site,
+                "n_dn_site": n_dn_site,
+                "n_site": n_site,
+                "n_up_site0": float(n_up_site[0]) if n_up_site.size > 0 else float("nan"),
+                "n_dn_site0": float(n_dn_site[0]) if n_dn_site.size > 0 else float("nan"),
+                "doublon": float(doublon),
+                "staggered": _staggered_order(n_site),
+                "energy_static": _expectation_hamiltonian(psi_branch, hmat),
+                "energy_total": _expectation_hamiltonian(psi_branch, hmat_total_t),
+            }
+
+        obs_exact_gs = _branch_observables(psi_exact)
+        obs_exact_legacy = _branch_observables(psi_exact_legacy)
+        obs_trot_legacy = _branch_observables(psi_trot_legacy)
+        obs_exact_paop = _branch_observables(psi_exact_paop)
+        obs_trot_paop = _branch_observables(psi_trot_paop)
+        obs_exact_hva = _branch_observables(psi_exact_hva)
+        obs_trot_hva = _branch_observables(psi_trot_hva)
 
         rows.append(
             {
                 "time": t,
                 "fidelity": fidelity,
-                "energy_static_exact": energy_static_exact,
-                "energy_static_exact_ansatz": energy_static_exact_ansatz,
-                "energy_static_trotter": energy_static_trotter,
+                "fidelity_paop_trotter": fidelity_paop,
+                "fidelity_hva_trotter": fidelity_hva,
+                "legacy_branch_label": str(legacy_branch_label),
+                "energy_static_exact": obs_exact_gs["energy_static"],
+                "energy_static_exact_ansatz": obs_exact_legacy["energy_static"],
+                "energy_static_trotter": obs_trot_legacy["energy_static"],
+                "energy_static_exact_paop": obs_exact_paop["energy_static"],
+                "energy_static_trotter_paop": obs_trot_paop["energy_static"],
+                "energy_static_exact_hva": obs_exact_hva["energy_static"],
+                "energy_static_trotter_hva": obs_trot_hva["energy_static"],
                 "energy_total_exact": energy_total_exact,
-                "energy_total_exact_ansatz": energy_total_exact_ansatz,
-                "energy_total_trotter": energy_total_trotter,
-                "n_up_site0_exact": n_up_exact,
-                "n_up_site0_exact_ansatz": n_up_exact_ansatz,
-                "n_up_site0_trotter": n_up_trot,
-                "n_dn_site0_exact": n_dn_exact,
-                "n_dn_site0_exact_ansatz": n_dn_exact_ansatz,
-                "n_dn_site0_trotter": n_dn_trot,
-                "n_site_exact": [float(x) for x in n_exact_site.tolist()],
-                "n_site_exact_ansatz": [float(x) for x in n_exact_ansatz_site.tolist()],
-                "n_site_trotter": [float(x) for x in n_trot_site.tolist()],
-                "staggered_exact": _staggered_order(n_exact_site),
-                "staggered_exact_ansatz": _staggered_order(n_exact_ansatz_site),
-                "staggered_trotter": _staggered_order(n_trot_site),
-                "doublon_exact": doublon_exact,
-                "doublon_exact_ansatz": doublon_exact_ansatz,
-                "doublon_trotter": doublon_trot,
-                "doublon_avg_exact": float(doublon_exact / float(num_sites)),
-                "doublon_avg_exact_ansatz": float(doublon_exact_ansatz / float(num_sites)),
-                "doublon_avg_trotter": float(doublon_trot / float(num_sites)),
-                "n_up_site_exact": [float(x) for x in n_up_exact_site.tolist()],
-                "n_up_site_exact_ansatz": [float(x) for x in n_up_exact_ansatz_site.tolist()],
-                "n_up_site_trotter": [float(x) for x in n_up_trot_site.tolist()],
-                "n_dn_site_exact": [float(x) for x in n_dn_exact_site.tolist()],
-                "n_dn_site_exact_ansatz": [float(x) for x in n_dn_exact_ansatz_site.tolist()],
-                "n_dn_site_trotter": [float(x) for x in n_dn_trot_site.tolist()],
+                "energy_total_exact_ansatz": obs_exact_legacy["energy_total"],
+                "energy_total_trotter": obs_trot_legacy["energy_total"],
+                "energy_total_exact_paop": obs_exact_paop["energy_total"],
+                "energy_total_trotter_paop": obs_trot_paop["energy_total"],
+                "energy_total_exact_hva": obs_exact_hva["energy_total"],
+                "energy_total_trotter_hva": obs_trot_hva["energy_total"],
+                "n_up_site0_exact": obs_exact_gs["n_up_site0"],
+                "n_up_site0_exact_ansatz": obs_exact_legacy["n_up_site0"],
+                "n_up_site0_trotter": obs_trot_legacy["n_up_site0"],
+                "n_dn_site0_exact": obs_exact_gs["n_dn_site0"],
+                "n_dn_site0_exact_ansatz": obs_exact_legacy["n_dn_site0"],
+                "n_dn_site0_trotter": obs_trot_legacy["n_dn_site0"],
+                "n_up_site0_exact_paop": obs_exact_paop["n_up_site0"],
+                "n_up_site0_trotter_paop": obs_trot_paop["n_up_site0"],
+                "n_up_site0_exact_hva": obs_exact_hva["n_up_site0"],
+                "n_up_site0_trotter_hva": obs_trot_hva["n_up_site0"],
+                "n_dn_site0_exact_paop": obs_exact_paop["n_dn_site0"],
+                "n_dn_site0_trotter_paop": obs_trot_paop["n_dn_site0"],
+                "n_dn_site0_exact_hva": obs_exact_hva["n_dn_site0"],
+                "n_dn_site0_trotter_hva": obs_trot_hva["n_dn_site0"],
+                "n_site_exact": [float(x) for x in obs_exact_gs["n_site"].tolist()],
+                "n_site_exact_ansatz": [float(x) for x in obs_exact_legacy["n_site"].tolist()],
+                "n_site_trotter": [float(x) for x in obs_trot_legacy["n_site"].tolist()],
+                "n_site_exact_paop": [float(x) for x in obs_exact_paop["n_site"].tolist()],
+                "n_site_trotter_paop": [float(x) for x in obs_trot_paop["n_site"].tolist()],
+                "n_site_exact_hva": [float(x) for x in obs_exact_hva["n_site"].tolist()],
+                "n_site_trotter_hva": [float(x) for x in obs_trot_hva["n_site"].tolist()],
+                "staggered_exact": obs_exact_gs["staggered"],
+                "staggered_exact_ansatz": obs_exact_legacy["staggered"],
+                "staggered_trotter": obs_trot_legacy["staggered"],
+                "staggered_exact_paop": obs_exact_paop["staggered"],
+                "staggered_trotter_paop": obs_trot_paop["staggered"],
+                "staggered_exact_hva": obs_exact_hva["staggered"],
+                "staggered_trotter_hva": obs_trot_hva["staggered"],
+                "doublon_exact": obs_exact_gs["doublon"],
+                "doublon_exact_ansatz": obs_exact_legacy["doublon"],
+                "doublon_trotter": obs_trot_legacy["doublon"],
+                "doublon_exact_paop": obs_exact_paop["doublon"],
+                "doublon_trotter_paop": obs_trot_paop["doublon"],
+                "doublon_exact_hva": obs_exact_hva["doublon"],
+                "doublon_trotter_hva": obs_trot_hva["doublon"],
+                "doublon_avg_exact": float(obs_exact_gs["doublon"] / float(num_sites)),
+                "doublon_avg_exact_ansatz": float(obs_exact_legacy["doublon"] / float(num_sites)),
+                "doublon_avg_trotter": float(obs_trot_legacy["doublon"] / float(num_sites)),
+                "doublon_avg_exact_paop": float(obs_exact_paop["doublon"] / float(num_sites)),
+                "doublon_avg_trotter_paop": float(obs_trot_paop["doublon"] / float(num_sites)),
+                "doublon_avg_exact_hva": float(obs_exact_hva["doublon"] / float(num_sites)),
+                "doublon_avg_trotter_hva": float(obs_trot_hva["doublon"] / float(num_sites)),
+                "n_up_site_exact": [float(x) for x in obs_exact_gs["n_up_site"].tolist()],
+                "n_up_site_exact_ansatz": [float(x) for x in obs_exact_legacy["n_up_site"].tolist()],
+                "n_up_site_trotter": [float(x) for x in obs_trot_legacy["n_up_site"].tolist()],
+                "n_up_site_exact_paop": [float(x) for x in obs_exact_paop["n_up_site"].tolist()],
+                "n_up_site_trotter_paop": [float(x) for x in obs_trot_paop["n_up_site"].tolist()],
+                "n_up_site_exact_hva": [float(x) for x in obs_exact_hva["n_up_site"].tolist()],
+                "n_up_site_trotter_hva": [float(x) for x in obs_trot_hva["n_up_site"].tolist()],
+                "n_dn_site_exact": [float(x) for x in obs_exact_gs["n_dn_site"].tolist()],
+                "n_dn_site_exact_ansatz": [float(x) for x in obs_exact_legacy["n_dn_site"].tolist()],
+                "n_dn_site_trotter": [float(x) for x in obs_trot_legacy["n_dn_site"].tolist()],
+                "n_dn_site_exact_paop": [float(x) for x in obs_exact_paop["n_dn_site"].tolist()],
+                "n_dn_site_trotter_paop": [float(x) for x in obs_trot_paop["n_dn_site"].tolist()],
+                "n_dn_site_exact_hva": [float(x) for x in obs_exact_hva["n_dn_site"].tolist()],
+                "n_dn_site_trotter_hva": [float(x) for x in obs_trot_hva["n_dn_site"].tolist()],
                 "norm_before_renorm": norm_before,
             }
         )
@@ -1482,8 +1662,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
                 color=col,
                 s=8,
             )
-        ax.set_yticks([0.0, 1.0, 2.0])
-        ax.set_yticklabels(["Exact GS", "Exact Ansatz", "Trotter"])
+        ax.set_yticks([float(i) for i in range(len(labels))])
+        ax.set_yticklabels(labels, fontsize=7)
         ax.set_xlabel("Time")
         ax.set_ylabel("Branch")
         ax.set_zlabel(zlabel)
@@ -1507,6 +1687,28 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
     stg_exact = arr("staggered_exact")
     stg_exact_ans = arr_optional("staggered_exact_ansatz", fallback=stg_exact)
     stg_trot = arr("staggered_trotter")
+    fid_paop = arr_optional("fidelity_paop_trotter", fallback=fid)
+    fid_hva = arr_optional("fidelity_hva_trotter", fallback=fid)
+
+    e_exact_paop = arr_optional("energy_static_exact_paop", fallback=e_exact_ans)
+    e_trot_paop = arr_optional("energy_static_trotter_paop", fallback=e_trot)
+    e_exact_hva = arr_optional("energy_static_exact_hva", fallback=e_exact_ans)
+    e_trot_hva = arr_optional("energy_static_trotter_hva", fallback=e_trot)
+    e_total_exact = arr("energy_total_exact")
+    e_total_exact_paop = arr_optional("energy_total_exact_paop", fallback=arr_optional("energy_total_exact_ansatz", fallback=e_total_exact))
+    e_total_trot_paop = arr_optional("energy_total_trotter_paop", fallback=arr("energy_total_trotter"))
+    e_total_exact_hva = arr_optional("energy_total_exact_hva", fallback=arr_optional("energy_total_exact_ansatz", fallback=e_total_exact))
+    e_total_trot_hva = arr_optional("energy_total_trotter_hva", fallback=arr("energy_total_trotter"))
+
+    d_exact_paop = arr_optional("doublon_exact_paop", fallback=d_exact_ans)
+    d_trot_paop = arr_optional("doublon_trotter_paop", fallback=d_trot)
+    d_exact_hva = arr_optional("doublon_exact_hva", fallback=d_exact_ans)
+    d_trot_hva = arr_optional("doublon_trotter_hva", fallback=d_trot)
+
+    stg_exact_paop = arr_optional("staggered_exact_paop", fallback=stg_exact_ans)
+    stg_trot_paop = arr_optional("staggered_trotter_paop", fallback=stg_trot)
+    stg_exact_hva = arr_optional("staggered_exact_hva", fallback=stg_exact_ans)
+    stg_trot_hva = arr_optional("staggered_trotter_hva", fallback=stg_trot)
 
     n_site_exact = mat("n_site_exact")
     n_site_exact_ans = mat_optional("n_site_exact_ansatz", n_site_exact)
@@ -1524,21 +1726,33 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
 
     err_scalar_rows = np.vstack(
         [
-            np.abs(e_trot - e_exact_ans),
-            np.abs(e_exact_ans - e_exact),
-            np.abs(d_trot - d_exact_ans),
-            np.abs(d_exact_ans - d_exact),
-            np.abs(stg_trot - stg_exact_ans),
-            np.abs(stg_exact_ans - stg_exact),
+            np.abs(e_trot_paop - e_exact_paop),
+            np.abs(e_exact_paop - e_exact),
+            np.abs(e_trot_hva - e_exact_hva),
+            np.abs(e_exact_hva - e_exact),
+            np.abs(d_trot_paop - d_exact_paop),
+            np.abs(d_exact_paop - d_exact),
+            np.abs(d_trot_hva - d_exact_hva),
+            np.abs(d_exact_hva - d_exact),
+            np.abs(stg_trot_paop - stg_exact_paop),
+            np.abs(stg_exact_paop - stg_exact),
+            np.abs(stg_trot_hva - stg_exact_hva),
+            np.abs(stg_exact_hva - stg_exact),
         ]
     )
     err_scalar_labels = [
-        "|E_trot - E_exact_ans|",
-        "|E_exact_ans - E_exact_gs|",
-        "|D_trot - D_exact_ans|",
-        "|D_exact_ans - D_exact_gs|",
-        "|S_trot - S_exact_ans|",
-        "|S_exact_ans - S_exact_gs|",
+        "|E_trot_paop - E_exact_paop|",
+        "|E_exact_paop - E_exact_gs|",
+        "|E_trot_hva - E_exact_hva|",
+        "|E_exact_hva - E_exact_gs|",
+        "|D_trot_paop - D_exact_paop|",
+        "|D_exact_paop - D_exact_gs|",
+        "|D_trot_hva - D_exact_hva|",
+        "|D_exact_hva - D_exact_gs|",
+        "|S_trot_paop - S_exact_paop|",
+        "|S_exact_paop - S_exact_gs|",
+        "|S_trot_hva - S_exact_hva|",
+        "|S_exact_hva - S_exact_gs|",
     ]
 
     gs_exact = float(payload["ground_state"]["exact_energy"])
@@ -1554,6 +1768,10 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
     settings = payload.get("settings", {})
     ansatz_label = str(payload.get("vqe", {}).get("ansatz", settings.get("vqe_ansatz", "unknown"))).strip().lower()
     vqe_method = payload.get("vqe", {}).get("method", "unknown")
+    adapt_import = payload.get("adapt_import", {})
+    has_adapt_import = isinstance(adapt_import, dict) and bool(adapt_import)
+    branch_meta = payload.get("ansatz_branches", {}) if isinstance(payload.get("ansatz_branches", {}), dict) else {}
+    legacy_plot_label = str(branch_meta.get("legacy_selected_branch", "selected")).strip().lower()
     run_mode = "drive-enabled" if isinstance(settings.get("drive"), dict) else "static"
     _ = run_command  # command text is preserved in CLI logs; PDF starts with summary
 
@@ -1575,9 +1793,36 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
             "Ansatz:",
             f"  - ansatz_type: {ansatz_label}",
             f"  - vqe_method: {vqe_method}",
+            f"  - initial_state_source: {settings.get('initial_state_source')}",
+            "  - branch_order: exact_gs_filtered, exact_paop, trotter_paop, exact_hva, trotter_hva",
             "",
             f"Drive Enabled: {drive_enabled}",
         ]
+        if branch_meta:
+            paop_meta = branch_meta.get("paop", {})
+            hva_meta = branch_meta.get("hva", {})
+            manifest_lines += [
+                "",
+                "Branch Provenance:",
+                f"  - paop_source: {paop_meta.get('source')}",
+                f"  - paop_pool: {paop_meta.get('pool_type')}",
+                f"  - paop_depth: {paop_meta.get('ansatz_depth')}",
+                f"  - hva_source: {hva_meta.get('source')}",
+                f"  - hva_ansatz: {hva_meta.get('ansatz')}",
+                f"  - hva_vqe_success: {hva_meta.get('vqe_success')}",
+            ]
+        if has_adapt_import:
+            manifest_lines += [
+                "",
+                "ADAPT Import:",
+                f"  - source_json: {adapt_import.get('input_json_path')}",
+                f"  - metadata_match_passed: {adapt_import.get('metadata_match_passed')}",
+                f"  - strict_match: {adapt_import.get('strict_match')}",
+                f"  - pool: {adapt_import.get('pool_type')}",
+                f"  - ansatz_depth: {adapt_import.get('ansatz_depth')}",
+                f"  - adapt_energy: {adapt_import.get('energy')}",
+                f"  - adapt_abs_delta_e: {adapt_import.get('abs_delta_e')}",
+            ]
         if drive_enabled:
             manifest_lines += [
                 f"  - A={drive_block.get('A')}  omega={drive_block.get('omega')}",
@@ -1624,6 +1869,30 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ]
         render_text_page(pdf, manifest_lines, fontsize=10)
 
+        if has_adapt_import and bool(settings.get("adapt_summary_in_pdf", True)):
+            mismatch_lines = adapt_import.get("metadata_mismatches") or []
+            summary_lines = [
+                "ADAPT Initial-State Provenance",
+                "",
+                f"import_json: {adapt_import.get('input_json_path')}",
+                f"import_source: {adapt_import.get('initial_state_source')}",
+                f"strict_match: {adapt_import.get('strict_match')}",
+                f"metadata_match_passed: {adapt_import.get('metadata_match_passed')}",
+                "",
+                f"pool_type: {adapt_import.get('pool_type')}",
+                f"ansatz_depth: {adapt_import.get('ansatz_depth')}",
+                f"num_parameters: {adapt_import.get('num_parameters')}",
+                f"operator_count: {adapt_import.get('operator_count')}",
+                f"adapt_energy: {adapt_import.get('energy')}",
+                f"adapt_abs_delta_e: {adapt_import.get('abs_delta_e')}",
+                "",
+                "Dynamics used imported ADAPT state as t=0 initial condition.",
+            ]
+            if isinstance(mismatch_lines, list) and len(mismatch_lines) > 0:
+                summary_lines += ["", "Metadata mismatches:"]
+                summary_lines.extend([f"  - {str(item)}" for item in mismatch_lines])
+            render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.03)
+
         # ------------------------------------------------------------------
         # Front matter: 3D pages first (non-redundant)
         # ------------------------------------------------------------------
@@ -1637,8 +1906,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         axn1 = fig3d_n.add_subplot(1, 3, 2, projection="3d")
         axn2 = fig3d_n.add_subplot(1, 3, 3, projection="3d")
         _plot_density_surface(axn0, n_site_exact, title="Exact GS Filtered: n(site,t)", zlim=dens_zlim, cmap="Blues")
-        _plot_density_surface(axn1, n_site_exact_ans, title="Exact Ansatz: n(site,t)", zlim=dens_zlim, cmap="Greens")
-        _plot_density_surface(axn2, n_site_trot, title="Trotter Ansatz: n(site,t)", zlim=dens_zlim, cmap="Oranges")
+        _plot_density_surface(axn1, n_site_exact_ans, title=f"Exact selected ({legacy_plot_label}): n(site,t)", zlim=dens_zlim, cmap="Greens")
+        _plot_density_surface(axn2, n_site_trot, title=f"Trotter selected ({legacy_plot_label}): n(site,t)", zlim=dens_zlim, cmap="Oranges")
         fig3d_n.suptitle(f"L={payload['settings']['L']} 3D Densities (Total n)", fontsize=13)
         fig3d_n.tight_layout(rect=(0.0, 0.02, 1.0, 0.93))
         pdf.savefig(fig3d_n)
@@ -1653,8 +1922,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         axu1 = fig3d_up.add_subplot(1, 3, 2, projection="3d")
         axu2 = fig3d_up.add_subplot(1, 3, 3, projection="3d")
         _plot_density_surface(axu0, n_up_site_exact, title="Exact GS Filtered: n_up(site,t)", zlim=up_zlim, cmap="PuBu")
-        _plot_density_surface(axu1, n_up_site_exact_ans, title="Exact Ansatz: n_up(site,t)", zlim=up_zlim, cmap="YlGn")
-        _plot_density_surface(axu2, n_up_site_trot, title="Trotter Ansatz: n_up(site,t)", zlim=up_zlim, cmap="YlOrBr")
+        _plot_density_surface(axu1, n_up_site_exact_ans, title=f"Exact selected ({legacy_plot_label}): n_up(site,t)", zlim=up_zlim, cmap="YlGn")
+        _plot_density_surface(axu2, n_up_site_trot, title=f"Trotter selected ({legacy_plot_label}): n_up(site,t)", zlim=up_zlim, cmap="YlOrBr")
         fig3d_up.suptitle(f"L={payload['settings']['L']} 3D Densities (Spin-Up)", fontsize=13)
         fig3d_up.tight_layout(rect=(0.0, 0.02, 1.0, 0.93))
         pdf.savefig(fig3d_up)
@@ -1669,8 +1938,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         axd1 = fig3d_dn.add_subplot(1, 3, 2, projection="3d")
         axd2 = fig3d_dn.add_subplot(1, 3, 3, projection="3d")
         _plot_density_surface(axd0, n_dn_site_exact, title="Exact GS Filtered: n_dn(site,t)", zlim=dn_zlim, cmap="PuBu")
-        _plot_density_surface(axd1, n_dn_site_exact_ans, title="Exact Ansatz: n_dn(site,t)", zlim=dn_zlim, cmap="YlGn")
-        _plot_density_surface(axd2, n_dn_site_trot, title="Trotter Ansatz: n_dn(site,t)", zlim=dn_zlim, cmap="YlOrBr")
+        _plot_density_surface(axd1, n_dn_site_exact_ans, title=f"Exact selected ({legacy_plot_label}): n_dn(site,t)", zlim=dn_zlim, cmap="YlGn")
+        _plot_density_surface(axd2, n_dn_site_trot, title=f"Trotter selected ({legacy_plot_label}): n_dn(site,t)", zlim=dn_zlim, cmap="YlOrBr")
         fig3d_dn.suptitle(f"L={payload['settings']['L']} 3D Densities (Spin-Down)", fontsize=13)
         fig3d_dn.tight_layout(rect=(0.0, 0.02, 1.0, 0.93))
         pdf.savefig(fig3d_dn)
@@ -1681,41 +1950,41 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         axe1 = fig3d_scalars.add_subplot(2, 2, 2, projection="3d")
         axe2 = fig3d_scalars.add_subplot(2, 2, 3, projection="3d")
         axe3 = fig3d_scalars.add_subplot(2, 2, 4, projection="3d")
-        labels_3 = ["Exact GS Filtered", "Exact Ansatz", "Trotter Ansatz"]
-        colors_3 = ["#1f77b4", "#2ca02c", "#d62728"]
+        labels_5 = ["Exact GS", "Exact PAOP", "Trotter PAOP", "Exact HVA", "Trotter HVA"]
+        colors_5 = ["#111111", "#2ca02c", "#d62728", "#1f77b4", "#ff7f0e"]
         _plot_lane_3d(
             axe0,
-            series=[arr("energy_total_exact"), arr_optional("energy_total_exact_ansatz", arr("energy_total_exact")), arr("energy_total_trotter")],
-            labels=labels_3,
-            colors=colors_3,
+            series=[e_total_exact, e_total_exact_paop, e_total_trot_paop, e_total_exact_hva, e_total_trot_hva],
+            labels=labels_5,
+            colors=colors_5,
             title="3D Lanes: Total Energy",
             zlabel="Energy",
         )
         _plot_lane_3d(
             axe1,
-            series=[arr("energy_static_exact"), arr_optional("energy_static_exact_ansatz", arr("energy_static_exact")), arr("energy_static_trotter")],
-            labels=labels_3,
-            colors=colors_3,
+            series=[e_exact, e_exact_paop, e_trot_paop, e_exact_hva, e_trot_hva],
+            labels=labels_5,
+            colors=colors_5,
             title="3D Lanes: Static Energy",
             zlabel="Energy",
         )
         _plot_lane_3d(
             axe2,
-            series=[arr("doublon_exact"), arr_optional("doublon_exact_ansatz", arr("doublon_exact")), arr("doublon_trotter")],
-            labels=labels_3,
-            colors=colors_3,
+            series=[d_exact, d_exact_paop, d_trot_paop, d_exact_hva, d_trot_hva],
+            labels=labels_5,
+            colors=colors_5,
             title="3D Lanes: Doublon",
             zlabel="Doublon",
         )
         _plot_lane_3d(
             axe3,
-            series=[arr("staggered_exact"), arr_optional("staggered_exact_ansatz", arr("staggered_exact")), arr("staggered_trotter")],
-            labels=labels_3,
-            colors=colors_3,
+            series=[stg_exact, stg_exact_paop, stg_trot_paop, stg_exact_hva, stg_trot_hva],
+            labels=labels_5,
+            colors=colors_5,
             title="3D Lanes: Staggered Order",
             zlabel="Order",
         )
-        fig3d_scalars.suptitle(f"L={payload['settings']['L']} 3D Scalar Observables (Three Evolutions)", fontsize=13)
+        fig3d_scalars.suptitle(f"L={payload['settings']['L']} 3D Scalar Observables (Five Branches)", fontsize=13)
         fig3d_scalars.tight_layout(rect=(0.0, 0.02, 1.0, 0.94))
         pdf.savefig(fig3d_scalars)
         plt.close(fig3d_scalars)
@@ -1725,8 +1994,8 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         axh1 = fig_err.add_subplot(1, 3, 2)
         axh2 = fig_err.add_subplot(1, 3, 3)
         heatmaps = [
-            (err_n_trot_vs_exact_ans, "|n_trot - n_exact_ansatz|"),
-            (err_n_exact_ans_vs_exact_gs, "|n_exact_ansatz - n_exact_gs|"),
+            (err_n_trot_vs_exact_ans, f"|n_trot(selected={legacy_plot_label}) - n_exact(selected={legacy_plot_label})|"),
+            (err_n_exact_ans_vs_exact_gs, f"|n_exact(selected={legacy_plot_label}) - n_exact_gs|"),
             (err_n_trot_vs_exact_gs, "|n_trot - n_exact_gs|"),
         ]
         for axh, (hmat_err, title) in zip((axh0, axh1, axh2), heatmaps):
@@ -1832,29 +2101,35 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ax00, ax01 = axes[0, 0], axes[0, 1]
         ax10, ax11 = axes[1, 0], axes[1, 1]
 
-        ax00.plot(times, fid, color="#0b3d91", marker="o", markersize=3, markevery=markevery)
+        ax00.plot(times, fid_paop, color="#d62728", marker="o", markersize=3, markevery=markevery, label="Fidelity (PAOP trotter)")
+        ax00.plot(times, fid_hva, color="#1f77b4", marker="s", markersize=2.5, markevery=markevery, label="Fidelity (HVA trotter)")
         fid_title = payload.get("settings", {}).get(
             "fidelity_definition_short",
             "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
         )
         ax00.set_title(str(fid_title))
         ax00.grid(alpha=0.25)
+        ax00.legend(fontsize=7)
 
         ax01.plot(times, e_exact, label="Exact GS filtered (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
-        ax01.plot(times, e_exact_ans, label="Exact ansatz init (static)", color="#2ca02c", linewidth=1.4, marker="D", markersize=3, markevery=markevery)
-        ax01.plot(times, e_trot, label="Trotter ansatz init (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax01.plot(times, e_exact_paop, label="Exact PAOP init (static)", color="#2ca02c", linewidth=1.4, marker="D", markersize=3, markevery=markevery)
+        ax01.plot(times, e_trot_paop, label="Trotter PAOP init (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax01.plot(times, e_exact_hva, label="Exact HVA init (static)", color="#1f77b4", linewidth=1.3, marker="o", markersize=2.5, markevery=markevery)
+        ax01.plot(times, e_trot_hva, label="Trotter HVA init (static)", color="#ff7f0e", linestyle="--", linewidth=1.3, marker="<", markersize=2.5, markevery=markevery)
 
         # --- optional total-energy overlay (when drive active and differs) ---
-        e_total_exact = arr("energy_total_exact")
-        e_total_exact_ans = arr_optional("energy_total_exact_ansatz", fallback=e_total_exact)
-        e_total_trot = arr("energy_total_trotter")
         if not (np.allclose(e_total_exact, e_exact, atol=1e-14) and
-                np.allclose(e_total_trot, e_trot, atol=1e-14)):
+                np.allclose(e_total_trot_paop, e_trot_paop, atol=1e-14) and
+                np.allclose(e_total_trot_hva, e_trot_hva, atol=1e-14)):
             ax01.plot(times, e_total_exact, label="Exact GS filtered (total)", color="#17becf",
                       linewidth=1.6, marker="D", markersize=2.5, markevery=markevery, alpha=0.8)
-            ax01.plot(times, e_total_exact_ans, label="Exact ansatz init (total)", color="#1f77b4",
+            ax01.plot(times, e_total_exact_paop, label="Exact PAOP init (total)", color="#2ca02c",
                       linewidth=1.3, marker="o", markersize=2.5, markevery=markevery, alpha=0.8)
-            ax01.plot(times, e_total_trot, label="Trotter ansatz init (total)", color="#ff7f0e",
+            ax01.plot(times, e_total_trot_paop, label="Trotter PAOP init (total)", color="#d62728",
+                      linestyle=":", linewidth=1.1, marker="x", markersize=2.5, markevery=markevery, alpha=0.7)
+            ax01.plot(times, e_total_exact_hva, label="Exact HVA init (total)", color="#1f77b4",
+                      linewidth=1.2, marker="v", markersize=2.3, markevery=markevery, alpha=0.75)
+            ax01.plot(times, e_total_trot_hva, label="Trotter HVA init (total)", color="#ff7f0e",
                       linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery, alpha=0.8)
 
         ax01.set_title("Energy")
@@ -1862,10 +2137,10 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ax01.legend(fontsize=7)
 
         ax10.plot(times, nu_exact, label="n_up0 exact GS", color="#17becf", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
-        ax10.plot(times, nu_exact_ans, label="n_up0 exact ansatz", color="#2ca02c", linewidth=1.2, marker="D", markersize=3, markevery=markevery)
+        ax10.plot(times, nu_exact_ans, label=f"n_up0 exact selected ({legacy_plot_label})", color="#2ca02c", linewidth=1.2, marker="D", markersize=3, markevery=markevery)
         ax10.plot(times, nu_trot, label="n_up0 trotter", color="#0f7f8b", linestyle="--", linewidth=1.2, marker="s", markersize=3, markevery=markevery)
         ax10.plot(times, nd_exact, label="n_dn0 exact GS", color="#9467bd", linewidth=1.8, marker="^", markersize=3, markevery=markevery)
-        ax10.plot(times, nd_exact_ans, label="n_dn0 exact ansatz", color="#8c564b", linewidth=1.2, marker="X", markersize=3, markevery=markevery)
+        ax10.plot(times, nd_exact_ans, label=f"n_dn0 exact selected ({legacy_plot_label})", color="#8c564b", linewidth=1.2, marker="X", markersize=3, markevery=markevery)
         ax10.plot(times, nd_trot, label="n_dn0 trotter", color="#6f4d8f", linestyle="--", linewidth=1.2, marker="v", markersize=3, markevery=markevery)
         ax10.set_title("Site-0 Occupations")
         ax10.set_xlabel("Time")
@@ -1873,12 +2148,14 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         ax10.legend(fontsize=8)
 
         ax11.plot(times, d_exact, label="doublon exact GS", color="#8c564b", linewidth=1.8, marker="o", markersize=3, markevery=markevery)
-        ax11.plot(times, d_exact_ans, label="doublon exact ansatz", color="#2ca02c", linewidth=1.2, marker="D", markersize=3, markevery=markevery)
-        ax11.plot(times, d_trot, label="doublon trotter", color="#c251a1", linestyle="--", linewidth=1.2, marker="s", markersize=3, markevery=markevery)
+        ax11.plot(times, d_exact_paop, label="doublon exact PAOP", color="#2ca02c", linewidth=1.2, marker="D", markersize=3, markevery=markevery)
+        ax11.plot(times, d_trot_paop, label="doublon trotter PAOP", color="#d62728", linestyle="--", linewidth=1.2, marker="s", markersize=3, markevery=markevery)
+        ax11.plot(times, d_exact_hva, label="doublon exact HVA", color="#1f77b4", linewidth=1.2, marker="v", markersize=2.5, markevery=markevery)
+        ax11.plot(times, d_trot_hva, label="doublon trotter HVA", color="#ff7f0e", linestyle="--", linewidth=1.1, marker="<", markersize=2.5, markevery=markevery)
         ax11.set_title("Total Doublon")
         ax11.set_xlabel("Time")
         ax11.grid(alpha=0.25)
-        ax11.legend(fontsize=8)
+        ax11.legend(fontsize=7)
 
         fig.suptitle(f"Hardcoded Hubbard Pipeline: L={payload['settings']['L']}", fontsize=14)
         fig.tight_layout(rect=(0.0, 0.02, 1.0, 0.95))
@@ -1888,26 +2165,30 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
         # Additional focused energy pages (requested): static-only and total-only.
         fig_energy_static, ax_energy_static = plt.subplots(1, 1, figsize=(11.0, 8.5))
         ax_energy_static.plot(times, e_exact, label="Exact GS filtered (static)", color="#111111", linewidth=2.0, marker="s", markersize=3, markevery=markevery)
-        ax_energy_static.plot(times, e_exact_ans, label="Exact ansatz init (static)", color="#2ca02c", linewidth=1.4, marker="D", markersize=3, markevery=markevery)
-        ax_energy_static.plot(times, e_trot, label="Trotter ansatz init (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax_energy_static.plot(times, e_exact_paop, label="Exact PAOP init (static)", color="#2ca02c", linewidth=1.4, marker="D", markersize=3, markevery=markevery)
+        ax_energy_static.plot(times, e_trot_paop, label="Trotter PAOP init (static)", color="#d62728", linestyle="--", linewidth=1.4, marker="^", markersize=3, markevery=markevery)
+        ax_energy_static.plot(times, e_exact_hva, label="Exact HVA init (static)", color="#1f77b4", linewidth=1.3, marker="o", markersize=2.5, markevery=markevery)
+        ax_energy_static.plot(times, e_trot_hva, label="Trotter HVA init (static)", color="#ff7f0e", linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery)
         ax_energy_static.set_title("Energy (Static Hamiltonian Only)")
         ax_energy_static.set_xlabel("Time")
         ax_energy_static.set_ylabel("Energy")
         ax_energy_static.grid(alpha=0.25)
-        ax_energy_static.legend(fontsize=8)
+        ax_energy_static.legend(fontsize=7)
         fig_energy_static.tight_layout(rect=(0.0, 0.02, 1.0, 0.98))
         pdf.savefig(fig_energy_static)
         plt.close(fig_energy_static)
 
         fig_energy_total, ax_energy_total = plt.subplots(1, 1, figsize=(11.0, 8.5))
         ax_energy_total.plot(times, e_total_exact, label="Exact GS filtered (total)", color="#17becf", linewidth=1.6, marker="D", markersize=2.5, markevery=markevery, alpha=0.8)
-        ax_energy_total.plot(times, e_total_exact_ans, label="Exact ansatz init (total)", color="#1f77b4", linewidth=1.3, marker="o", markersize=2.5, markevery=markevery, alpha=0.8)
-        ax_energy_total.plot(times, e_total_trot, label="Trotter ansatz init (total)", color="#ff7f0e", linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery, alpha=0.8)
+        ax_energy_total.plot(times, e_total_exact_paop, label="Exact PAOP init (total)", color="#2ca02c", linewidth=1.3, marker="o", markersize=2.5, markevery=markevery, alpha=0.8)
+        ax_energy_total.plot(times, e_total_trot_paop, label="Trotter PAOP init (total)", color="#d62728", linestyle="--", linewidth=1.2, marker="<", markersize=2.5, markevery=markevery, alpha=0.8)
+        ax_energy_total.plot(times, e_total_exact_hva, label="Exact HVA init (total)", color="#1f77b4", linewidth=1.2, marker="v", markersize=2.5, markevery=markevery, alpha=0.75)
+        ax_energy_total.plot(times, e_total_trot_hva, label="Trotter HVA init (total)", color="#ff7f0e", linestyle="--", linewidth=1.1, marker="x", markersize=2.5, markevery=markevery, alpha=0.75)
         ax_energy_total.set_title("Energy (Total Hamiltonian H(t) Only)")
         ax_energy_total.set_xlabel("Time")
         ax_energy_total.set_ylabel("Energy")
         ax_energy_total.grid(alpha=0.25)
-        ax_energy_total.legend(fontsize=8)
+        ax_energy_total.legend(fontsize=7)
         fig_energy_total.tight_layout(rect=(0.0, 0.02, 1.0, 0.98))
         pdf.savefig(fig_energy_total)
         plt.close(fig_energy_total)
@@ -1958,9 +2239,13 @@ def _write_pipeline_pdf(pdf_path: Path, payload: dict[str, Any], run_command: st
             "",
             "Energy + Fidelity:",
             f"  - subspace_fidelity_at_t0: {float(fid[0]) if fid.size > 0 else None}",
+            f"  - subspace_fidelity_paop_t0: {float(fid_paop[0]) if fid_paop.size > 0 else None}",
+            f"  - subspace_fidelity_hva_t0: {float(fid_hva[0]) if fid_hva.size > 0 else None}",
             f"  - energy_t0_exact_gs: {float(e_exact[0]) if e_exact.size > 0 else None}",
-            f"  - energy_t0_exact_ansatz: {float(e_exact_ans[0]) if e_exact_ans.size > 0 else None}",
-            f"  - energy_t0_trotter: {float(e_trot[0]) if e_trot.size > 0 else None}",
+            f"  - energy_t0_exact_paop: {float(e_exact_paop[0]) if e_exact_paop.size > 0 else None}",
+            f"  - energy_t0_trotter_paop: {float(e_trot_paop[0]) if e_trot_paop.size > 0 else None}",
+            f"  - energy_t0_exact_hva: {float(e_exact_hva[0]) if e_exact_hva.size > 0 else None}",
+            f"  - energy_t0_trotter_hva: {float(e_trot_hva[0]) if e_trot_hva.size > 0 else None}",
             f"  - ground_state_exact_energy_full_hilbert: {payload['ground_state']['exact_energy']:.12f}",
             f"  - ground_state_exact_energy_filtered: {payload['ground_state'].get('exact_energy_filtered')}",
             f"  - filtered_sector: {payload['ground_state'].get('filtered_sector')}",
@@ -2089,7 +2374,67 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qpe-seed", type=int, default=11)
     parser.add_argument("--skip-qpe", action="store_true", help="Skip QPE execution and mark qpe payload as skipped.")
 
-    parser.add_argument("--initial-state-source", choices=["exact", "vqe", "hf"], default="vqe")
+    parser.add_argument("--initial-state-source", choices=["exact", "vqe", "hf", "adapt_json"], default="vqe")
+    parser.add_argument(
+        "--adapt-input-json",
+        type=Path,
+        default=None,
+        help="Path to ADAPT pipeline JSON used when --initial-state-source adapt_json.",
+    )
+    parser.set_defaults(adapt_strict_match=True)
+    parser.add_argument(
+        "--adapt-strict-match",
+        dest="adapt_strict_match",
+        action="store_true",
+        help="Require ADAPT JSON physics settings to match this run (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-adapt-strict-match",
+        dest="adapt_strict_match",
+        action="store_false",
+        help="Allow ADAPT JSON import with physics-setting mismatches (logged in payload/PDF).",
+    )
+    parser.set_defaults(adapt_summary_in_pdf=True)
+    parser.add_argument(
+        "--adapt-summary-in-pdf",
+        dest="adapt_summary_in_pdf",
+        action="store_true",
+        help="Include ADAPT provenance page in comprehensive PDF (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-adapt-summary-in-pdf",
+        dest="adapt_summary_in_pdf",
+        action="store_false",
+        help="Skip ADAPT provenance page even when using --initial-state-source adapt_json.",
+    )
+    parser.add_argument(
+        "--adapt-pool",
+        choices=["uccsd", "cse", "full_hamiltonian", "hva", "paop", "paop_min", "paop_std", "paop_full"],
+        default="paop_std",
+        help="PAOP/ADAPT branch pool used for the explicit PAOP trajectory branch.",
+    )
+    parser.add_argument("--adapt-max-depth", type=int, default=30)
+    parser.add_argument("--adapt-eps-grad", type=float, default=1e-5)
+    parser.add_argument("--adapt-eps-energy", type=float, default=1e-8)
+    parser.add_argument("--adapt-maxiter", type=int, default=800)
+    parser.add_argument("--adapt-seed", type=int, default=7)
+    parser.set_defaults(adapt_allow_repeats=True)
+    parser.add_argument("--adapt-allow-repeats", dest="adapt_allow_repeats", action="store_true")
+    parser.add_argument("--adapt-no-repeats", dest="adapt_allow_repeats", action="store_false")
+    parser.set_defaults(adapt_finite_angle_fallback=True)
+    parser.add_argument("--adapt-finite-angle-fallback", dest="adapt_finite_angle_fallback", action="store_true")
+    parser.add_argument("--adapt-no-finite-angle-fallback", dest="adapt_finite_angle_fallback", action="store_false")
+    parser.add_argument("--adapt-finite-angle", type=float, default=0.1)
+    parser.add_argument("--adapt-finite-angle-min-improvement", type=float, default=1e-12)
+    parser.add_argument("--adapt-disable-hh-seed", action="store_true")
+    parser.add_argument("--paop-r", type=int, default=1)
+    parser.add_argument("--paop-split-paulis", action="store_true")
+    parser.add_argument("--paop-prune-eps", type=float, default=0.0)
+    parser.add_argument(
+        "--paop-normalization",
+        choices=["none", "fro", "maxcoeff"],
+        default="none",
+    )
 
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--output-pdf", type=Path, default=None)
@@ -2283,7 +2628,116 @@ def main() -> None:
             ).reshape(-1)
         )
 
-    if args.initial_state_source == "vqe" and bool(vqe_payload.get("success", False)):
+    adapt_import_payload: dict[str, Any] | None = None
+    adapt_internal_payload: dict[str, Any] | None = None
+
+    if args.initial_state_source == "adapt_json":
+        if args.adapt_input_json is None:
+            raise ValueError("--adapt-input-json is required when --initial-state-source adapt_json.")
+        psi_adapt_import, adapt_meta = _load_adapt_initial_state(Path(args.adapt_input_json), int(nq_total))
+        adapt_settings = adapt_meta.get("settings", {})
+        mismatches = _validate_adapt_metadata(
+            adapt_settings=adapt_settings if isinstance(adapt_settings, dict) else {},
+            args=args,
+            is_hh=bool(is_hh),
+        )
+        if len(mismatches) > 0 and bool(args.adapt_strict_match):
+            mismatch_text = "; ".join(mismatches)
+            raise ValueError(
+                "ADAPT JSON metadata mismatch under strict mode. "
+                f"Use --no-adapt-strict-match to override. Details: {mismatch_text}"
+            )
+        if len(mismatches) > 0:
+            _ai_log(
+                "hardcoded_adapt_import_mismatch",
+                strict=False,
+                mismatch_count=int(len(mismatches)),
+                mismatches=mismatches,
+            )
+        psi_paop = psi_adapt_import
+        adapt_vqe_meta = adapt_meta.get("adapt_vqe", {}) if isinstance(adapt_meta.get("adapt_vqe"), dict) else {}
+        ops = adapt_vqe_meta.get("operators")
+        op_count = len(ops) if isinstance(ops, list) else None
+        adapt_import_payload = {
+            "input_json_path": str(Path(args.adapt_input_json)),
+            "strict_match": bool(args.adapt_strict_match),
+            "metadata_match_passed": bool(len(mismatches) == 0),
+            "metadata_mismatches": mismatches,
+            "initial_state_source": adapt_meta.get("initial_state_source"),
+            "pool_type": adapt_vqe_meta.get("pool_type"),
+            "ansatz_depth": adapt_vqe_meta.get("ansatz_depth"),
+            "num_parameters": adapt_vqe_meta.get("num_parameters"),
+            "operator_count": op_count,
+            "energy": adapt_vqe_meta.get("energy"),
+            "abs_delta_e": adapt_vqe_meta.get("abs_delta_e"),
+            "source": "adapt_json",
+        }
+    else:
+        try:
+            adapt_internal_payload_raw, psi_paop = _run_internal_adapt_paop(
+                h_poly=h_poly,
+                num_sites=int(args.L),
+                ordering=str(args.ordering),
+                problem=str(args.problem),
+                t=float(args.t),
+                u=float(args.u),
+                dv=float(args.dv),
+                boundary=str(args.boundary),
+                omega0=float(args.omega0),
+                g_ep=float(args.g_ep),
+                n_ph_max=int(args.n_ph_max),
+                boson_encoding=str(args.boson_encoding),
+                adapt_pool=str(args.adapt_pool),
+                adapt_max_depth=int(args.adapt_max_depth),
+                adapt_eps_grad=float(args.adapt_eps_grad),
+                adapt_eps_energy=float(args.adapt_eps_energy),
+                adapt_maxiter=int(args.adapt_maxiter),
+                adapt_seed=int(args.adapt_seed),
+                adapt_allow_repeats=bool(args.adapt_allow_repeats),
+                adapt_finite_angle_fallback=bool(args.adapt_finite_angle_fallback),
+                adapt_finite_angle=float(args.adapt_finite_angle),
+                adapt_finite_angle_min_improvement=float(args.adapt_finite_angle_min_improvement),
+                paop_r=int(args.paop_r),
+                paop_split_paulis=bool(args.paop_split_paulis),
+                paop_prune_eps=float(args.paop_prune_eps),
+                paop_normalization=str(args.paop_normalization),
+                adapt_disable_hh_seed=bool(args.adapt_disable_hh_seed),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to build required internal PAOP branch via ADAPT: {exc}") from exc
+        adapt_internal_payload = {
+            "source": "internal_adapt",
+            "pool_type": adapt_internal_payload_raw.get("pool_type"),
+            "ansatz_depth": adapt_internal_payload_raw.get("ansatz_depth"),
+            "num_parameters": adapt_internal_payload_raw.get("num_parameters"),
+            "energy": adapt_internal_payload_raw.get("energy"),
+            "abs_delta_e": adapt_internal_payload_raw.get("abs_delta_e"),
+            "success": bool(adapt_internal_payload_raw.get("success", False)),
+            "stop_reason": adapt_internal_payload_raw.get("stop_reason"),
+            "elapsed_s": adapt_internal_payload_raw.get("elapsed_s"),
+            "allow_repeats": adapt_internal_payload_raw.get("allow_repeats"),
+        }
+        _ai_log(
+            "hardcoded_paop_branch_built",
+            source="internal_adapt",
+            pool=str(adapt_internal_payload.get("pool_type")),
+            depth=adapt_internal_payload.get("ansatz_depth"),
+            energy=adapt_internal_payload.get("energy"),
+        )
+
+    if bool(vqe_payload.get("success", False)):
+        psi_hva = psi_vqe
+        hva_vqe_success = True
+    else:
+        psi_hva = psi_exact_ground
+        hva_vqe_success = False
+        _ai_log("hardcoded_hva_branch_fallback_to_exact", reason="vqe_failed")
+
+    if args.initial_state_source == "adapt_json":
+        psi0 = psi_paop
+        selected_initial_source = "adapt_json"
+        _ai_log("hardcoded_initial_state_selected", source=selected_initial_source, adapt_json=str(args.adapt_input_json))
+    elif args.initial_state_source == "vqe" and bool(vqe_payload.get("success", False)):
         psi0 = psi_vqe
         selected_initial_source = "vqe"
         _ai_log("hardcoded_initial_state_selected", source=selected_initial_source)
@@ -2297,6 +2751,11 @@ def main() -> None:
         psi0 = psi_exact_ground
         selected_initial_source = "exact"
         _ai_log("hardcoded_initial_state_selected", source=selected_initial_source)
+
+    legacy_branch_label = (
+        "paop" if selected_initial_source == "adapt_json"
+        else ("hva" if selected_initial_source == "vqe" else str(selected_initial_source))
+    )
 
     if args.skip_qpe:
         qpe_payload = {
@@ -2322,7 +2781,10 @@ def main() -> None:
     trajectory, _exact_states = _simulate_trajectory(
         num_sites=int(args.L),
         ordering=str(args.ordering),
-        psi0_ansatz_trot=psi0,
+        psi0_legacy_trot=psi0,
+        psi0_paop_trot=psi_paop,
+        psi0_hva_trot=psi_hva,
+        legacy_branch_label=str(legacy_branch_label),
         psi0_exact_ref=psi_exact_ground_filtered,
         fidelity_subspace_basis_v0=fidelity_subspace_basis_v0,
         fidelity_subspace_energy_tol=_fidelity_subspace_tol,
@@ -2366,14 +2828,33 @@ def main() -> None:
         "term_order": str(args.term_order),
         "vqe_ansatz": str(args.vqe_ansatz),
         "initial_state_source": str(args.initial_state_source),
+        "adapt_input_json": (str(args.adapt_input_json) if args.adapt_input_json is not None else None),
+        "adapt_strict_match": bool(args.adapt_strict_match),
+        "adapt_summary_in_pdf": bool(args.adapt_summary_in_pdf),
+        "adapt_pool": str(args.adapt_pool),
+        "adapt_max_depth": int(args.adapt_max_depth),
+        "adapt_eps_grad": float(args.adapt_eps_grad),
+        "adapt_eps_energy": float(args.adapt_eps_energy),
+        "adapt_maxiter": int(args.adapt_maxiter),
+        "adapt_seed": int(args.adapt_seed),
+        "adapt_allow_repeats": bool(args.adapt_allow_repeats),
+        "adapt_finite_angle_fallback": bool(args.adapt_finite_angle_fallback),
+        "adapt_finite_angle": float(args.adapt_finite_angle),
+        "adapt_finite_angle_min_improvement": float(args.adapt_finite_angle_min_improvement),
+        "adapt_disable_hh_seed": bool(args.adapt_disable_hh_seed),
+        "paop_r": int(args.paop_r),
+        "paop_split_paulis": bool(args.paop_split_paulis),
+        "paop_prune_eps": float(args.paop_prune_eps),
+        "paop_normalization": str(args.paop_normalization),
         "skip_qpe": bool(args.skip_qpe),
         "fidelity_definition_short": (
-            "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>"
+            "Subspace Fidelity(t): projected fidelity of trotterized PAOP/HVA branches vs filtered exact GS manifold."
         ),
         "fidelity_definition": (
-            "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, "
-            "where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector "
-            "ground manifold selected by E <= E0 + tol."
+            "fidelity_paop_trotter(t) = <psi_paop_trot(t)|P_exact_gs_subspace(t)|psi_paop_trot(t)> and "
+            "fidelity_hva_trotter(t) = <psi_hva_trot(t)|P_exact_gs_subspace(t)|psi_hva_trot(t)>, "
+            "where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector ground manifold "
+            "selected by E <= E0 + tol. Legacy key fidelity(t) follows the selected initial-state branch."
         ),
         "fidelity_subspace_energy_tol": float(_fidelity_subspace_tol),
         "fidelity_reference_subspace": {
@@ -2391,20 +2872,29 @@ def main() -> None:
         },
         "fidelity_ansatz_initial_state": str(selected_initial_source),
         "trajectory_branches_definition": (
-            "exact_gs: exact/reference propagation from filtered-sector ground-state init; "
-            "exact_ansatz: exact/reference propagation from ansatz initial state; "
-            "trotter: Suzuki-Trotter propagation from ansatz initial state."
+            "exact_gs_filtered: exact/reference propagation from filtered-sector GS init; "
+            "exact_paop/trotter_paop: exact/Trotter propagation from PAOP-ADAPT initial state; "
+            "exact_hva/trotter_hva: exact/Trotter propagation from regular hardcoded VQE (HVA-family) initial state; "
+            "legacy exact_ansatz/trotter/fidelity map to the selected initial-state branch for compatibility."
         ),
         "energy_observable_definition": (
             "energy_static_exact is <psi_exact_gs_ref(t)|H_static|psi_exact_gs_ref(t)>. "
-            "energy_static_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static|psi_exact_ansatz_ref(t)>. "
-            "energy_static_trotter is <psi_ansatz_trot(t)|H_static|psi_ansatz_trot(t)>. "
+            "energy_static_exact_paop and energy_static_trotter_paop are from PAOP-ADAPT initial state; "
+            "energy_static_exact_hva and energy_static_trotter_hva are from hardcoded VQE initial state. "
             "energy_total_exact is <psi_exact_gs_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_gs_ref(t)>. "
-            "energy_total_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_ansatz_ref(t)>. "
-            "energy_total_trotter is <psi_ansatz_trot(t)|H_static + H_drive(drive_t0 + t)|psi_ansatz_trot(t)>. "
+            "energy_total_exact_paop/energy_total_trotter_paop and "
+            "energy_total_exact_hva/energy_total_trotter_hva are defined analogously. "
+            "Legacy energy_*_exact_ansatz and energy_*_trotter keys map to the selected initial-state branch. "
             "When drive is disabled, energy_total_* == energy_static_*. "
             "Drive sampling uses the same drive_t0 convention as propagation."
         ),
+        "plot_branch_order": [
+            "exact_gs_filtered",
+            "exact_paop",
+            "trotter_paop",
+            "exact_hva",
+            "trotter_hva",
+        ],
     }
     if bool(args.enable_drive):
         settings["drive"] = {
@@ -2471,9 +2961,63 @@ def main() -> None:
             "source": str(selected_initial_source),
             "amplitudes_qn_to_q0": _state_to_amplitudes_qn_to_q0(psi0),
         },
+        "ansatz_branches": {
+            "branch_order": [
+                "exact_gs_filtered",
+                "exact_paop",
+                "trotter_paop",
+                "exact_hva",
+                "trotter_hva",
+            ],
+            "paop": {
+                "source": (
+                    "adapt_json"
+                    if adapt_import_payload is not None
+                    else "internal_adapt"
+                ),
+                "pool_type": (
+                    adapt_import_payload.get("pool_type")
+                    if adapt_import_payload is not None
+                    else (adapt_internal_payload.get("pool_type") if adapt_internal_payload is not None else str(args.adapt_pool))
+                ),
+                "ansatz_depth": (
+                    adapt_import_payload.get("ansatz_depth")
+                    if adapt_import_payload is not None
+                    else (adapt_internal_payload.get("ansatz_depth") if adapt_internal_payload is not None else None)
+                ),
+                "num_parameters": (
+                    adapt_import_payload.get("num_parameters")
+                    if adapt_import_payload is not None
+                    else (adapt_internal_payload.get("num_parameters") if adapt_internal_payload is not None else None)
+                ),
+                "energy": (
+                    adapt_import_payload.get("energy")
+                    if adapt_import_payload is not None
+                    else (adapt_internal_payload.get("energy") if adapt_internal_payload is not None else None)
+                ),
+                "abs_delta_e": (
+                    adapt_import_payload.get("abs_delta_e")
+                    if adapt_import_payload is not None
+                    else (adapt_internal_payload.get("abs_delta_e") if adapt_internal_payload is not None else None)
+                ),
+            },
+            "hva": {
+                "source": "regular_vqe",
+                "ansatz": str(args.vqe_ansatz),
+                "vqe_success": bool(vqe_payload.get("success", False)),
+                "energy": vqe_payload.get("energy"),
+                "exact_filtered_energy": vqe_payload.get("exact_filtered_energy"),
+            },
+            "legacy_selected_branch": str(legacy_branch_label),
+            "legacy_selected_source": str(selected_initial_source),
+        },
         "trajectory": trajectory,
         "sanity": sanity,
     }
+    if adapt_import_payload is not None:
+        payload["adapt_import"] = adapt_import_payload
+    if adapt_internal_payload is not None:
+        payload["adapt_internal"] = adapt_internal_payload
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_pdf.parent.mkdir(parents=True, exist_ok=True)

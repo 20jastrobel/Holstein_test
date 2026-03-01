@@ -66,8 +66,17 @@ Run from the repository root (`Holstein_test/`).
 | `vqe` | Dynamics starts from that pipeline's own VQE-optimised state |
 | `exact` | Dynamics starts from exact ground state (sector-filtered eigendecomposition) |
 | `hf` | Dynamics starts from Hartree-Fock reference state |
+| `adapt_json` | `hardcoded/hubbard_pipeline.py` only: dynamics starts from an imported ADAPT statevector JSON (`--adapt-input-json`) |
 
 If you want apples-to-apples hardcoded vs Qiskit from each ansatz, use `--initial-state-source vqe`.
+If you want ADAPT GS preparation with hardcoded driven dynamics, use `--initial-state-source adapt_json`.
+
+Hardcoded comprehensive PDFs now use explicit dual-ansatz branch semantics for scalar trajectories:
+- `exact_gs_filtered`
+- `exact_paop`, `trotter_paop`
+- `exact_hva`, `trotter_hva`
+
+When `--initial-state-source adapt_json` is not used, hardcoded runs internal ADAPT (default `--adapt-pool paop_std`) to construct the PAOP branch.
 
 ---
 
@@ -181,7 +190,25 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--initial-state-source` | choice | `vqe` (compare) / `exact` (single) | State for dynamics: `exact`, `vqe`, or `hf` |
+| `--initial-state-source` | choice | `vqe` (compare) / `exact` (single) | State for dynamics: `exact`, `vqe`, `hf`; plus `adapt_json` for hardcoded pipeline import mode |
+| `--adapt-input-json` | path | `null` | Hardcoded pipeline only. Required when `--initial-state-source adapt_json`. Path to ADAPT JSON containing `initial_state.amplitudes_qn_to_q0`. |
+| `--adapt-strict-match` / `--no-adapt-strict-match` | flag pair | strict on | Hardcoded pipeline only. Enforce (or relax) metadata matching between current run physics and ADAPT JSON physics settings. |
+| `--adapt-summary-in-pdf` / `--no-adapt-summary-in-pdf` | flag pair | summary on | Hardcoded pipeline only. Include (or skip) ADAPT provenance page in the comprehensive PDF. |
+| `--adapt-pool` | choice | `paop_std` | Hardcoded pipeline only. ADAPT pool used for internal PAOP branch construction when no ADAPT JSON is imported. |
+| `--adapt-max-depth` | int | `30` | Max ADAPT depth for internal PAOP branch construction. |
+| `--adapt-eps-grad` | float | `1e-5` | ADAPT gradient stopping threshold for internal PAOP branch run. |
+| `--adapt-eps-energy` | float | `1e-8` | ADAPT energy-improvement stopping threshold for internal PAOP branch run. |
+| `--adapt-maxiter` | int | `800` | COBYLA maxiter per ADAPT re-optimization step. |
+| `--adapt-seed` | int | `7` | RNG seed for internal ADAPT branch run. |
+| `--adapt-allow-repeats` / `--adapt-no-repeats` | flag pair | repeats on | Allow/disallow operator repeats in internal ADAPT. |
+| `--adapt-finite-angle-fallback` / `--adapt-no-finite-angle-fallback` | flag pair | fallback on | Enable finite-angle continuation when gradients are near threshold. |
+| `--adapt-finite-angle` | float | `0.1` | Probe angle for finite-angle fallback. |
+| `--adapt-finite-angle-min-improvement` | float | `1e-12` | Minimum energy drop to accept finite-angle fallback selection. |
+| `--adapt-disable-hh-seed` | flag | `false` | Disable HH seed preconditioning block for internal ADAPT. |
+| `--paop-r` | int | `1` | Cloud radius for PAOP-style pools in internal ADAPT. |
+| `--paop-split-paulis` | flag | `false` | Split PAOP generators into single-Pauli operators. |
+| `--paop-prune-eps` | float | `0.0` | Prune PAOP terms below absolute threshold. |
+| `--paop-normalization` | choice | `none` | PAOP normalization mode: `none`, `fro`, `maxcoeff`. |
 
 ### Output / Artifact Controls
 
@@ -553,6 +580,32 @@ python pipelines/hardcoded/hubbard_pipeline.py \
   --initial-state-source vqe --skip-qpe \
   --output-json artifacts/json/hc_hh_L2_drive_t1.0_U4.0_S128.json \
   --output-pdf artifacts/pdf/hc_hh_L2_drive_t1.0_U4.0_S128.pdf
+```
+
+### 5g) ADAPT ground-state prep -> hardcoded driven dynamics
+
+```bash
+# 1) Static ADAPT-VQE ground-state preparation
+python pipelines/hardcoded/adapt_pipeline.py \
+  --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding binary \
+  --t 1.0 --u 2.0 --dv 0.0 --boundary periodic --ordering blocked \
+  --adapt-pool paop_std --adapt-max-depth 30 --adapt-eps-grad 1e-5 --adapt-maxiter 800 \
+  --initial-state-source adapt_vqe --skip-pdf \
+  --output-json artifacts/json/adapt_hh_L2_seed.json
+
+# 2) Drive-enabled hardcoded trajectory initialized from imported ADAPT state
+python pipelines/hardcoded/hubbard_pipeline.py \
+  --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding binary \
+  --t 1.0 --u 2.0 --dv 0.0 --boundary periodic --ordering blocked \
+  --initial-state-source adapt_json \
+  --adapt-input-json artifacts/json/adapt_hh_L2_seed.json \
+  --enable-drive --drive-A 0.5 --drive-omega 1.0 --drive-tbar 3.0 --drive-pattern staggered \
+  --drive-time-sampling midpoint --exact-steps-multiplier 2 \
+  --t-final 10.0 --num-times 201 --trotter-steps 64 \
+  --vqe-ansatz hh_hva_tw --vqe-reps 2 --vqe-restarts 3 --vqe-maxiter 800 \
+  --skip-qpe \
+  --output-json artifacts/json/hc_hh_L2_drive_from_adapt.json \
+  --output-pdf artifacts/pdf/hc_hh_L2_drive_from_adapt.pdf
 ```
 
 > **Note:** The drive operates on the full `nq_total = 2L + L×qpb` Hilbert space,
