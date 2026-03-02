@@ -19,6 +19,7 @@ import math
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,7 @@ class RungSpec:
     adapt_maxiter: int
     eps_grad: float
     eps_energy: float
+    wallclock_cap_s: int
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,11 @@ class DiversitySpec:
     max_consecutive_same_family: int
     must_include_drag_by_depth: int
     drag_min_grad: float
+
+
+ALLOWED_FIX_IDS = ("fix1_warm_start", "fix2_finite_angle", "fix3_diversity")
+ALLOWED_RUNG_IDS = ("A", "B", "C")
+ALLOWED_PROFILES = ("l3_default", "l2_balanced", "l2_balanced_plus")
 
 
 def _poly_signature(poly: Any, tol: float = 1e-12) -> tuple[tuple[str, float], ...]:
@@ -440,6 +447,7 @@ def _run_adapt_variant(
 
         if finite is not None:
             selection_mode = "finite_angle"
+            nfev_probe = [int(nfev_total)]
             selected_idx, theta_probe, _best_probe_energy, probe_meta = _select_by_finite_angle(
                 h_poly=h_poly,
                 psi_ref=psi_start,
@@ -451,12 +459,9 @@ def _run_adapt_variant(
                 delta=float(finite.delta),
                 min_probe_improvement=float(finite.min_probe_improvement),
                 energy_current=float(energy_current),
-                nfev_counter=[nfev_total],
+                nfev_counter=nfev_probe,
             )
-            # nfev counter was local list; update total from returned meta pattern.
-            # Recompute probe eval count deterministically:
-            probe_count = int(2 * len(probe_meta.get("probe_indices", [])))
-            nfev_total += probe_count
+            nfev_total = int(nfev_probe[0])
             if selected_idx is None:
                 stop_reason = "finite_probe_stall"
                 break
@@ -578,6 +583,37 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p.add_argument("--wallclock-cap-s", type=int, default=1200)
     p.add_argument("--topk-grad0", type=int, default=15)
+    p.add_argument(
+        "--profile",
+        type=str,
+        default="l3_default",
+        choices=list(ALLOWED_PROFILES),
+        help="Budget profile for rung + warm-start specs.",
+    )
+    p.add_argument(
+        "--run-fix-ids",
+        type=str,
+        default="",
+        help="Comma-separated subset of fix ids to run. Default: all.",
+    )
+    p.add_argument(
+        "--run-rung-ids",
+        type=str,
+        default="",
+        help="Comma-separated subset of rung ids to run. Default: all.",
+    )
+    p.add_argument(
+        "--export-adapt-state-run-id",
+        type=str,
+        default="",
+        help="Run id to export as adapt_json state (example: fix1_warm_start_B).",
+    )
+    p.add_argument(
+        "--export-adapt-state-json",
+        type=str,
+        default="",
+        help="Output JSON path for exported adapt_json state.",
+    )
 
     p.add_argument(
         "--output-prefix",
@@ -614,15 +650,59 @@ def _build_common(args: argparse.Namespace) -> CommonConfig:
     )
 
 
-def _rungs() -> list[RungSpec]:
+def _parse_csv_choices(raw: str, allowed: tuple[str, ...], flag_name: str) -> list[str]:
+    text = str(raw).strip()
+    if text == "":
+        return list(allowed)
+    out: list[str] = []
+    for token in text.split(","):
+        item = token.strip()
+        if item == "":
+            continue
+        if item not in allowed:
+            raise ValueError(f"Invalid {flag_name} value {item!r}. Allowed: {', '.join(allowed)}")
+        if item not in out:
+            out.append(item)
+    if not out:
+        raise ValueError(f"{flag_name} produced empty selection.")
+    return out
+
+
+def _rungs(profile: str, default_wallclock_cap_s: int) -> list[RungSpec]:
+    prof = str(profile).strip().lower()
+    if prof == "l2_balanced":
+        return [
+            RungSpec("A", adapt_max_depth=48, adapt_maxiter=1800, eps_grad=1e-6, eps_energy=1e-8, wallclock_cap_s=600),
+            RungSpec("B", adapt_max_depth=80, adapt_maxiter=3000, eps_grad=5e-7, eps_energy=1e-9, wallclock_cap_s=900),
+            RungSpec("C", adapt_max_depth=120, adapt_maxiter=5000, eps_grad=2e-7, eps_energy=1e-9, wallclock_cap_s=1200),
+        ]
+    if prof == "l2_balanced_plus":
+        return [
+            RungSpec("A", adapt_max_depth=48, adapt_maxiter=1800, eps_grad=1e-6, eps_energy=1e-8, wallclock_cap_s=600),
+            RungSpec("B", adapt_max_depth=80, adapt_maxiter=3000, eps_grad=5e-7, eps_energy=1e-9, wallclock_cap_s=900),
+            RungSpec("C", adapt_max_depth=160, adapt_maxiter=8000, eps_grad=1e-7, eps_energy=1e-9, wallclock_cap_s=1800),
+        ]
     return [
-        RungSpec("A", adapt_max_depth=80, adapt_maxiter=3000, eps_grad=1e-6, eps_energy=1e-8),
-        RungSpec("B", adapt_max_depth=120, adapt_maxiter=5000, eps_grad=5e-7, eps_energy=1e-9),
-        RungSpec("C", adapt_max_depth=160, adapt_maxiter=8000, eps_grad=1e-7, eps_energy=1e-9),
+        RungSpec("A", adapt_max_depth=80, adapt_maxiter=3000, eps_grad=1e-6, eps_energy=1e-8, wallclock_cap_s=int(default_wallclock_cap_s)),
+        RungSpec("B", adapt_max_depth=120, adapt_maxiter=5000, eps_grad=5e-7, eps_energy=1e-9, wallclock_cap_s=int(default_wallclock_cap_s)),
+        RungSpec("C", adapt_max_depth=160, adapt_maxiter=8000, eps_grad=1e-7, eps_energy=1e-9, wallclock_cap_s=int(default_wallclock_cap_s)),
     ]
 
 
-def _warm_specs() -> dict[str, WarmStartSpec]:
+def _warm_specs(profile: str) -> dict[str, WarmStartSpec]:
+    prof = str(profile).strip().lower()
+    if prof == "l2_balanced":
+        return {
+            "A": WarmStartSpec(reps=2, restarts=3, maxiter=1200),
+            "B": WarmStartSpec(reps=2, restarts=4, maxiter=2400),
+            "C": WarmStartSpec(reps=3, restarts=5, maxiter=4000),
+        }
+    if prof == "l2_balanced_plus":
+        return {
+            "A": WarmStartSpec(reps=2, restarts=3, maxiter=1200),
+            "B": WarmStartSpec(reps=2, restarts=4, maxiter=2400),
+            "C": WarmStartSpec(reps=3, restarts=6, maxiter=6000),
+        }
     return {
         "A": WarmStartSpec(reps=2, restarts=4, maxiter=2400),
         "B": WarmStartSpec(reps=3, restarts=5, maxiter=4000),
@@ -646,14 +726,111 @@ def _diversity_specs() -> dict[str, DiversitySpec]:
     }
 
 
+def _state_to_amplitudes_qn_to_q0(psi: np.ndarray, cutoff: float = 1e-12) -> dict[str, dict[str, float]]:
+    nq = int(round(math.log2(int(psi.size))))
+    out: dict[str, dict[str, float]] = {}
+    for idx, amp in enumerate(np.asarray(psi, dtype=complex).reshape(-1)):
+        if abs(amp) < float(cutoff):
+            continue
+        bitstr = format(int(idx), f"0{nq}b")
+        out[bitstr] = {"re": float(np.real(amp)), "im": float(np.imag(amp))}
+    return out
+
+
+def _write_adapt_state_json(
+    *,
+    out_path: Path,
+    cfg: CommonConfig,
+    run_payload: dict[str, Any],
+    psi_best: np.ndarray,
+    e_exact: float,
+    used_wallclock_cap_s: int,
+) -> None:
+    result = run_payload.get("result", {})
+    rung = run_payload.get("rung", {})
+    payload = {
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "settings": {
+            "L": int(cfg.L),
+            "problem": "hh",
+            "ordering": str(cfg.ordering),
+            "boundary": str(cfg.boundary),
+            "t": float(cfg.t),
+            "u": float(cfg.U),
+            "dv": float(cfg.dv),
+            "omega0": float(cfg.omega0),
+            "g_ep": float(cfg.g_ep),
+            "n_ph_max": int(cfg.n_ph_max),
+            "boson_encoding": str(cfg.boson_encoding),
+            "sector_n_up": int(cfg.sector_n_up),
+            "sector_n_dn": int(cfg.sector_n_dn),
+        },
+        "adapt_vqe": {
+            "source_run": str(run_payload.get("run_id", "")),
+            "pool_type": str(cfg.pool_name),
+            "ansatz_depth": int(result.get("adapt_depth_reached", 0)),
+            "num_parameters": int(result.get("num_parameters", 0)),
+            "energy": float(result.get("E_best", float("nan"))),
+            "E_last": float(result.get("E_last", float("nan"))),
+            "E_exact_sector": float(e_exact),
+            "abs_delta_e": float(result.get("delta_E_abs", float("nan"))),
+            "relative_error_abs": float(result.get("relative_error_abs", float("nan"))),
+            "adapt_stop_reason": str(result.get("adapt_stop_reason", "")),
+            "runtime_s": float(result.get("runtime_s", result.get("runtime_total_s", float("nan")))),
+            "selected_family_counts": dict(result.get("selected_family_counts", {})),
+            "history": [float(x) for x in result.get("history", [])],
+            "selected_trace": list(result.get("selected_trace", [])),
+            "sector_diag": dict(result.get("sector_diag", {})),
+        },
+        "initial_state": {
+            "source": "accessibility_fix_warm_start_adapt",
+            "nq_total": int(round(math.log2(int(np.asarray(psi_best).size)))),
+            "amplitudes_qn_to_q0": _state_to_amplitudes_qn_to_q0(np.asarray(psi_best, dtype=complex).reshape(-1)),
+        },
+        "warm_start": dict(run_payload.get("warm_start", {})),
+        "full_rebuild": {
+            "rung": {
+                "adapt_max_depth": int(rung.get("adapt_max_depth", 0)),
+                "adapt_maxiter": int(rung.get("adapt_maxiter", 0)),
+                "eps_grad": float(rung.get("eps_grad", float("nan"))),
+                "eps_energy": float(rung.get("eps_energy", float("nan"))),
+                "wallclock_cap_s": int(used_wallclock_cap_s),
+            },
+            "pool_size": int(run_payload.get("config", {}).get("pool_size", 0)),
+            "step0_top_gradients": list(run_payload.get("step0_top_gradients", [])),
+            "runtime_total_s": float(result.get("runtime_total_s", float("nan"))),
+        },
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     cfg = _build_common(args)
 
-    if int(cfg.L) != 3:
-        raise ValueError("This sweep is intended for L=3.")
     if str(cfg.boundary).strip().lower() != "open":
         raise ValueError("This sweep is configured for open boundary runs.")
+    if str(args.profile).strip().lower() == "l3_default" and int(cfg.L) != 3:
+        raise ValueError("Profile l3_default is intended for L=3.")
+    if str(args.profile).strip().lower() in {"l2_balanced", "l2_balanced_plus"} and int(cfg.L) != 2:
+        raise ValueError(f"Profile {args.profile} is intended for L=2.")
+
+    selected_fix_ids = _parse_csv_choices(args.run_fix_ids, ALLOWED_FIX_IDS, "--run-fix-ids")
+    selected_rung_ids = _parse_csv_choices(args.run_rung_ids, ALLOWED_RUNG_IDS, "--run-rung-ids")
+    export_run_id = str(args.export_adapt_state_run_id).strip()
+    export_json = str(args.export_adapt_state_json).strip()
+    if bool(export_run_id) ^ bool(export_json):
+        raise ValueError("Use --export-adapt-state-run-id and --export-adapt-state-json together.")
+    if export_run_id != "":
+        prefix = "fix1_warm_start_"
+        if not export_run_id.startswith(prefix):
+            raise ValueError("--export-adapt-state-run-id currently supports only fix1_warm_start_* rows.")
+        expected_rung = export_run_id[len(prefix):]
+        if expected_rung not in selected_rung_ids:
+            raise ValueError(
+                f"Export run id {export_run_id!r} not in selected rung ids {selected_rung_ids!r}."
+            )
 
     h_poly, psi_ref, e_exact = _build_hamiltonian_and_ref(cfg)
     pool = _build_paop_pool(cfg)
@@ -670,22 +847,25 @@ def main(argv: list[str] | None = None) -> None:
 
     rows: list[dict[str, Any]] = []
 
-    rung_map = {r.rung_id: r for r in _rungs()}
-    warm_map = _warm_specs()
+    rung_map = {r.rung_id: r for r in _rungs(str(args.profile), int(args.wallclock_cap_s))}
+    warm_map = _warm_specs(str(args.profile))
     finite_map = _finite_specs()
     div_map = _diversity_specs()
 
     run_order = []
-    for fix_id in ("fix1_warm_start", "fix2_finite_angle", "fix3_diversity"):
-        for rung_id in ("A", "B", "C"):
+    for fix_id in selected_fix_ids:
+        for rung_id in selected_rung_ids:
             run_order.append((fix_id, rung_id))
+    total_runs = len(run_order)
+    exported_path: Path | None = None
 
     global_start = time.perf_counter()
 
     for run_idx, (fix_id, rung_id) in enumerate(run_order, start=1):
         rung = rung_map[rung_id]
-        print(f"RUN {run_idx}/9 start: {fix_id} rung={rung_id}", flush=True)
+        print(f"RUN {run_idx}/{total_runs} start: {fix_id} rung={rung_id}", flush=True)
         run_t0 = time.perf_counter()
+        used_wallclock_cap_s = int(rung.wallclock_cap_s)
 
         run_payload: dict[str, Any] = {
             "run_id": f"{fix_id}_{rung_id}",
@@ -711,14 +891,16 @@ def main(argv: list[str] | None = None) -> None:
                 "paop_split_paulis": bool(cfg.paop_split_paulis),
                 "paop_prune_eps": float(cfg.paop_prune_eps),
                 "paop_normalization": str(cfg.paop_normalization),
-                "wallclock_cap_s": int(args.wallclock_cap_s),
+                "wallclock_cap_s": int(used_wallclock_cap_s),
                 "default_allow_repeats": bool(args.default_allow_repeats),
+                "profile": str(args.profile),
             },
             "rung": {
                 "adapt_max_depth": int(rung.adapt_max_depth),
                 "adapt_maxiter": int(rung.adapt_maxiter),
                 "eps_grad": float(rung.eps_grad),
                 "eps_energy": float(rung.eps_energy),
+                "wallclock_cap_s": int(used_wallclock_cap_s),
             },
             "E_exact_sector": float(e_exact),
             "step0_top_gradients": grad0,
@@ -761,7 +943,7 @@ def main(argv: list[str] | None = None) -> None:
                 psi_start=psi_start,
                 pool=pool,
                 rung=rung,
-                wallclock_cap_s=int(args.wallclock_cap_s),
+                wallclock_cap_s=int(used_wallclock_cap_s),
                 finite=finite,
                 diversity=diversity,
                 default_allow_repeats=bool(args.default_allow_repeats),
@@ -779,9 +961,20 @@ def main(argv: list[str] | None = None) -> None:
                 "sector_diag": sector_diag,
                 "runtime_total_s": float(time.perf_counter() - run_t0),
             }
+            if export_run_id != "" and run_payload["run_id"] == export_run_id:
+                out_state = Path(export_json)
+                _write_adapt_state_json(
+                    out_path=out_state,
+                    cfg=cfg,
+                    run_payload=run_payload,
+                    psi_best=psi_best,
+                    e_exact=float(e_exact),
+                    used_wallclock_cap_s=int(used_wallclock_cap_s),
+                )
+                exported_path = out_state
 
             print(
-                f"RUN {run_idx}/9 done: {fix_id} rung={rung_id} "
+                f"RUN {run_idx}/{total_runs} done: {fix_id} rung={rung_id} "
                 f"E_best={adapt['E_best']:.12f} ΔE={delta_e:.6e} depth={adapt['adapt_depth_reached']} "
                 f"stop={adapt['adapt_stop_reason']} runtime={time.perf_counter()-run_t0:.1f}s",
                 flush=True,
@@ -792,7 +985,7 @@ def main(argv: list[str] | None = None) -> None:
             run_payload["result"] = {
                 "runtime_total_s": float(time.perf_counter() - run_t0),
             }
-            print(f"RUN {run_idx}/9 error: {fix_id} rung={rung_id} err={exc}", flush=True)
+            print(f"RUN {run_idx}/{total_runs} error: {fix_id} rung={rung_id} err={exc}", flush=True)
 
         rows.append(run_payload)
 
@@ -839,14 +1032,17 @@ def main(argv: list[str] | None = None) -> None:
 
     # Best-per-fix markdown.
     md_lines = [
-        "# L=3 HH Accessibility Fix Sweep (Tests-Only)",
+        f"# L={int(cfg.L)} HH Accessibility Fix Sweep (Tests-Only)",
         "",
         f"Runtime total: {time.perf_counter() - global_start:.2f} s",
+        f"Profile: {str(args.profile)}",
+        f"Selected fixes: {', '.join(selected_fix_ids)}",
+        f"Selected rungs: {', '.join(selected_rung_ids)}",
         "",
         "| fix_id | best_rung | best_delta_E | best_rel_err | depth | stop_reason |",
         "|---|---:|---:|---:|---:|---|",
     ]
-    for fix_id in ("fix1_warm_start", "fix2_finite_angle", "fix3_diversity"):
+    for fix_id in selected_fix_ids:
         ok_rows = [r for r in summary_rows if r["fix_id"] == fix_id and r["status"] == "ok" and r["delta_E_abs"] != ""]
         if not ok_rows:
             md_lines.append(f"| {fix_id} | - | - | - | - | error |")
@@ -862,6 +1058,10 @@ def main(argv: list[str] | None = None) -> None:
     print(f"WROTE {out_json}")
     print(f"WROTE {out_csv}")
     print(f"WROTE {out_md}")
+    if export_run_id != "":
+        if exported_path is None:
+            raise RuntimeError(f"Requested export run id {export_run_id!r} was not executed successfully.")
+        print(f"WROTE {exported_path}")
 
 
 if __name__ == "__main__":
