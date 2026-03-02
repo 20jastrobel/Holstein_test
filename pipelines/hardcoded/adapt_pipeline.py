@@ -727,7 +727,7 @@ def _run_hardcoded_adapt_vqe(
             else:
                 pool = hva_pool
             method_name = "hardcoded_adapt_vqe_hva_hh"
-        elif pool_key in {"paop", "paop_min", "paop_std", "paop_full"}:
+        elif pool_key in {"paop", "paop_min", "paop_std", "paop_full", "paop_lf", "paop_lf_std", "paop_lf2_std", "paop_lf_full"}:
             paop_pool = _build_paop_pool(
                 int(num_sites),
                 int(n_ph_max),
@@ -775,7 +775,10 @@ def _run_hardcoded_adapt_vqe(
             pool = _build_full_hamiltonian_pool(h_poly, normalize_coeff=True)
             method_name = "hardcoded_adapt_vqe_full_hamiltonian_hh"
         else:
-            raise ValueError("For problem='hh', supported ADAPT pools are: hva, paop_min, paop_std, paop_full, full_hamiltonian")
+            raise ValueError(
+                "For problem='hh', supported ADAPT pools are: "
+                "hva, paop, paop_min, paop_std, paop_full, paop_lf, paop_lf_std, paop_lf2_std, paop_lf_full, full_hamiltonian"
+            )
     else:
         if pool_key == "uccsd":
             pool = _build_uccsd_pool(int(num_sites), num_particles, str(ordering))
@@ -1324,7 +1327,20 @@ def parse_args() -> argparse.Namespace:
     # ADAPT-VQE controls
     p.add_argument(
         "--adapt-pool",
-        choices=["uccsd", "cse", "full_hamiltonian", "hva", "paop", "paop_min", "paop_std", "paop_full"],
+        choices=[
+            "uccsd",
+            "cse",
+            "full_hamiltonian",
+            "hva",
+            "paop",
+            "paop_min",
+            "paop_std",
+            "paop_full",
+            "paop_lf",
+            "paop_lf_std",
+            "paop_lf2_std",
+            "paop_lf_full",
+        ],
         default="uccsd",
     )
     p.add_argument("--adapt-max-depth", type=int, default=20)
@@ -1365,7 +1381,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable HH preconditioning with the compact quadrature seed block.",
     )
-    p.add_argument("--paop-r", type=int, default=1, help="Cloud radius R for paop_full/paop pools.")
+    p.add_argument("--paop-r", type=int, default=1, help="Cloud radius R for paop_full/paop_lf_full pools.")
     p.add_argument(
         "--paop-split-paulis",
         action="store_true",

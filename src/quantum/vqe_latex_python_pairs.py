@@ -67,6 +67,8 @@ try:
         SPIN_DN,
         SPIN_UP,
         Spin,
+        boson_displacement_operator,
+        boson_number_operator,
         boson_qubits_per_site,
         build_holstein_coupling,
         build_holstein_phonon_energy,
@@ -77,6 +79,7 @@ try:
         bravais_nearest_neighbor_edges,
         mode_index,
         n_sites_from_dims,
+        phonon_qubit_indices_for_site,
     )
 except Exception:  # pragma: no cover
     Dims = Union[int, Tuple[int, ...]]
@@ -101,6 +104,8 @@ except Exception:  # pragma: no cover
     def _missing_hh(*_args, **_kwargs):
         raise ImportError("HH helper unavailable (import Hubbard-Holstein helpers)")
 
+    boson_displacement_operator = _missing_hh
+    boson_number_operator = _missing_hh
     boson_qubits_per_site = _missing_hh
     build_holstein_coupling = _missing_hh
     build_holstein_phonon_energy = _missing_hh
@@ -108,6 +113,7 @@ except Exception:  # pragma: no cover
     build_hubbard_kinetic = _missing_hh
     build_hubbard_onsite = _missing_hh
     build_hubbard_potential = _missing_hh
+    phonon_qubit_indices_for_site = _missing_hh
 
 
 __all__ = [
@@ -132,6 +138,7 @@ __all__ = [
     "HardcodedUCCSDLayerwiseAnsatz",
     # Ansatz classes (Hubbard-Holstein)
     "HubbardHolsteinTermwiseAnsatz",
+    "HubbardHolsteinPhysicalTermwiseAnsatz",
     "HubbardHolsteinLayerwiseAnsatz",
     # VQE driver
     "VQEResult",
@@ -1141,6 +1148,223 @@ class HubbardHolsteinTermwiseAnsatz:
             log.error("theta has wrong length for this ansatz")
         if int(psi_ref.size) != (1 << int(self.nq)):
             log.error("psi_ref length must be 2^nq for HubbardHolsteinTermwiseAnsatz")
+
+        coeff_tol = self.coefficient_tolerance if coefficient_tolerance is None else float(coefficient_tolerance)
+        sort_flag = self.sort_terms if sort_terms is None else bool(sort_terms)
+
+        psi = np.array(psi_ref, copy=True)
+        k = 0
+        for _ in range(self.reps):
+            for term in self.base_terms:
+                psi = apply_exp_pauli_polynomial(
+                    psi,
+                    term.polynomial,
+                    float(theta[k]),
+                    ignore_identity=ignore_identity,
+                    coefficient_tolerance=coeff_tol,
+                    sort_terms=sort_flag,
+                )
+                k += 1
+        return psi
+
+
+# ---------------------------------------------------------------------------
+# Hubbard-Holstein physical-termwise ansatz
+# ---------------------------------------------------------------------------
+
+class HubbardHolsteinPhysicalTermwiseAnsatz:
+    r"""
+    Physical-termwise Hubbard-Holstein ansatz (sector-preserving in fermion space).
+
+    Per layer, apply one independent parameter per *physical* HH generator:
+      1) hopping terms      H^{(t)}_{ij,\sigma}
+      2) onsite-U terms     H^{(U)}_i
+      3) static potential   H^{(v)}_{i,\sigma}         (if non-zero)
+      4) phonon energy      \omega_0 n_{b,i}
+      5) e-ph coupling      g x_i (n_i - I)
+      6) drive terms        (v_i(t)-v_{0,i}) n_{i,\sigma}  (if provided)
+
+    Unlike the Pauli-termwise variant, this class does not split each physical
+    generator into individual Pauli monomials before exponentiation.
+    """
+
+    def __init__(
+        self,
+        dims: Dims,
+        J: float,
+        U: float,
+        omega0: float,
+        g: float,
+        n_ph_max: int,
+        *,
+        boson_encoding: str = "binary",
+        v: SitePotential = None,
+        v_t: TimePotential = None,
+        v0: SitePotential = None,
+        t_eval: Optional[float] = None,
+        reps: int = 1,
+        repr_mode: str = "JW",
+        indexing: str = "blocked",
+        edges: Optional[Sequence[Tuple[int, int]]] = None,
+        pbc: Union[bool, Sequence[bool]] = True,
+        include_zero_point: bool = True,
+        coefficient_tolerance: float = 1e-12,
+        sort_terms: bool = True,
+    ):
+        self.dims = dims
+        self.n_sites = int(n_sites_from_dims(dims))
+        self.n_ferm = 2 * self.n_sites
+        self.n_ph_max = int(n_ph_max)
+        self.boson_encoding = str(boson_encoding)
+        self.qpb = int(boson_qubits_per_site(self.n_ph_max, self.boson_encoding))
+        self.n_total = self.n_ferm + self.n_sites * self.qpb
+        self.nq = int(self.n_total)
+
+        self.J = float(J)
+        self.U = float(U)
+        self.omega0 = float(omega0)
+        self.g = float(g)
+        self.v_list = _parse_site_potential(v, n_sites=self.n_sites)
+        self.v_t = v_t
+        self.v0 = v0
+        self.t_eval = t_eval
+        self.include_zero_point = bool(include_zero_point)
+
+        self.repr_mode = str(repr_mode)
+        self.indexing = str(indexing)
+        self.edges = list(edges) if edges is not None else bravais_nearest_neighbor_edges(dims, pbc=pbc)
+        self.reps = int(reps)
+        if self.reps <= 0:
+            log.error("reps must be positive")
+
+        self.coefficient_tolerance = float(coefficient_tolerance)
+        self.sort_terms = bool(sort_terms)
+
+        self.base_terms: List[AnsatzTerm] = []
+        self._build_base_terms()
+        self.num_parameters = self.reps * len(self.base_terms)
+
+    def _build_base_terms(self) -> None:
+        tol = self.coefficient_tolerance
+        nq = int(self.n_total)
+        n_sites = int(self.n_sites)
+        rm = self.repr_mode
+        fermion_qubits = int(self.n_ferm)
+        qpb = int(self.qpb)
+        identity = PauliPolynomial(rm, [PauliTerm(nq, ps="e" * nq, pc=1.0)])
+
+        # (1) Hopping: one parameter per bond/spin physical hopping generator.
+        for (i, j) in self.edges:
+            for spin in (SPIN_UP, SPIN_DN):
+                p_i = mode_index(int(i), int(spin), indexing=self.indexing, n_sites=n_sites)
+                p_j = mode_index(int(j), int(spin), indexing=self.indexing, n_sites=n_sites)
+                poly = hubbard_hop_term(nq, p_i, p_j, t=self.J, repr_mode=rm)
+                self.base_terms.append(
+                    AnsatzTerm(label=f"hh_hop(i={i},j={j},spin={spin})", polynomial=poly)
+                )
+
+        # (2) Onsite-U: one parameter per site.
+        for i in range(n_sites):
+            p_up = mode_index(i, SPIN_UP, indexing=self.indexing, n_sites=n_sites)
+            p_dn = mode_index(i, SPIN_DN, indexing=self.indexing, n_sites=n_sites)
+            poly = hubbard_onsite_term(nq, p_up, p_dn, U=self.U, repr_mode=rm)
+            self.base_terms.append(AnsatzTerm(label=f"hh_onsite(i={i})", polynomial=poly))
+
+        # (3) Static potential (optional): one parameter per site/spin term.
+        for i in range(n_sites):
+            vi = float(self.v_list[i])
+            if abs(vi) <= tol:
+                continue
+            for spin in (SPIN_UP, SPIN_DN):
+                p_mode = mode_index(i, spin, indexing=self.indexing, n_sites=n_sites)
+                poly = hubbard_potential_term(nq, p_mode, v_i=vi, repr_mode=rm)
+                self.base_terms.append(AnsatzTerm(label=f"hh_pot(i={i},spin={spin})", polynomial=poly))
+
+        # (4) Phonon energy without zero-point identity contribution (global phase).
+        if abs(float(self.omega0)) > tol:
+            for i in range(n_sites):
+                q_i = phonon_qubit_indices_for_site(
+                    i,
+                    n_sites=n_sites,
+                    qpb=qpb,
+                    fermion_qubits=fermion_qubits,
+                )
+                n_b = boson_number_operator(
+                    rm,
+                    nq,
+                    q_i,
+                    n_ph_max=self.n_ph_max,
+                    encoding=self.boson_encoding,
+                    tol=tol,
+                )
+                self.base_terms.append(
+                    AnsatzTerm(label=f"hh_phonon(i={i})", polynomial=float(self.omega0) * n_b)
+                )
+
+        # (5) Electron-phonon coupling: one parameter per site.
+        if abs(float(self.g)) > tol:
+            n_cache: Dict[int, PauliPolynomial] = {}
+
+            def n_op(p_mode: int) -> PauliPolynomial:
+                if p_mode not in n_cache:
+                    n_cache[p_mode] = jw_number_operator(rm, nq, p_mode)
+                return n_cache[p_mode]
+
+            for i in range(n_sites):
+                p_up = mode_index(i, SPIN_UP, indexing=self.indexing, n_sites=n_sites)
+                p_dn = mode_index(i, SPIN_DN, indexing=self.indexing, n_sites=n_sites)
+                n_i = n_op(p_up) + n_op(p_dn)
+                q_i = phonon_qubit_indices_for_site(
+                    i,
+                    n_sites=n_sites,
+                    qpb=qpb,
+                    fermion_qubits=fermion_qubits,
+                )
+                x_i = boson_displacement_operator(
+                    rm,
+                    nq,
+                    q_i,
+                    n_ph_max=self.n_ph_max,
+                    encoding=self.boson_encoding,
+                    tol=tol,
+                )
+                poly = float(self.g) * (x_i * (n_i + ((-1.0) * identity)))
+                self.base_terms.append(AnsatzTerm(label=f"hh_eph(i={i})", polynomial=poly))
+
+        # (6) Drive terms (optional): one parameter per site/spin drive primitive.
+        if self.v_t is not None or self.v0 is not None:
+            if callable(self.v_t):
+                if self.t_eval is None:
+                    log.error("t_eval must be provided when v_t is callable")
+                v_t_list = _parse_site_potential(self.v_t(self.t_eval), n_sites=n_sites)
+            else:
+                v_t_list = _parse_site_potential(self.v_t, n_sites=n_sites)
+            v0_list = _parse_site_potential(self.v0, n_sites=n_sites)
+            for i in range(n_sites):
+                dv_i = float(v_t_list[i]) - float(v0_list[i])
+                if abs(dv_i) <= tol:
+                    continue
+                for spin in (SPIN_UP, SPIN_DN):
+                    p_mode = mode_index(i, spin, indexing=self.indexing, n_sites=n_sites)
+                    poly = hubbard_potential_term(nq, p_mode, v_i=(-dv_i), repr_mode=rm)
+                    self.base_terms.append(AnsatzTerm(label=f"hh_drive(i={i},spin={spin})", polynomial=poly))
+
+        if not self.base_terms:
+            log.error("HubbardHolsteinPhysicalTermwiseAnsatz produced no terms")
+
+    def prepare_state(
+        self,
+        theta: np.ndarray,
+        psi_ref: np.ndarray,
+        *,
+        ignore_identity: bool = True,
+        coefficient_tolerance: Optional[float] = None,
+        sort_terms: Optional[bool] = None,
+    ) -> np.ndarray:
+        if int(theta.size) != int(self.num_parameters):
+            log.error("theta has wrong length for this ansatz")
+        if int(psi_ref.size) != (1 << int(self.nq)):
+            log.error("psi_ref length must be 2^nq for HubbardHolsteinPhysicalTermwiseAnsatz")
 
         coeff_tol = self.coefficient_tolerance if coefficient_tolerance is None else float(coefficient_tolerance)
         sort_flag = self.sort_terms if sort_terms is None else bool(sort_terms)

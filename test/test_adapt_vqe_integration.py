@@ -153,6 +153,125 @@ class TestPAOPPoolBuilder:
         )
         assert len(pool) > 0
 
+    def test_paop_lf_std_L2(self):
+        num_particles = half_filled_num_particles(2)
+        pool_lf = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_lf_std", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        pool_std = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_std", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        assert len(pool_lf) >= len(pool_std)
+
+    def test_paop_lf2_std_L2(self):
+        num_particles = half_filled_num_particles(2)
+        pool_lf = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_lf_std", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        pool_lf2 = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_lf2_std", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        assert len(pool_lf2) >= len(pool_lf)
+
+    def test_paop_lf_full_L2(self):
+        num_particles = half_filled_num_particles(2)
+        pool = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_lf_full", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        assert len(pool) > 0
+
+    def test_paop_lf_alias_matches_lf_std(self):
+        num_particles = half_filled_num_particles(2)
+        pool_alias = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_lf", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        pool_std = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="periodic",
+            pool_key="paop_lf_std", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        assert len(pool_alias) == len(pool_std)
+
+    def test_paop_curdrag_L2_open_blocked_signature(self):
+        num_particles = half_filled_num_particles(2)
+        pool = _build_paop_pool(
+            num_sites=2, n_ph_max=1, boson_encoding="binary",
+            ordering="blocked", boundary="open",
+            pool_key="paop_lf_std", paop_r=1,
+            paop_split_paulis=False, paop_prune_eps=0.0,
+            paop_normalization="none", num_particles=num_particles,
+        )
+        curdrag = None
+        for op in pool:
+            if "paop_curdrag(0,1)" in op.label:
+                curdrag = op
+                break
+        assert curdrag is not None, "Expected paop_curdrag(0,1) in paop_lf_std for L=2 open chain."
+
+        coeff_map: dict[str, float] = {}
+        for term in curdrag.polynomial.return_polynomial():
+            coeff = complex(term.p_coeff)
+            if abs(coeff) <= 1e-12:
+                continue
+            assert abs(coeff.imag) <= 1e-10
+            coeff_map[str(term.pw2strng())] = float(round(coeff.real, 12))
+
+        expected = {
+            "eyeexy": 0.5,
+            "eyeeyx": -0.5,
+            "eyxyee": 0.5,
+            "eyyxee": -0.5,
+            "yeeexy": -0.5,
+            "yeeeyx": 0.5,
+            "yexyee": -0.5,
+            "yeyxee": 0.5,
+        }
+        assert set(coeff_map.keys()) == set(expected.keys())
+        same_sign = all(abs(coeff_map[key] - expected[key]) <= 1e-10 for key in expected)
+        flipped_sign = all(abs(coeff_map[key] + expected[key]) <= 1e-10 for key in expected)
+        assert same_sign or flipped_sign
+
+    def test_paop_lf_coefficients_are_real_after_cleaning(self):
+        num_particles = half_filled_num_particles(2)
+        for pool_key in ("paop_lf_std", "paop_lf2_std", "paop_lf_full"):
+            pool = _build_paop_pool(
+                num_sites=2, n_ph_max=1, boson_encoding="binary",
+                ordering="blocked", boundary="periodic",
+                pool_key=pool_key, paop_r=1,
+                paop_split_paulis=False, paop_prune_eps=0.0,
+                paop_normalization="none", num_particles=num_particles,
+            )
+            assert len(pool) > 0
+            for op in pool:
+                for term in op.polynomial.return_polynomial():
+                    assert abs(complex(term.p_coeff).imag) <= 1e-10
+
     def test_paop_module_importable(self):
         """Verify the operator_pools module can be imported directly."""
         from src.quantum.operator_pools import make_pool

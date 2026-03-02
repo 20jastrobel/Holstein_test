@@ -656,6 +656,7 @@ def _load_hardcoded_vqe_namespace() -> dict[str, Any]:
         "HubbardLayerwiseAnsatz",
         "HubbardHolsteinLayerwiseAnsatz",
         "HubbardHolsteinTermwiseAnsatz",
+        "HubbardHolsteinPhysicalTermwiseAnsatz",
         "exact_ground_energy_sector",
         "exact_ground_energy_sector_hh",
         "hubbard_holstein_reference_state",
@@ -706,11 +707,11 @@ def _run_hardcoded_vqe(
     ansatz_name_s = str(ansatz_name).strip().lower()
     problem_s = str(problem).strip().lower()
 
-    valid_ansatzes = {"uccsd", "hva", "hh_hva", "hh_hva_tw"}
+    valid_ansatzes = {"uccsd", "hva", "hh_hva", "hh_hva_tw", "hh_hva_ptw"}
     if ansatz_name_s not in valid_ansatzes:
         raise ValueError(f"Unsupported --vqe-ansatz '{ansatz_name}'. Expected one of: {sorted(valid_ansatzes)}.")
 
-    if ansatz_name_s in ("hh_hva", "hh_hva_tw") and problem_s != "hh":
+    if ansatz_name_s in ("hh_hva", "hh_hva_tw", "hh_hva_ptw") and problem_s != "hh":
         raise ValueError(f"--vqe-ansatz {ansatz_name_s} requires --problem hh.")
 
     is_hh = problem_s == "hh"
@@ -790,6 +791,21 @@ def _run_hardcoded_vqe(
             pbc=(str(boundary).strip().lower() == "periodic"),
         )
         method_name = "hardcoded_hh_hva_termwise_statevector"
+    elif ansatz_name_s == "hh_hva_ptw":
+        ansatz = ns["HubbardHolsteinPhysicalTermwiseAnsatz"](
+            dims=int(num_sites),
+            J=float(hopping_t),
+            U=float(onsite_u),
+            omega0=float(omega0),
+            g=float(g_ep),
+            n_ph_max=int(n_ph_max),
+            boson_encoding=str(boson_encoding),
+            reps=int(reps),
+            repr_mode="JW",
+            indexing=ordering,
+            pbc=(str(boundary).strip().lower() == "periodic"),
+        )
+        method_name = "hardcoded_hh_hva_physical_termwise_statevector"
     else:
         raise ValueError(f"Unsupported ansatz: {ansatz_name_s}")
 
@@ -2349,12 +2365,14 @@ def parse_args() -> argparse.Namespace:
         "--vqe-ansatz",
         type=str,
         default="uccsd",
-        choices=["uccsd", "hva", "hh_hva", "hh_hva_tw"],
+        choices=["uccsd", "hva", "hh_hva", "hh_hva_tw", "hh_hva_ptw"],
         help=(
             "Hardcoded VQE ansatz family: uccsd, hva (Hubbard-only), "
             "hh_hva (Hubbard-Holstein layerwise — shared θ per group), "
             "hh_hva_tw (Hubbard-Holstein termwise — one θ per Pauli term, "
-            "much higher accuracy, recommended for HH)."
+            "does not preserve sector), "
+            "hh_hva_ptw (Hubbard-Holstein physical-termwise — one θ per physical term, "
+            "sector-preserving)."
         ),
     )
     parser.add_argument("--vqe-reps", type=int, default=2, help="Number of ansatz repetitions (layer depth).")
@@ -2409,7 +2427,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--adapt-pool",
-        choices=["uccsd", "cse", "full_hamiltonian", "hva", "paop", "paop_min", "paop_std", "paop_full"],
+        choices=[
+            "uccsd",
+            "cse",
+            "full_hamiltonian",
+            "hva",
+            "paop",
+            "paop_min",
+            "paop_std",
+            "paop_full",
+            "paop_lf",
+            "paop_lf_std",
+            "paop_lf2_std",
+            "paop_lf_full",
+        ],
         default="paop_std",
         help="PAOP/ADAPT branch pool used for the explicit PAOP trajectory branch.",
     )
