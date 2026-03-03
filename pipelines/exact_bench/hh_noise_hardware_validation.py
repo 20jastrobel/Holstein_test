@@ -210,7 +210,8 @@ def _apply_defaults_and_minimums(args: argparse.Namespace) -> argparse.Namespace
         if args.exact_steps_multiplier is None:
             args.exact_steps_multiplier = 1
 
-    if not bool(args.smoke_test_intentionally_weak):
+    legacy_parity_mode = getattr(args, "legacy_reference_json", None) is not None
+    if (not bool(args.smoke_test_intentionally_weak)) and (not legacy_parity_mode):
         checks = {
             "vqe_reps": int(args.vqe_reps) >= int(minimum["reps"]),
             "vqe_restarts": int(args.vqe_restarts) >= int(minimum["restarts"]),
@@ -870,6 +871,166 @@ def _initial_state_selection(
     return "exact", qc
 
 
+def _parse_compare_observables(raw: str) -> list[str]:
+    valid = {
+        "energy_static_trotter",
+        "doublon_trotter",
+        "n_up_site0_trotter",
+        "n_dn_site0_trotter",
+    }
+    parts = [str(x).strip() for x in str(raw).split(",")]
+    obs = [x for x in parts if x]
+    if not obs:
+        raise ValueError(
+            "compare_observables must contain at least one observable from: "
+            "energy_static_trotter,doublon_trotter,n_up_site0_trotter,n_dn_site0_trotter"
+        )
+    bad = [x for x in obs if x not in valid]
+    if bad:
+        raise ValueError(
+            "Unsupported compare_observables entries: "
+            f"{bad}. Allowed: {sorted(valid)}"
+        )
+    return obs
+
+
+def _load_legacy_trajectory(
+    legacy_json: Path,
+    observables: list[str],
+) -> dict[str, Any]:
+    payload = json.loads(Path(legacy_json).read_text(encoding="utf-8"))
+    traj = payload.get("trajectory")
+    if not isinstance(traj, list) or not traj:
+        raise ValueError(
+            f"Legacy reference JSON '{legacy_json}' must contain a non-empty trajectory list."
+        )
+    times: list[float] = []
+    series: dict[str, list[float]] = {obs: [] for obs in observables}
+    for i, row in enumerate(traj):
+        if not isinstance(row, dict):
+            raise ValueError(f"Legacy trajectory row {i} is not a dict.")
+        if "time" not in row:
+            raise ValueError(f"Legacy trajectory row {i} missing 'time'.")
+        times.append(float(row["time"]))
+        for obs in observables:
+            if obs not in row:
+                raise ValueError(
+                    f"Legacy trajectory row {i} missing observable '{obs}'."
+                )
+            series[obs].append(float(row[obs]))
+    return {
+        "reference_json": str(legacy_json),
+        "times": np.asarray(times, dtype=float),
+        "series": {k: np.asarray(v, dtype=float) for k, v in series.items()},
+    }
+
+
+def _compute_legacy_parity(
+    *,
+    legacy_ref: dict[str, Any],
+    new_trajectory: list[dict[str, Any]],
+    observables: list[str],
+    tolerance: float,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "skipped": False,
+        "reference_json": str(legacy_ref.get("reference_json", "")),
+        "observables": list(observables),
+        "tolerance": float(tolerance),
+        "time_grid_match": False,
+        "reason": "",
+        "per_observable": {},
+        "passed_all": False,
+    }
+    if not new_trajectory:
+        result["reason"] = "No new trajectory rows were produced."
+        return result
+
+    new_times = np.asarray([float(r["time"]) for r in new_trajectory], dtype=float)
+    legacy_times = np.asarray(legacy_ref["times"], dtype=float)
+    time_grid_match = bool(np.array_equal(new_times, legacy_times))
+    result["time_grid_match"] = time_grid_match
+    if not time_grid_match:
+        result["reason"] = (
+            f"time-grid mismatch (new={len(new_times)} points, legacy={len(legacy_times)} points)"
+        )
+
+    per_obs: dict[str, Any] = {}
+    passed_all = bool(time_grid_match)
+    for obs in observables:
+        new_key = f"{obs}_ideal"
+        new_vals = np.asarray([float(r[new_key]) for r in new_trajectory], dtype=float)
+        legacy_vals = np.asarray(legacy_ref["series"][obs], dtype=float)
+        if len(new_vals) != len(legacy_vals):
+            max_abs = float("inf")
+            mean_abs = float("inf")
+            final_abs = float("inf")
+            passed = False
+        else:
+            deltas = np.abs(new_vals - legacy_vals)
+            max_abs = float(np.max(deltas))
+            mean_abs = float(np.mean(deltas))
+            final_abs = float(deltas[-1])
+            passed = bool(time_grid_match and (max_abs <= float(tolerance)))
+        per_obs[obs] = {
+            "max_abs_delta": max_abs,
+            "mean_abs_delta": mean_abs,
+            "final_abs_delta": final_abs,
+            "passed": bool(passed),
+        }
+        passed_all = bool(passed_all and passed)
+    result["per_observable"] = per_obs
+    result["passed_all"] = bool(passed_all)
+    return result
+
+
+def _write_legacy_comparison_plot(
+    *,
+    plot_path: Path,
+    payload: dict[str, Any],
+    legacy_ref: dict[str, Any] | None,
+) -> None:
+    require_matplotlib()
+    plt = get_plt()
+
+    trajectory = payload.get("trajectory", [])
+    if not trajectory:
+        raise ValueError("Cannot write comparison plot: payload has no trajectory.")
+    times = np.asarray([float(r["time"]) for r in trajectory], dtype=float)
+    e_noisy = np.asarray([float(r["energy_static_trotter_noisy"]) for r in trajectory], dtype=float)
+    e_ideal = np.asarray([float(r["energy_static_trotter_ideal"]) for r in trajectory], dtype=float)
+    d_noisy = np.asarray([float(r["doublon_trotter_noisy"]) for r in trajectory], dtype=float)
+    d_ideal = np.asarray([float(r["doublon_trotter_ideal"]) for r in trajectory], dtype=float)
+
+    fig, axes = plt.subplots(2, 1, figsize=(11.0, 8.0), sharex=False)
+    axes[0].plot(times, e_noisy, label="new noisy", color="#1f77b4")
+    axes[0].plot(times, e_ideal, label="new ideal", color="#ff7f0e", linestyle="--")
+    if legacy_ref is not None:
+        lt = np.asarray(legacy_ref["times"], dtype=float)
+        le = np.asarray(legacy_ref["series"]["energy_static_trotter"], dtype=float)
+        axes[0].plot(lt, le, label="legacy", color="#2ca02c", linestyle=":")
+    axes[0].set_ylabel("Energy")
+    axes[0].grid(alpha=0.25)
+    axes[0].legend(fontsize=8, loc="best")
+
+    axes[1].plot(times, d_noisy, label="new noisy", color="#9467bd")
+    axes[1].plot(times, d_ideal, label="new ideal", color="#d62728", linestyle="--")
+    if legacy_ref is not None:
+        lt = np.asarray(legacy_ref["times"], dtype=float)
+        ld = np.asarray(legacy_ref["series"]["doublon_trotter"], dtype=float)
+        axes[1].plot(lt, ld, label="legacy", color="#8c564b", linestyle=":")
+    axes[1].set_xlabel("Time")
+    axes[1].set_ylabel("Doublon")
+    axes[1].grid(alpha=0.25)
+    axes[1].legend(fontsize=8, loc="best")
+    fig.suptitle("HH L2 Comparison: Noisy vs Noiseless vs Legacy")
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(plot_path), dpi=170)
+    plt.close(fig)
+
+
 def _write_noise_validation_pdf(
     *,
     pdf_path: Path,
@@ -886,6 +1047,7 @@ def _write_noise_validation_pdf(
     noise = payload.get("noise_config", {})
     fallback = payload.get("execution_fallback", {})
     adapt = payload.get("adapt", {})
+    legacy_parity = payload.get("legacy_parity", {})
     final = trajectory[-1] if trajectory else {}
 
     with PdfPages(str(pdf_path)) as pdf:
@@ -921,6 +1083,13 @@ def _write_noise_validation_pdf(
             f"fallback_mode: {fallback.get('mode')}",
             f"fallback_reason: {str(fallback.get('reason', ''))[:140]}",
             "",
+            "Legacy parity (vs pre-noise baseline):",
+            f"  enabled: {not bool(legacy_parity.get('skipped', True))}",
+            f"  passed_all: {legacy_parity.get('passed_all')}",
+            f"  time_grid_match: {legacy_parity.get('time_grid_match')}",
+            f"  tolerance: {legacy_parity.get('tolerance')}",
+            f"  reference_json: {legacy_parity.get('reference_json')}",
+            "",
             "VQE:",
             f"  success: {vqe.get('success')}",
             f"  noisy energy: {vqe.get('energy_noisy')}",
@@ -942,6 +1111,20 @@ def _write_noise_validation_pdf(
             f"  doublon ideal: {final.get('doublon_trotter_ideal')}",
             f"  doublon delta: {final.get('doublon_trotter_delta_noisy_minus_ideal')}",
         ]
+        per_obs = legacy_parity.get("per_observable", {})
+        obs_order = legacy_parity.get("observables", [])
+        if isinstance(per_obs, dict) and isinstance(obs_order, list):
+            lines.append("")
+            lines.append("Legacy parity deltas:")
+            for obs in obs_order:
+                if obs not in per_obs:
+                    continue
+                rec = per_obs.get(obs, {})
+                lines.append(
+                    f"  {obs}: max={rec.get('max_abs_delta')} "
+                    f"mean={rec.get('mean_abs_delta')} final={rec.get('final_abs_delta')} "
+                    f"passed={rec.get('passed')}"
+                )
         render_text_page(pdf, lines, fontsize=9)
 
         if trajectory:
@@ -1064,12 +1247,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--output-json", type=Path, default=None)
     p.add_argument("--output-pdf", type=Path, default=None)
+    p.add_argument("--legacy-reference-json", type=Path, default=None)
+    p.add_argument("--legacy-parity-tol", type=float, default=1e-10)
+    p.add_argument("--output-compare-plot", type=Path, default=None)
+    p.add_argument(
+        "--compare-observables",
+        type=str,
+        default="energy_static_trotter,doublon_trotter",
+    )
     p.add_argument("--skip-pdf", action="store_true")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = _apply_defaults_and_minimums(parse_args(argv))
+    compare_observables = _parse_compare_observables(str(args.compare_observables))
     if str(args.problem).strip().lower() == "hubbard" and str(args.adapt_pool).strip().lower() == "hva":
         _ai_log(
             "hh_noise_adapt_pool_default_override",
@@ -1163,6 +1355,29 @@ def main(argv: list[str] | None = None) -> None:
     selected_adapt_ops: list[AnsatzTerm] | None = None
     selected_adapt_theta: np.ndarray | None = None
     trajectory_rows: list[dict[str, Any]] = []
+    legacy_ref: dict[str, Any] | None = None
+    legacy_parity_payload: dict[str, Any] = {
+        "skipped": True,
+        "reference_json": None,
+        "observables": list(compare_observables),
+        "tolerance": float(args.legacy_parity_tol),
+        "time_grid_match": False,
+        "reason": "No legacy reference requested.",
+        "per_observable": {},
+        "passed_all": False,
+    }
+    if args.legacy_reference_json is not None:
+        legacy_ref = _load_legacy_trajectory(Path(args.legacy_reference_json), compare_observables)
+        legacy_parity_payload = {
+            "skipped": False,
+            "reference_json": str(args.legacy_reference_json),
+            "observables": list(compare_observables),
+            "tolerance": float(args.legacy_parity_tol),
+            "time_grid_match": False,
+            "reason": "Pending trajectory evaluation.",
+            "per_observable": {},
+            "passed_all": False,
+        }
 
     with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
         backend_info: NoiseBackendInfo = noisy_oracle.backend_info
@@ -1219,6 +1434,13 @@ def main(argv: list[str] | None = None) -> None:
             )
         else:
             init_label = str(args.initial_state_source)
+    if legacy_ref is not None:
+        legacy_parity_payload = _compute_legacy_parity(
+            legacy_ref=legacy_ref,
+            new_trajectory=trajectory_rows,
+            observables=compare_observables,
+            tolerance=float(args.legacy_parity_tol),
+        )
 
     payload: dict[str, Any] = {
         "pipeline": "hh_noise_hardware_validation",
@@ -1264,6 +1486,14 @@ def main(argv: list[str] | None = None) -> None:
             "adapt_allow_repeats": bool(args.adapt_allow_repeats),
             "adapt_gradient_step": float(args.adapt_gradient_step),
             "adapt_min_confidence": float(args.adapt_min_confidence),
+            "compare_observables": ",".join(compare_observables),
+            "legacy_reference_json": (
+                None if args.legacy_reference_json is None else str(args.legacy_reference_json)
+            ),
+            "legacy_parity_tol": float(args.legacy_parity_tol),
+            "output_compare_plot": (
+                None if args.output_compare_plot is None else str(args.output_compare_plot)
+            ),
         },
         "noise_config": asdict(noisy_cfg),
         "backend": asdict(backend_info),
@@ -1285,6 +1515,7 @@ def main(argv: list[str] | None = None) -> None:
             "reason": backend_info.details.get("fallback_reason", ""),
             "aer_failed": bool(backend_info.details.get("aer_failed", False)),
         },
+        "legacy_parity": legacy_parity_payload,
     }
 
     if trajectory_rows:
@@ -1308,6 +1539,14 @@ def main(argv: list[str] | None = None) -> None:
             )
         _write_noise_validation_pdf(pdf_path=output_pdf, payload=payload)
         _ai_log("hh_noise_validation_pdf_written", path=str(output_pdf))
+
+    if args.output_compare_plot is not None:
+        _write_legacy_comparison_plot(
+            plot_path=Path(args.output_compare_plot),
+            payload=payload,
+            legacy_ref=legacy_ref,
+        )
+        _ai_log("hh_noise_validation_compare_plot_written", path=str(args.output_compare_plot))
 
     _ai_log(
         "hh_noise_validation_done",

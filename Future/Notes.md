@@ -119,3 +119,26 @@ Initial tuning placeholders (must be set before production campaign):
 - `nfev_total` per stage
 - ADAPT stop reasons
 - Warm-stage runtime and optimizer effort stats
+
+
+
+ If you want true “slope-triggered warm cutoff then continue ADAPT in the
+     same run,” I can implement a minimal code change to add that warm handoff
+     behavior directly in the script.
+Basically, we want the HVA algorithm to stop after a fixed number of depths, when the gradient is less than or equal to some number, say e-3. The depth or the last layer should depend on L. Then we want to have the analogous regimen for the ADAPT VQE, where once the gradient for a certain number of iterations becomes less than some value, we'll stop that. This will be our ansatz that we will assume is sufficiently expressive, and we'll plug it into the Conventional VQE. 
+## Phase 2C follow-on ideas (legacy parity + noise validation)
+
+1. Runtime skip artifacts:
+- When `--noise-mode runtime` is unavailable (credentials/access), write a structured JSON `skipped` result instead of hard-failing.
+
+2. Baseline registry:
+- Add a canonical registry file (for example `artifacts/json/legacy_baselines.json`) that maps named parity anchors to artifact paths and required observables.
+- Avoid hardcoded baseline paths in CLI examples.
+
+3. CI parity checks:
+- Add a lightweight CI job that runs legacy-parity checks on locked anchors and fails on gate regressions.
+- Surface `legacy_parity.passed_all` and max deltas as CI summary outputs.
+
+4. Optional non-matching-grid interpolation mode:
+- Keep strict default (`time_grid_match` required).
+- Add an explicit opt-in interpolation compare mode for diagnostics only, never as the parity pass/fail gate.

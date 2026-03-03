@@ -95,3 +95,26 @@ def test_cli_parses_fallback_flags() -> None:
     )
     assert bool(args.allow_aer_fallback) is False
     assert bool(args.omp_shm_workaround) is False
+
+
+def test_cli_parses_legacy_parity_flags() -> None:
+    args = parse_args(
+        [
+            "--L",
+            "2",
+            "--legacy-reference-json",
+            "artifacts/json/hc_hh_L2_static_t1.0_U2.0_g1.0_nph1.json",
+            "--legacy-parity-tol",
+            "1e-10",
+            "--output-compare-plot",
+            "artifacts/pdf/hh_noise_cmp.png",
+            "--compare-observables",
+            "energy_static_trotter,doublon_trotter",
+        ]
+    )
+    assert str(args.legacy_reference_json).endswith(
+        "artifacts/json/hc_hh_L2_static_t1.0_U2.0_g1.0_nph1.json"
+    )
+    assert float(args.legacy_parity_tol) == pytest.approx(1e-10)
+    assert str(args.output_compare_plot).endswith("artifacts/pdf/hh_noise_cmp.png")
+    assert str(args.compare_observables) == "energy_static_trotter,doublon_trotter"

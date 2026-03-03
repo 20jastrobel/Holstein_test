@@ -1637,6 +1637,9 @@ def vqe_minimize(
     progress_every_s: float = 60.0,
     progress_label: str = "vqe_minimize",
     track_history: bool = False,
+    emit_theta_in_progress: bool = False,
+    return_best_on_keyboard_interrupt: bool = False,
+    early_stop_checker: Optional[Callable[[Dict[str, Any]], bool]] = None,
 ) -> VQEResult:
     """
     Hardcoded VQE: minimize <psi(theta)|H|psi(theta)> with a statevector backend.
@@ -1693,6 +1696,8 @@ def vqe_minimize(
         elapsed_s=0.0,
     )
 
+    interrupted = False
+
     for r in range(int(restarts)):
         x0 = initial_point_stddev * rng.normal(size=npar)
         restart_t0 = time.perf_counter()
@@ -1700,6 +1705,9 @@ def vqe_minimize(
         restart_best = float("inf")
         restart_last: Optional[float] = None
         restart_first: Optional[float] = None
+        restart_last_theta: Optional[np.ndarray] = None
+        restart_best_theta: Optional[np.ndarray] = None
+        interrupted_by_checker = False
         heartbeat_last_t = restart_t0
 
         _emit_progress(
@@ -1715,21 +1723,43 @@ def vqe_minimize(
         )
 
         def _objective_with_progress(x: np.ndarray) -> float:
-            nonlocal restart_nfev, restart_best, restart_last, restart_first, heartbeat_last_t
+            nonlocal restart_nfev, restart_best, restart_last, restart_first, heartbeat_last_t, restart_last_theta, restart_best_theta, interrupted_by_checker
+            x_arr = np.asarray(x, dtype=float)
             e_val = float(energy_fn(x))
             restart_nfev += 1
             restart_last = float(e_val)
+            restart_last_theta = np.array(x_arr, copy=True)
             if restart_first is None:
                 restart_first = float(e_val)
             if e_val < restart_best:
                 restart_best = float(e_val)
+                restart_best_theta = np.array(x_arr, copy=True)
 
-            if emit_heartbeat:
-                now = time.perf_counter()
-                if (heartbeat_period == 0.0) or ((now - heartbeat_last_t) >= heartbeat_period):
-                    energy_best_global = float(min(best_energy, restart_best))
+            now = time.perf_counter()
+            energy_best_global = float(min(best_energy, restart_best))
+
+            if early_stop_checker is not None:
+                checker_payload: Dict[str, Any] = {
+                    "event": "objective_step",
+                    "restart_index": int(r + 1),
+                    "restarts_total": int(restarts),
+                    "elapsed_s": float(now - run_t0),
+                    "elapsed_restart_s": float(now - restart_t0),
+                    "nfev_restart": int(restart_nfev),
+                    "nfev_so_far": int(total_nfev + restart_nfev),
+                    "energy_current": float(restart_last),
+                    "energy_restart_best": float(restart_best),
+                    "energy_best_global": float(energy_best_global),
+                }
+                stop_now = False
+                try:
+                    stop_now = bool(early_stop_checker(checker_payload))
+                except Exception:
+                    stop_now = False
+                if stop_now:
+                    interrupted_by_checker = True
                     _emit_progress(
-                        "heartbeat",
+                        "early_stop_triggered",
                         restart_index=int(r + 1),
                         restarts_total=int(restarts),
                         elapsed_s=float(now - run_t0),
@@ -1742,6 +1772,33 @@ def vqe_minimize(
                         method=str(method),
                         maxiter=int(maxiter),
                     )
+                    raise KeyboardInterrupt
+
+            if emit_heartbeat:
+                if (heartbeat_period == 0.0) or ((now - heartbeat_last_t) >= heartbeat_period):
+                    theta_current_payload: Optional[List[float]] = None
+                    theta_best_payload: Optional[List[float]] = None
+                    if bool(emit_theta_in_progress):
+                        if restart_last_theta is not None:
+                            theta_current_payload = [float(v) for v in np.asarray(restart_last_theta, dtype=float).tolist()]
+                        if restart_best_theta is not None:
+                            theta_best_payload = [float(v) for v in np.asarray(restart_best_theta, dtype=float).tolist()]
+                    _emit_progress(
+                        "heartbeat",
+                        restart_index=int(r + 1),
+                        restarts_total=int(restarts),
+                        elapsed_s=float(now - run_t0),
+                        elapsed_restart_s=float(now - restart_t0),
+                        nfev_restart=int(restart_nfev),
+                        nfev_so_far=int(total_nfev + restart_nfev),
+                        energy_current=float(restart_last),
+                        energy_restart_best=float(restart_best),
+                        energy_best_global=float(energy_best_global),
+                        theta_current=theta_current_payload,
+                        theta_restart_best=theta_best_payload,
+                        method=str(method),
+                        maxiter=int(maxiter),
+                    )
                     heartbeat_last_t = now
             return float(e_val)
 
@@ -1751,20 +1808,43 @@ def vqe_minimize(
                 lo, hi = float(bounds[0]), float(bounds[1])
                 bnds = [(lo, hi)] * npar
 
-            res = minimize(
-                _objective_with_progress,
-                x0,
-                method=str(method),
-                bounds=bnds,
-                options={"maxiter": int(maxiter)},
-            )
+            try:
+                res = minimize(
+                    _objective_with_progress,
+                    x0,
+                    method=str(method),
+                    bounds=bnds,
+                    options={"maxiter": int(maxiter)},
+                )
 
-            energy = float(res.fun)
-            theta_opt = np.asarray(res.x, dtype=float)
-            nfev = int(getattr(res, "nfev", 0))
-            nit = int(getattr(res, "nit", 0))
-            success = bool(getattr(res, "success", False))
-            message = str(getattr(res, "message", ""))
+                energy = float(res.fun)
+                theta_opt = np.asarray(res.x, dtype=float)
+                nfev = int(getattr(res, "nfev", 0))
+                nit = int(getattr(res, "nit", 0))
+                success = bool(getattr(res, "success", False))
+                message = str(getattr(res, "message", ""))
+            except KeyboardInterrupt:
+                if not bool(return_best_on_keyboard_interrupt):
+                    raise
+                interrupted = True
+                if restart_best_theta is not None and np.isfinite(restart_best):
+                    theta_opt = np.asarray(restart_best_theta, dtype=float)
+                    energy = float(restart_best)
+                elif restart_last_theta is not None and restart_last is not None:
+                    theta_opt = np.asarray(restart_last_theta, dtype=float)
+                    energy = float(restart_last)
+                else:
+                    theta_opt = np.asarray(x0, dtype=float)
+                    energy = float(energy_fn(theta_opt))
+                    restart_nfev += 1
+                nfev = int(max(restart_nfev, 0))
+                nit = 0
+                success = False
+                message = (
+                    "early_stop_checker_returning_best_restart"
+                    if bool(interrupted_by_checker)
+                    else "interrupted_keyboard_returning_best_restart"
+                )
 
         else:
             theta_opt = np.array(x0, dtype=float)
@@ -1815,6 +1895,11 @@ def vqe_minimize(
             energy_current=float(restart_last),
             energy_restart_best=float(restart_best),
             energy_best_global=float(min(best_energy, restart_best)),
+            theta_restart_best=(
+                [float(v) for v in np.asarray(restart_best_theta, dtype=float).tolist()]
+                if (bool(emit_theta_in_progress) and restart_best_theta is not None)
+                else None
+            ),
             improvement_from_start=(None if restart_first is None else float(restart_first - restart_best)),
             success=bool(success),
             message=str(message),
@@ -1830,6 +1915,19 @@ def vqe_minimize(
             best_nit = nit
             best_success = success
             best_message = message
+
+        if interrupted:
+            _emit_progress(
+                "run_interrupted",
+                elapsed_s=float(time.perf_counter() - run_t0),
+                restarts_total=int(restarts),
+                stopped_at_restart=int(r + 1),
+                energy_best=(None if not np.isfinite(best_energy) else float(best_energy)),
+                nfev_total=int(total_nfev),
+                nit_total=int(total_nit),
+                message=str(message),
+            )
+            break
 
     assert best_theta is not None
     _emit_progress(

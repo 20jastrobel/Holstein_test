@@ -300,6 +300,75 @@ Acceptance highlights:
 - manufactured 1-qubit order slopes (`~4` for cfqm4, `~6` for cfqm6, `~2` with inner suzuki2)
 - small HH sanity trend vs fine piecewise reference
 
+Quantum-processor proxy benchmark (CFQM vs Suzuki):
+
+```bash
+python pipelines/exact_bench/cfqm_vs_suzuki_qproc_proxy_benchmark.py \
+  --problem hubbard --L 2 \
+  --methods suzuki2,cfqm4,cfqm6 \
+  --steps-grid 64,128,256,512 \
+  --reference-steps 2048 \
+  --drive-enabled
+
+# Equal-cost policy (optional, apples-to-apples):
+python pipelines/exact_bench/cfqm_vs_suzuki_qproc_proxy_benchmark.py \
+  --problem hubbard --L 2 \
+  --methods suzuki2,cfqm4,cfqm6 \
+  --steps-grid 64,128,256,512 \
+  --reference-steps 2048 \
+  --compare-policy cost_match \
+  --cost-match-metric cx_proxy_total \
+  --cost-match-tolerance 0.0 \
+  --drive-enabled
+```
+
+Why this benchmark:
+- Local runtime is machine-dependent and not the main comparison axis.
+- The benchmark ranks methods by final energy error versus processor-oriented cost proxies:
+  - term exponential count
+  - 2-qubit gate proxy (`cx_proxy_total`)
+  - 1-qubit gate proxy (`sq_proxy_total`)
+- `S` in the result tables is macro-step count (`trotter_steps`), not a cost metric.
+- Use `--compare-policy cost_match` for fair, equal-cost comparisons; default remains
+  sweep-only row listing.
+- Default cost axis for fair matching is `cx_proxy_total`; fallback metric is `term_exp_count_total` when requested.
+- CFQM runs use `pauli_suzuki2` stage exponentials in this benchmark to produce hardware-comparable termwise gate proxies (this is a benchmarking profile, not the high-order dense/sparse CFQM profile).
+
+Artifacts:
+- `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_runs.json`
+- `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_runs.csv`
+- `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_summary.json`
+
+CFQM efficiency suite (error-vs-cost, apples-to-apples):
+
+```bash
+python pipelines/exact_bench/cfqm_vs_suzuki_efficiency_suite.py \
+  --problem-grid hubbard_L4,hh_L2_nb2,hh_L2_nb3 \
+  --drive-grid sinusoid,gaussian_sharp \
+  --methods suzuki2,cfqm4,cfqm6 \
+  --stage-mode-grid exact_sparse,exact_dense,pauli_suzuki2 \
+  --reference-steps-multiplier 8 \
+  --equal-cost-axis cx_proxy,pauli_rot_count,expm_calls,wall_time \
+  --equal-cost-policy exact_tie_only \
+  --calibrate-transpile \
+  --output-dir artifacts/cfqm_efficiency_benchmark
+```
+
+Efficiency-suite outputs:
+- `artifacts/cfqm_efficiency_benchmark/runs_full.json`
+- `artifacts/cfqm_efficiency_benchmark/runs_full.csv`
+- `artifacts/cfqm_efficiency_benchmark/summary_by_scenario.json`
+- `artifacts/cfqm_efficiency_benchmark/pareto_by_metric.json`
+- `artifacts/cfqm_efficiency_benchmark/slope_fits.json`
+- `artifacts/cfqm_efficiency_benchmark/equal_cost_exact_ties_<metric>.csv`
+- `artifacts/cfqm_efficiency_benchmark/cfqm_efficiency_suite.pdf`
+
+Efficiency-suite interpretation rules:
+- Main fair tables are exact-cost ties only (`delta=0`) for `cx_proxy`, `pauli_rot_count`, and `expm_calls`.
+- Wall-time comparisons are near-tie bins and explicitly marked approximate.
+- Fallback nearest-neighbor matches are appendix-only (non-fair direct comparisons).
+- `S` always means macro-step count (`trotter_steps`), never a fairness axis.
+
 For compare/orchestration workflows, use `pipelines/run_guide.md`.
 
 ## Major Markdown docs index
@@ -314,3 +383,11 @@ For compare/orchestration workflows, use `pipelines/run_guide.md`.
 - `pipelines/exact_bench/README.md`
 - `pipelines/qiskit_archive/README.md`
 - `pipelines/qiskit_archive/DESIGN_NOTE_TIMEDEP.md`
+
+## HH noisy estimator validation
+
+The repo now includes an HH-first noisy/hardware validation pipeline:
+- `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+It provides one shared expectation oracle across `ideal`, `shots`, `aer_noise`, and `runtime` modes, with optional noisy ADAPT and PDF/JSON reporting.  
+Use `pipelines/run_guide.md` section 11+ for operational commands and mode-by-mode guidance.

@@ -27,7 +27,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -107,6 +107,11 @@ class ProbeConfig:
     warm_method: str
     warm_seed: int
     warm_progress_every_seconds: int
+    warm_auto_cutoff: bool
+    warm_cutoff_min_heartbeats: int
+    warm_cutoff_window_heartbeats: int
+    warm_cutoff_slope_threshold: float
+    warm_cutoff_min_elapsed_s: float
     probe_budget: StageBudget
     medium_budget: StageBudget
     progress_every_depth: int
@@ -118,6 +123,9 @@ class ProbeConfig:
     output_csv: Path
     output_md: Path
     output_log: Path
+    state_export_dir: Path
+    state_export_prefix: str
+    save_psi_best_in_payload: bool
 
 
 class RunLogger:
@@ -347,9 +355,10 @@ def _make_dedup_pool(
     return dedup, source_by_sig, meta
 
 
-def _serialize_stage_result(run: dict[str, Any]) -> dict[str, Any]:
+def _serialize_stage_result(run: dict[str, Any], *, keep_psi_best: bool = False) -> dict[str, Any]:
     out = dict(run)
-    out.pop("psi_best", None)
+    if not bool(keep_psi_best):
+        out.pop("psi_best", None)
     return out
 
 
@@ -365,6 +374,7 @@ def _run_adapt_stage(
     budget: StageBudget,
     logger: RunLogger,
     progress_events: list[dict[str, Any]],
+    checkpoint_cb: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     stage_start = time.perf_counter()
     selected_ops: list[AnsatzTerm] = []
@@ -545,6 +555,32 @@ def _run_adapt_stage(
             )
             break
 
+        if checkpoint_cb is not None:
+            try:
+                psi_ckpt = _prepare_state(psi_start, selected_ops, theta)
+                psi_ckpt = np.asarray(psi_ckpt, dtype=complex).reshape(-1)
+                psi_ckpt = psi_ckpt / np.linalg.norm(psi_ckpt)
+                checkpoint_cb(
+                    {
+                        "run_id": str(label),
+                        "kind": "depth_checkpoint",
+                        "depth": int(depth + 1),
+                        "psi_state": psi_ckpt,
+                        "energy_current": float(energy_current),
+                        "energy_best": float(best_energy),
+                        "delta_E_abs_current": float(cur_delta),
+                        "delta_E_abs_best": float(best_delta),
+                        "max_grad": float(max_grad),
+                        "selected_trace": [dict(x) for x in trace],
+                        "nfev_total": int(nfev_total),
+                        "nit_total": int(nit_total),
+                        "runtime_s": float(time.perf_counter() - stage_start),
+                        "stop_reason": str(stop_reason),
+                    }
+                )
+            except Exception as exc:
+                logger.log(f"{label}: checkpoint callback failed at depth {depth + 1}: {exc}")
+
     psi_best = _prepare_state(psi_start, selected_ops, theta)
     psi_best = np.asarray(psi_best, dtype=complex).reshape(-1)
     psi_best = psi_best / np.linalg.norm(psi_best)
@@ -578,6 +614,30 @@ def _run_adapt_stage(
         "sector_diag": _sector_diagnostics(psi_best, cfg),
         "psi_best": psi_best.tolist(),
     }
+
+    if checkpoint_cb is not None:
+        try:
+            checkpoint_cb(
+                {
+                    "run_id": str(label),
+                    "kind": "final_stage_state",
+                    "depth": int(len(selected_ops)),
+                    "psi_state": psi_best,
+                    "energy_current": float(energy_current),
+                    "energy_best": float(result["E_best"]),
+                    "delta_E_abs_current": float(abs(float(energy_current) - float(e_exact))),
+                    "delta_E_abs_best": float(result["delta_E_abs"]),
+                    "max_grad": (float(grad_max_trace[-1]) if grad_max_trace else float("nan")),
+                    "selected_trace": [dict(x) for x in trace],
+                    "nfev_total": int(nfev_total),
+                    "nit_total": int(nit_total),
+                    "runtime_s": float(time.perf_counter() - stage_start),
+                    "stop_reason": str(stop_reason),
+                }
+            )
+        except Exception as exc:
+            logger.log(f"{label}: final checkpoint callback failed: {exc}")
+
     return result
 
 
@@ -622,6 +682,7 @@ def _safe_run_stage(
     budget: StageBudget,
     logger: RunLogger,
     progress_events: list[dict[str, Any]],
+    checkpoint_cb: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     try:
         return _run_adapt_stage(
@@ -635,6 +696,7 @@ def _safe_run_stage(
             budget=budget,
             logger=logger,
             progress_events=progress_events,
+            checkpoint_cb=checkpoint_cb,
         )
     except Exception as exc:
         logger.log(f"{label}: ERROR {exc}")
@@ -663,6 +725,81 @@ def _parse_sector(text: str) -> tuple[int, int]:
 def _json_dump(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _statevector_to_amplitudes_qn_to_q0(
+    psi: np.ndarray,
+    *,
+    cutoff: float = 1e-14,
+) -> dict[str, dict[str, float]]:
+    vec = np.asarray(psi, dtype=complex).reshape(-1)
+    nq = int(round(math.log2(int(vec.size))))
+    if (1 << nq) != int(vec.size):
+        raise ValueError(f"Statevector length is not a power of two: {vec.size}")
+    out: dict[str, dict[str, float]] = {}
+    for idx, amp in enumerate(vec):
+        if abs(amp) < float(cutoff):
+            continue
+        bit = format(idx, f"0{nq}b")
+        out[bit] = {"re": float(np.real(amp)), "im": float(np.imag(amp))}
+    return out
+
+
+def _settings_manifest(cfg: ProbeConfig) -> dict[str, Any]:
+    return {
+        "L": int(cfg.L),
+        "problem": "hh",
+        "t": float(cfg.t),
+        "u": float(cfg.U),
+        "dv": float(cfg.dv),
+        "omega0": float(cfg.omega0),
+        "g_ep": float(cfg.g_ep),
+        "n_ph_max": int(cfg.n_ph_max),
+        "boson_encoding": str(cfg.boson_encoding),
+        "ordering": str(cfg.ordering),
+        "boundary": str(cfg.boundary),
+        "sector_n_up": int(cfg.sector_n_up),
+        "sector_n_dn": int(cfg.sector_n_dn),
+    }
+
+
+def _write_state_bundle(
+    *,
+    path: Path,
+    psi_state: np.ndarray,
+    cfg: ProbeConfig,
+    source: str,
+    exact_energy: float,
+    energy: float,
+    delta_E_abs: float,
+    relative_error_abs: float,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    psi = np.asarray(psi_state, dtype=complex).reshape(-1)
+    psi = psi / np.linalg.norm(psi)
+    amps = _statevector_to_amplitudes_qn_to_q0(psi, cutoff=1e-14)
+    payload: dict[str, Any] = {
+        "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "settings": _settings_manifest(cfg),
+        "adapt_vqe": {
+            "energy": float(energy),
+            "abs_delta_e": float(delta_E_abs),
+            "relative_error_abs": float(relative_error_abs),
+        },
+        "initial_state": {
+            "source": str(source),
+            "nq_total": int(round(math.log2(int(psi.size)))),
+            "amplitudes_qn_to_q0": amps,
+            "amplitude_cutoff": 1e-14,
+            "norm": float(np.linalg.norm(psi)),
+        },
+        "exact": {
+            "E_exact_sector": float(exact_energy),
+        },
+    }
+    if isinstance(meta, dict):
+        payload["meta"] = dict(meta)
+    _json_dump(path, payload)
 
 
 def _build_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -703,6 +840,8 @@ def _build_summary_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "adapt_stop_reason": run.get("adapt_stop_reason", ""),
                 "final_max_grad": (run.get("grad_max_trace", [])[-1] if run.get("grad_max_trace") else ""),
                 "medium_gate_pass": run.get("medium_gate_pass", ""),
+                "state_export_json": run.get("state_export_json", ""),
+                "state_checkpoint_json": run.get("state_checkpoint_json", ""),
             }
         )
     return rows
@@ -817,6 +956,8 @@ def _build_cfg(args: argparse.Namespace) -> ProbeConfig:
     out_csv = Path(args.output_csv) if args.output_csv else Path(str(out_json).replace(".json", "_summary.csv"))
     out_md = Path(args.output_md) if args.output_md else Path(str(out_json).replace(".json", "_summary.md"))
     out_log = Path(args.output_log) if args.output_log else Path(str(out_json).replace(".json", ".log"))
+    state_export_dir = Path(args.state_export_dir) if str(args.state_export_dir).strip() else out_json.parent
+    state_export_prefix = str(args.state_export_prefix).strip() if str(args.state_export_prefix).strip() else out_json.stem
 
     return ProbeConfig(
         L=int(args.L),
@@ -845,6 +986,11 @@ def _build_cfg(args: argparse.Namespace) -> ProbeConfig:
         warm_method=str(args.warm_method),
         warm_seed=int(args.warm_seed),
         warm_progress_every_seconds=int(args.warm_progress_every_seconds),
+        warm_auto_cutoff=bool(args.warm_auto_cutoff),
+        warm_cutoff_min_heartbeats=int(args.warm_cutoff_min_heartbeats),
+        warm_cutoff_window_heartbeats=int(args.warm_cutoff_window_heartbeats),
+        warm_cutoff_slope_threshold=float(args.warm_cutoff_slope_threshold),
+        warm_cutoff_min_elapsed_s=float(args.warm_cutoff_min_elapsed_s),
         probe_budget=probe_budget,
         medium_budget=medium_budget,
         progress_every_depth=int(args.progress_every_depth),
@@ -856,6 +1002,9 @@ def _build_cfg(args: argparse.Namespace) -> ProbeConfig:
         output_csv=out_csv,
         output_md=out_md,
         output_log=out_log,
+        state_export_dir=state_export_dir,
+        state_export_prefix=state_export_prefix,
+        save_psi_best_in_payload=bool(args.save_psi_best_in_payload),
     )
 
 
@@ -894,6 +1043,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--warm-method", type=str, default="COBYLA", choices=["COBYLA", "SLSQP", "L-BFGS-B", "Powell", "Nelder-Mead"])
     p.add_argument("--warm-seed", type=int, default=7)
     p.add_argument("--warm-progress-every-seconds", type=int, default=60)
+    p.add_argument("--warm-auto-cutoff", action="store_true", help="Enable automatic warm cutoff based on best-|DeltaE| slope; continues with best-so-far warm state.")
+    p.add_argument("--warm-cutoff-min-heartbeats", type=int, default=4)
+    p.add_argument("--warm-cutoff-window-heartbeats", type=int, default=3)
+    p.add_argument("--warm-cutoff-slope-threshold", type=float, default=5e-4, help="Cutoff when recent slope d(best|DeltaE|)/dt >= -threshold (per second).")
+    p.add_argument("--warm-cutoff-min-elapsed-s", type=float, default=180.0)
 
     p.add_argument("--probe-depth", type=int, default=20)
     p.add_argument("--probe-maxiter", type=int, default=1200)
@@ -922,6 +1076,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--output-csv", type=str, default="")
     p.add_argument("--output-md", type=str, default="")
     p.add_argument("--output-log", type=str, default="")
+    p.add_argument(
+        "--state-export-dir",
+        type=str,
+        default="",
+        help="Directory to write adapt_json-compatible warm/ADAPT state exports. Defaults to output-json parent.",
+    )
+    p.add_argument(
+        "--state-export-prefix",
+        type=str,
+        default="",
+        help="Prefix for exported state bundle filenames. Defaults to output-json stem.",
+    )
+    p.add_argument(
+        "--save-psi-best-in-payload",
+        action="store_true",
+        help="Keep psi_best in main run JSON payload (can be very large).",
+    )
 
     return p.parse_args(argv)
 
@@ -979,6 +1150,13 @@ def main(argv: list[str] | None = None) -> None:
         )
     )
     logger.log(f"EXACT sector energy: {e_exact:.12f}")
+    state_export_dir = Path(cfg.state_export_dir)
+    state_export_dir.mkdir(parents=True, exist_ok=True)
+    state_export_prefix = str(cfg.state_export_prefix)
+
+    def _state_path(tag: str) -> Path:
+        safe_tag = str(tag).replace(" ", "_")
+        return state_export_dir / f"{state_export_prefix}_{safe_tag}_state.json"
 
     # Shared warm-start stage.
     t_warm = time.perf_counter()
@@ -997,8 +1175,79 @@ def main(argv: list[str] | None = None) -> None:
         pbc=(str(cfg.boundary).strip().lower() == "periodic"),
     )
     warm_progress_events: list[dict[str, Any]] = []
+    warm_checkpoint_export = _state_path("warm_checkpoint")
+    warm_ckpt = {
+        "best_energy": float("inf"),
+        "updates": 0,
+        "theta_best": None,
+        "last_event": "",
+    }
+    warm_cutoff_state = {
+        "triggered": False,
+        "reason": "",
+        "recent_slope": float("nan"),
+        "window_dt_s": float("nan"),
+        "window_points": [],
+    }
+
+    def _warm_early_stop_checker(_payload: dict[str, Any]) -> bool:
+        return bool(cfg.warm_auto_cutoff and warm_cutoff_state["triggered"])
 
     def _warm_progress_callback(event: dict[str, Any]) -> None:
+        def _maybe_write_warm_checkpoint(ev: dict[str, Any]) -> None:
+            theta_cand = ev.get("theta_restart_best")
+            if theta_cand is None:
+                theta_cand = ev.get("theta_current")
+            if not isinstance(theta_cand, list):
+                return
+            if len(theta_cand) != int(warm_ansatz.num_parameters):
+                return
+
+            e_best_global = ev.get("energy_best_global")
+            e_restart_best = ev.get("energy_restart_best")
+            e_cand = float("nan")
+            if isinstance(e_best_global, (float, int)):
+                e_cand = float(e_best_global)
+            elif isinstance(e_restart_best, (float, int)):
+                e_cand = float(e_restart_best)
+            if not math.isfinite(e_cand):
+                return
+            if math.isfinite(float(warm_ckpt["best_energy"])) and e_cand >= float(warm_ckpt["best_energy"]) - 1e-14:
+                return
+            try:
+                theta_arr = np.asarray(theta_cand, dtype=float)
+                psi_ck = np.asarray(warm_ansatz.prepare_state(theta_arr, psi_ref), dtype=complex).reshape(-1)
+                psi_ck = psi_ck / np.linalg.norm(psi_ck)
+                d_ck = abs(float(e_cand) - float(e_exact))
+                rel_ck = float(d_ck / max(abs(float(e_exact)), 1e-14))
+                _write_state_bundle(
+                    path=warm_checkpoint_export,
+                    psi_state=psi_ck,
+                    cfg=cfg,
+                    source="warm_checkpoint",
+                    exact_energy=float(e_exact),
+                    energy=float(e_cand),
+                    delta_E_abs=float(d_ck),
+                    relative_error_abs=float(rel_ck),
+                    meta={
+                        "event": str(ev.get("event", "")),
+                        "restart_index": ev.get("restart_index"),
+                        "restarts_total": ev.get("restarts_total"),
+                        "elapsed_s": ev.get("elapsed_s"),
+                        "nfev_so_far": ev.get("nfev_so_far"),
+                    },
+                )
+                warm_ckpt["best_energy"] = float(e_cand)
+                warm_ckpt["theta_best"] = [float(x) for x in theta_arr.tolist()]
+                warm_ckpt["updates"] = int(warm_ckpt["updates"]) + 1
+                warm_ckpt["last_event"] = str(ev.get("event", ""))
+                logger.log(
+                    f"STATE_EXPORT warm_checkpoint: {warm_checkpoint_export} "
+                    f"E={float(e_cand):.12f} |DeltaE|={d_ck:.6e}"
+                )
+            except Exception as exc:
+                logger.log(f"WARM checkpoint export failed: {exc}")
+
         ev = dict(event)
         e_cur = ev.get("energy_current")
         e_best = ev.get("energy_best_global")
@@ -1025,6 +1274,41 @@ def main(argv: list[str] | None = None) -> None:
             if "delta_E_abs_best" in ev:
                 msg += f" best|DeltaE|={float(ev['delta_E_abs_best']):.6e}"
             logger.log(msg)
+
+            if (
+                bool(cfg.warm_auto_cutoff)
+                and (not bool(warm_cutoff_state["triggered"]))
+                and isinstance(ev.get("elapsed_s"), (float, int))
+                and isinstance(ev.get("delta_E_abs_best"), (float, int))
+            ):
+                elapsed_s = float(ev["elapsed_s"])
+                d_best = float(ev["delta_E_abs_best"])
+                pts = list(warm_cutoff_state["window_points"])
+                pts.append((elapsed_s, d_best))
+                warm_cutoff_state["window_points"] = pts
+
+                min_hb = max(2, int(cfg.warm_cutoff_min_heartbeats))
+                w = max(2, int(cfg.warm_cutoff_window_heartbeats))
+                if len(pts) >= max(min_hb, w) and elapsed_s >= float(cfg.warm_cutoff_min_elapsed_s):
+                    recent = pts[-w:]
+                    t0, d0 = recent[0]
+                    t1, d1 = recent[-1]
+                    dt = float(t1 - t0)
+                    if dt > 0.0:
+                        slope = float((d1 - d0) / dt)
+                        warm_cutoff_state["recent_slope"] = float(slope)
+                        warm_cutoff_state["window_dt_s"] = float(dt)
+                        if slope >= -abs(float(cfg.warm_cutoff_slope_threshold)):
+                            warm_cutoff_state["triggered"] = True
+                            warm_cutoff_state["reason"] = (
+                                f"slope={slope:.6e}/s threshold={-abs(float(cfg.warm_cutoff_slope_threshold)):.6e}/s "
+                                f"window={w} elapsed={elapsed_s:.1f}s"
+                            )
+                            logger.log(
+                                "WARM auto-cutoff trigger: "
+                                + str(warm_cutoff_state["reason"])
+                                + " ; stopping warm and continuing with best-so-far state."
+                            )
         elif tag == "restart_end":
             msg = (
                 f"WARM restart {ev.get('restart_index')}/{ev.get('restarts_total')} end "
@@ -1039,6 +1323,7 @@ def main(argv: list[str] | None = None) -> None:
                 f"WARM run end elapsed_s={float(ev.get('elapsed_s', 0.0)):.1f} "
                 f"best_restart={ev.get('best_restart')} nfev_total={int(ev.get('nfev_total', 0))}"
             )
+        _maybe_write_warm_checkpoint(ev)
 
     warm_res = vqe_minimize(
         h_poly,
@@ -1051,6 +1336,9 @@ def main(argv: list[str] | None = None) -> None:
         progress_logger=_warm_progress_callback,
         progress_every_s=float(cfg.warm_progress_every_seconds),
         progress_label="warm_start_l4_hh",
+        emit_theta_in_progress=True,
+        return_best_on_keyboard_interrupt=True,
+        early_stop_checker=_warm_early_stop_checker,
     )
     psi_warm = np.asarray(warm_ansatz.prepare_state(np.asarray(warm_res.theta, dtype=float), psi_ref), dtype=complex).reshape(-1)
     psi_warm = psi_warm / np.linalg.norm(psi_warm)
@@ -1063,6 +1351,33 @@ def main(argv: list[str] | None = None) -> None:
         f"nfev={warm_res.nfev} nit={warm_res.nit} runtime_s={time.perf_counter()-t_warm:.2f} "
         f"heartbeat_events={len(warm_progress_events)}"
     )
+    if (not bool(warm_res.success)) and ("early_stop_checker" in str(warm_res.message)):
+        logger.log("WARM stopped by automatic cutoff; continuing with best-so-far warm state.")
+    elif (not bool(warm_res.success)) and ("interrupted_keyboard" in str(warm_res.message)):
+        logger.log("WARM interrupted by user; continuing with best-so-far warm state.")
+    warm_state_export = _state_path("warm")
+    _write_state_bundle(
+        path=warm_state_export,
+        psi_state=psi_warm,
+        cfg=cfg,
+        source="warm_start_hva",
+        exact_energy=float(e_exact),
+        energy=float(e_warm),
+        delta_E_abs=float(d_warm),
+        relative_error_abs=float(rel_warm),
+        meta={
+            "stage": "warm_start",
+            "ansatz": str(cfg.warm_ansatz),
+            "reps": int(cfg.warm_reps),
+            "restarts": int(cfg.warm_restarts),
+            "maxiter": int(cfg.warm_maxiter),
+            "method": str(cfg.warm_method),
+            "warm_theta": [float(x) for x in np.asarray(warm_res.theta, dtype=float).tolist()],
+            "warm_nfev": int(warm_res.nfev),
+            "warm_nit": int(warm_res.nit),
+        },
+    )
+    logger.log(f"STATE_EXPORT warm: {warm_state_export}")
 
     # Build pools.
     boson_bits = int(cfg.L) * int(boson_qubits_per_site(int(cfg.n_ph_max), str(cfg.boson_encoding)))
@@ -1111,6 +1426,11 @@ def main(argv: list[str] | None = None) -> None:
             "warm_method": str(cfg.warm_method),
             "warm_seed": int(cfg.warm_seed),
             "warm_progress_every_seconds": int(cfg.warm_progress_every_seconds),
+            "warm_auto_cutoff": bool(cfg.warm_auto_cutoff),
+            "warm_cutoff_min_heartbeats": int(cfg.warm_cutoff_min_heartbeats),
+            "warm_cutoff_window_heartbeats": int(cfg.warm_cutoff_window_heartbeats),
+            "warm_cutoff_slope_threshold": float(cfg.warm_cutoff_slope_threshold),
+            "warm_cutoff_min_elapsed_s": float(cfg.warm_cutoff_min_elapsed_s),
             "probe_depth": int(cfg.probe_budget.max_depth),
             "probe_maxiter": int(cfg.probe_budget.maxiter),
             "probe_eps_grad": float(cfg.probe_budget.eps_grad),
@@ -1126,6 +1446,9 @@ def main(argv: list[str] | None = None) -> None:
             "probe_rel_drop_min": float(cfg.probe_rel_drop_min),
             "progress_every_depth": int(cfg.progress_every_depth),
             "progress_every_seconds": int(cfg.progress_every_seconds),
+            "state_export_dir": str(state_export_dir),
+            "state_export_prefix": str(state_export_prefix),
+            "save_psi_best_in_payload": bool(cfg.save_psi_best_in_payload),
             "l3_reference_profile": {
                 "L": 3,
                 "boundary": "open",
@@ -1162,6 +1485,14 @@ def main(argv: list[str] | None = None) -> None:
             "warm_num_parameters": int(warm_ansatz.num_parameters),
             "runtime_s": float(time.perf_counter() - t_warm),
             "progress_events_count": int(len(warm_progress_events)),
+            "state_export_json": str(warm_state_export),
+            "state_checkpoint_json": str(warm_checkpoint_export),
+            "state_checkpoint_updates": int(warm_ckpt["updates"]),
+            "warm_auto_cutoff_enabled": bool(cfg.warm_auto_cutoff),
+            "warm_auto_cutoff_triggered": bool(warm_cutoff_state["triggered"]),
+            "warm_auto_cutoff_reason": str(warm_cutoff_state["reason"]),
+            "warm_auto_cutoff_recent_slope": float(warm_cutoff_state["recent_slope"]),
+            "warm_auto_cutoff_window_dt_s": float(warm_cutoff_state["window_dt_s"]),
         },
         "warm_progress_events": warm_progress_events,
         "pool_components_raw": {
@@ -1191,6 +1522,29 @@ def main(argv: list[str] | None = None) -> None:
 
     for run_id, pool, src, budget in run_order:
         logger.log(f"RUN_START {run_id}")
+
+        checkpoint_path = _state_path(f"{run_id}_checkpoint")
+
+        def _stage_checkpoint_cb(snapshot: dict[str, Any], *, _run_id: str = str(run_id), _budget_name: str = str(budget.name), _path: Path = checkpoint_path) -> None:
+            psi_snapshot = np.asarray(snapshot.get("psi_state"), dtype=complex).reshape(-1)
+            energy_snapshot = float(snapshot.get("energy_current", float("nan")))
+            delta_snapshot = float(snapshot.get("delta_E_abs_current", abs(float(energy_snapshot) - float(e_exact))))
+            rel_snapshot = float(delta_snapshot / max(abs(float(e_exact)), 1e-14))
+            meta = {k: v for k, v in snapshot.items() if k != "psi_state"}
+            meta["run_id"] = str(_run_id)
+            meta["budget_name"] = str(_budget_name)
+            _write_state_bundle(
+                path=_path,
+                psi_state=psi_snapshot,
+                cfg=cfg,
+                source=f"{_run_id}_checkpoint",
+                exact_energy=float(e_exact),
+                energy=float(energy_snapshot),
+                delta_E_abs=float(delta_snapshot),
+                relative_error_abs=float(rel_snapshot),
+                meta=meta,
+            )
+
         run = _safe_run_stage(
             label=str(run_id),
             h_poly=h_poly,
@@ -1202,14 +1556,41 @@ def main(argv: list[str] | None = None) -> None:
             budget=budget,
             logger=logger,
             progress_events=progress_events,
+            checkpoint_cb=_stage_checkpoint_cb,
         )
+        run["state_checkpoint_json"] = str(checkpoint_path)
 
         if bool(run.get("ok", False)) and str(budget.name) == "medium":
             run["medium_gate_pass"] = bool(float(run["delta_E_abs"]) <= float(cfg.medium_delta_target))
         else:
             run["medium_gate_pass"] = None
 
-        payload["runs"][str(run_id)] = _serialize_stage_result(run)
+        if bool(run.get("ok", False)):
+            stage_state_export = _state_path(str(run_id))
+            psi_stage = np.asarray(run.get("psi_best"), dtype=complex).reshape(-1)
+            _write_state_bundle(
+                path=stage_state_export,
+                psi_state=psi_stage,
+                cfg=cfg,
+                source=f"{run_id}_final",
+                exact_energy=float(e_exact),
+                energy=float(run.get("E_best", float("nan"))),
+                delta_E_abs=float(run.get("delta_E_abs", float("nan"))),
+                relative_error_abs=float(run.get("relative_error_abs", float("nan"))),
+                meta={
+                    "run_id": str(run_id),
+                    "budget_name": str(budget.name),
+                    "adapt_depth_reached": int(run.get("adapt_depth_reached", 0)),
+                    "adapt_stop_reason": str(run.get("adapt_stop_reason", "")),
+                    "nfev_total": int(run.get("nfev_total", 0)),
+                    "nit_total": int(run.get("nit_total", 0)),
+                    "selected_trace": run.get("selected_trace", []),
+                },
+            )
+            run["state_export_json"] = str(stage_state_export)
+            logger.log(f"STATE_EXPORT {run_id}: {stage_state_export}")
+
+        payload["runs"][str(run_id)] = _serialize_stage_result(run, keep_psi_best=bool(cfg.save_psi_best_in_payload))
 
         if bool(run.get("ok", False)):
             logger.log(

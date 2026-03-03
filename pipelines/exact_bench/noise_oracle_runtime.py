@@ -371,6 +371,10 @@ def _build_estimator(
         return estimator, None, info
 
     if mode in {"shots", "aer_noise"}:
+        if str(os.environ.get("HH_FORCE_SAMPLER_FALLBACK", "0")).strip() == "1":
+            raise RuntimeError(
+                "OMP: Error #178: Forced sampler fallback via HH_FORCE_SAMPLER_FALLBACK=1."
+            )
         env_workaround_applied = _apply_omp_env_workaround(cfg)
         _preflight_aer_environment(cfg, mode)
         try:

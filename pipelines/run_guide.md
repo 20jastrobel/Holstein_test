@@ -218,6 +218,36 @@ If probe fails (`ΔE_abs > 5e-2`), apply in order:
 
 Stop escalating once probe passes or you hit a wallclock/budget cap.
 
+### Agent-run warm cutoff + reusable state export (no manual Ctrl+C)
+
+For Codex/agent-driven runs (no human keypress control), the L4 HH sequential
+benchmark script supports an automatic warm-stage cutoff and persistent state
+exports that are directly reusable by `hubbard_pipeline.py --initial-state-source adapt_json`.
+
+Script: `test/l4_hh_warmstart_uccsd_paop_hva_seq_probe.py`
+
+Key flags:
+- `--warm-auto-cutoff`
+- `--warm-cutoff-min-heartbeats` (default `4`)
+- `--warm-cutoff-window-heartbeats` (default `3`)
+- `--warm-cutoff-slope-threshold` (default `5e-4` per second)
+- `--warm-cutoff-min-elapsed-s` (default `180`)
+- `--state-export-dir`, `--state-export-prefix`
+
+Behavior:
+- Warm stage continuously writes `*_warm_checkpoint_state.json` whenever a new
+  best warm energy is observed.
+- If the warm best-|DeltaE| slope plateaus above the threshold window, warm
+  stops automatically and the best-so-far warm state is used to continue ADAPT.
+- On normal stage completion, each stage writes:
+  - `*_warm_state.json`
+  - `*_A_probe_state.json`, `*_A_medium_state.json`, `*_B_probe_state.json`, `*_B_medium_state.json`
+  - checkpoint variants `*_<run_id>_checkpoint_state.json`
+
+Conventional pipeline handoff:
+- Example:
+  - `--initial-state-source adapt_json --adapt-input-json artifacts/useful/L4/<prefix>_A_probe_state.json`
+
 ### Example computed defaults (from the L_ref=3 baseline)
 
 These are direct evaluations of the closed-form rules above.
@@ -436,6 +466,90 @@ python pipelines/hardcoded/hubbard_pipeline.py \
   --drive-pattern staggered --drive-time-sampling left --exact-steps-multiplier 2 \
   --propagator piecewise_exact --skip-qpe --skip-pdf
 ```
+
+### Quantum-Processor Proxy Benchmark (CFQM vs Suzuki)
+
+Wrapper benchmark (no core propagator changes):
+
+```bash
+python pipelines/exact_bench/cfqm_vs_suzuki_qproc_proxy_benchmark.py \
+  --problem hubbard --L 2 \
+  --methods suzuki2,cfqm4,cfqm6 \
+  --steps-grid 64,128,256,512 \
+  --reference-steps 2048 \
+  --drive-enabled
+```
+
+```bash
+python pipelines/exact_bench/cfqm_vs_suzuki_qproc_proxy_benchmark.py \
+  --problem hubbard --L 2 \
+  --methods suzuki2,cfqm4,cfqm6 \
+  --steps-grid 64,128,256,512 \
+  --reference-steps 2048 \
+  --compare-policy cost_match \
+  --cost-match-metric cx_proxy_total \
+  --drive-enabled
+```
+
+What it measures:
+- Headline metric: final absolute energy error versus a fine `piecewise_exact` reference.
+- Cost axis: hardware-oriented proxy budgets (`term_exp_count_total`, `cx_proxy_total`, `sq_proxy_total`).
+- `S` in output rows means macro-steps (`trotter_steps`) and is not itself a cost measure.
+- Ranking outputs include Pareto front and best-by-budget summary.
+- `--compare-policy` controls apples-to-apples matching:
+  - `sweep_only` (default): raw sweep rows only.
+  - `cost_match`: build equal-cost rows for each metric target.
+- Use `--cost-match-metric cx_proxy_total` (default) for primary fairness check; `term_exp_count_total` is available as an alternate metric.
+- Optional `--cost-match-tolerance` relaxes near-budget matching when exact ties are absent.
+
+Important benchmark profile caveat:
+- CFQM entries use `--cfqm-stage-exp pauli_suzuki2` in this benchmark so stage exponentials are represented as termwise product formulas for processor comparability.
+- This profile is for hardware-cost comparability; it is not the high-order dense/sparse CFQM stage-exp profile used for asymptotic order studies.
+
+Artifacts:
+- `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_runs.json`
+- `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_runs.csv`
+- `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_summary.json`
+
+### CFQM Efficiency Suite (Error-vs-Cost, Apple-to-Apple)
+
+This suite runs both integrator-order and hardware-proxy comparisons and writes a long PDF with slope/pareto/tie tables.
+
+```bash
+python pipelines/exact_bench/cfqm_vs_suzuki_efficiency_suite.py \
+  --problem-grid hubbard_L4,hh_L2_nb2,hh_L2_nb3 \
+  --drive-grid sinusoid,gaussian_sharp \
+  --methods suzuki2,cfqm4,cfqm6 \
+  --stage-mode-grid exact_sparse,exact_dense,pauli_suzuki2 \
+  --reference-steps-multiplier 8 \
+  --equal-cost-axis cx_proxy,pauli_rot_count,expm_calls,wall_time \
+  --equal-cost-policy exact_tie_only \
+  --calibrate-transpile \
+  --output-dir artifacts/cfqm_efficiency_benchmark
+```
+
+What it reports:
+- Error metrics: `final_infidelity`, `max_doublon_abs_err`, `max_energy_abs_err`.
+- Cost metrics: `expm_multiply_calls_*`, `pauli_rot_count_total`, `cx_proxy_total`, `depth_proxy_total`, `wall_time_s`.
+- Convergence slopes from `log(error)` vs `log(dt)`.
+- Pareto fronts by cost axis.
+
+Fairness policy:
+- Main apple-to-apple tables keep only exact cost ties (`delta=0`) for:
+  - `cx_proxy`
+  - `pauli_rot_count`
+  - `expm_calls`
+- Wall-time is grouped into near-tie bins and explicitly labeled approximate.
+- Nearest-neighbor fallback matches are appendix-only and must not be used as headline comparisons.
+
+Artifacts:
+- `artifacts/cfqm_efficiency_benchmark/runs_full.json`
+- `artifacts/cfqm_efficiency_benchmark/runs_full.csv`
+- `artifacts/cfqm_efficiency_benchmark/summary_by_scenario.json`
+- `artifacts/cfqm_efficiency_benchmark/pareto_by_metric.json`
+- `artifacts/cfqm_efficiency_benchmark/slope_fits.json`
+- `artifacts/cfqm_efficiency_benchmark/equal_cost_exact_ties_<metric>.csv`
+- `artifacts/cfqm_efficiency_benchmark/cfqm_efficiency_suite.pdf`
 
 ### Time-Dependent Drive Parameters (all three pipelines)
 
@@ -1308,3 +1422,48 @@ If Aer fails with OMP/SHM errors in `shots` or `aer_noise`, the oracle auto-swit
 - `backend.details.fallback_used`
 - `backend.details.fallback_reason`
 - `backend.details.env_workaround_applied`
+
+### 11j) Legacy parity gate (pre-noise HH anchor)
+
+Use this when validating that the new noiseless-estimator path reproduces a legacy pre-noise HH run exactly.
+
+Locked baseline for this repo:
+- `artifacts/json/hc_hh_L2_static_t1.0_U2.0_g1.0_nph1.json`
+
+Strict gate:
+- `max_abs_delta <= 1e-10` for selected observables.
+- time grid must match exactly.
+
+New CLI flags in `hh_noise_hardware_validation.py`:
+- `--legacy-reference-json PATH`
+- `--legacy-parity-tol FLOAT` (default `1e-10`)
+- `--compare-observables CSV` (default `energy_static_trotter,doublon_trotter`)
+- `--output-compare-plot PATH`
+
+JSON reporting:
+- `legacy_parity.reference_json`
+- `legacy_parity.observables`
+- `legacy_parity.time_grid_match`
+- `legacy_parity.per_observable.<obs>.max_abs_delta`
+- `legacy_parity.per_observable.<obs>.mean_abs_delta`
+- `legacy_parity.per_observable.<obs>.final_abs_delta`
+- `legacy_parity.per_observable.<obs>.passed`
+- `legacy_parity.passed_all`
+
+Recommended parity command (full-match anchor):
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva_tw --L 2 \
+  --t 1.0 --u 2.0 --dv 0.0 --omega0 1.0 --g-ep 1.0 --n-ph-max 1 \
+  --boundary periodic --ordering blocked \
+  --noise-mode ideal \
+  --run-vqe --run-trotter --no-run-adapt --initial-state-source vqe \
+  --vqe-reps 3 --vqe-restarts 1 --vqe-maxiter 3000 --vqe-method COBYLA \
+  --t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64 \
+  --legacy-reference-json artifacts/json/hc_hh_L2_static_t1.0_U2.0_g1.0_nph1.json \
+  --legacy-parity-tol 1e-10 \
+  --output-json artifacts/json/hh_noise_L2_legacy_parity_ideal.json \
+  --output-pdf artifacts/pdf/hh_noise_L2_legacy_parity_ideal.pdf \
+  --output-compare-plot artifacts/pdf/hh_noise_L2_legacy_parity_compare.png
+```
