@@ -1,0 +1,1323 @@
+#!/usr/bin/env python3
+"""HH-first noise/hardware validation runner (wrapper-level).
+
+This script validates feasibility of HH/Hubbard workflows under measurement and
+device noise without mutating core operator algebra files.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+import time
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Path setup
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from qiskit import QuantumCircuit
+from qiskit.circuit.library import PauliEvolutionGate
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.synthesis import SuzukiTrotter
+
+from reports.pdf_utils import (
+    HAS_MATPLOTLIB,
+    current_command_string,
+    get_PdfPages,
+    get_plt,
+    render_compact_table,
+    render_parameter_manifest,
+    render_text_page,
+    require_matplotlib,
+)
+from src.quantum.hartree_fock_reference_state import (
+    hartree_fock_statevector,
+    hubbard_holstein_reference_state,
+)
+from src.quantum.hubbard_latex_python_pairs import (
+    build_hubbard_hamiltonian,
+    build_hubbard_holstein_hamiltonian,
+)
+from src.quantum.vqe_latex_python_pairs import (
+    AnsatzTerm,
+    HardcodedUCCSDAnsatz,
+    HubbardHolsteinLayerwiseAnsatz,
+    HubbardHolsteinPhysicalTermwiseAnsatz,
+    HubbardHolsteinTermwiseAnsatz,
+    HubbardLayerwiseAnsatz,
+    exact_ground_energy_sector,
+    exact_ground_energy_sector_hh,
+    hamiltonian_matrix,
+)
+from src.quantum.pauli_polynomial_class import PauliPolynomial
+from src.quantum.qubitization_module import PauliTerm
+
+from pipelines.exact_bench.noise_oracle_runtime import (
+    ExpectationOracle,
+    NoiseBackendInfo,
+    OracleConfig,
+    _ansatz_to_circuit,
+    _doublon_site_qop,
+    _number_operator_qop,
+    _ordered_qop_from_exyz,
+    _pauli_poly_to_sparse_pauli_op,
+)
+
+
+def _ai_log(event: str, **fields: Any) -> None:
+    payload = {"event": str(event), "ts_utc": datetime.now(timezone.utc).isoformat(), **fields}
+    print(f"AI_LOG {json.dumps(payload, sort_keys=True, default=str)}", flush=True)
+
+
+_HUBBARD_PARAMS: dict[int, dict[str, Any]] = {
+    2: {"trotter_steps": 64, "exact_mult": 2, "num_times": 201, "reps": 2, "restarts": 2, "maxiter": 600, "method": "COBYLA", "t_final": 10.0},
+    3: {"trotter_steps": 128, "exact_mult": 2, "num_times": 201, "reps": 2, "restarts": 3, "maxiter": 1200, "method": "COBYLA", "t_final": 15.0},
+    4: {"trotter_steps": 256, "exact_mult": 3, "num_times": 241, "reps": 3, "restarts": 4, "maxiter": 6000, "method": "SLSQP", "t_final": 20.0},
+    5: {"trotter_steps": 384, "exact_mult": 3, "num_times": 301, "reps": 3, "restarts": 5, "maxiter": 8000, "method": "SLSQP", "t_final": 20.0},
+    6: {"trotter_steps": 512, "exact_mult": 4, "num_times": 361, "reps": 4, "restarts": 6, "maxiter": 10000, "method": "SLSQP", "t_final": 20.0},
+}
+
+_HH_PARAMS: dict[tuple[int, int], dict[str, Any]] = {
+    (2, 1): {"trotter_steps": 64, "reps": 2, "restarts": 3, "maxiter": 800, "method": "COBYLA"},
+    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "COBYLA"},
+    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "COBYLA"},
+}
+
+
+def _half_filled_particles(num_sites: int) -> tuple[int, int]:
+    return ((int(num_sites) + 1) // 2, int(num_sites) // 2)
+
+
+def _fermion_mode_index(site: int, spin: str, ordering: str, num_sites: int) -> int:
+    s = str(spin).strip().lower()
+    ord_norm = str(ordering).strip().lower()
+    if ord_norm == "blocked":
+        if s in {"up", "u", "alpha"}:
+            return int(site)
+        return int(num_sites) + int(site)
+    if s in {"up", "u", "alpha"}:
+        return 2 * int(site)
+    return 2 * int(site) + 1
+
+
+def _collect_hardcoded_terms_exyz(poly: Any, tol: float = 1e-12) -> tuple[list[str], dict[str, complex]]:
+    coeff_map: dict[str, complex] = {}
+    order: list[str] = []
+    for term in poly.return_polynomial():
+        label = str(term.pw2strng())
+        coeff = complex(term.p_coeff)
+        if abs(coeff) <= float(tol):
+            continue
+        if label not in coeff_map:
+            coeff_map[label] = 0.0 + 0.0j
+            order.append(label)
+        coeff_map[label] += coeff
+    cleaned_order = [lbl for lbl in order if abs(coeff_map[lbl]) > float(tol)]
+    cleaned_map = {lbl: coeff_map[lbl] for lbl in cleaned_order}
+    return cleaned_order, cleaned_map
+
+
+_SUZUKI2_MATH = "U(t) ~= [prod_j exp(-i (t/r)/2 H_j) * prod_j^rev exp(-i (t/r)/2 H_j)]^r"
+
+
+def _trotterized_circuit(
+    initial_circuit: QuantumCircuit,
+    ordered_qop: SparsePauliOp,
+    *,
+    time_value: float,
+    trotter_steps: int,
+    suzuki_order: int,
+) -> QuantumCircuit:
+    if int(suzuki_order) != 2:
+        raise ValueError("This validation runner currently supports suzuki_order=2 only.")
+    qc = initial_circuit.copy()
+    evo = PauliEvolutionGate(
+        ordered_qop,
+        time=float(time_value),
+        synthesis=SuzukiTrotter(order=int(suzuki_order), reps=int(trotter_steps), preserve_order=True),
+    )
+    qc.append(evo, list(range(int(initial_circuit.num_qubits))))
+    return qc
+
+
+def _get_hubbard_minimum(L: int) -> dict[str, Any]:
+    if int(L) in _HUBBARD_PARAMS:
+        return dict(_HUBBARD_PARAMS[int(L)])
+    base = dict(_HUBBARD_PARAMS[max(_HUBBARD_PARAMS)])
+    scale = float(L) / float(max(_HUBBARD_PARAMS))
+    base["trotter_steps"] = int(round(base["trotter_steps"] * scale))
+    base["maxiter"] = int(round(base["maxiter"] * scale))
+    base["reps"] = max(base["reps"], int(round(base["reps"] * scale)))
+    base["restarts"] = max(base["restarts"], int(round(base["restarts"] * scale)))
+    return base
+
+
+def _get_hh_minimum(L: int, n_ph_max: int) -> dict[str, Any]:
+    key = (int(L), int(n_ph_max))
+    if key in _HH_PARAMS:
+        return dict(_HH_PARAMS[key])
+    fallback = _get_hubbard_minimum(int(L))
+    return {
+        "trotter_steps": int(round(float(fallback["trotter_steps"]) * 1.5)),
+        "reps": int(fallback["reps"]),
+        "restarts": int(fallback["restarts"]) + 1,
+        "maxiter": int(round(float(fallback["maxiter"]) * 1.5)),
+        "method": str(fallback["method"]),
+    }
+
+
+def _apply_defaults_and_minimums(args: argparse.Namespace) -> argparse.Namespace:
+    problem = str(args.problem).strip().lower()
+    if problem == "hh":
+        minimum = _get_hh_minimum(int(args.L), int(args.n_ph_max))
+    else:
+        minimum = _get_hubbard_minimum(int(args.L))
+
+    if args.vqe_reps is None:
+        args.vqe_reps = int(minimum["reps"])
+    if args.vqe_restarts is None:
+        args.vqe_restarts = int(minimum["restarts"])
+    if args.vqe_maxiter is None:
+        args.vqe_maxiter = int(minimum["maxiter"])
+    if args.trotter_steps is None:
+        args.trotter_steps = int(minimum["trotter_steps"])
+    if args.vqe_method is None:
+        args.vqe_method = str(minimum["method"])
+
+    if problem == "hubbard":
+        if args.t_final is None:
+            args.t_final = float(minimum["t_final"])
+        if args.num_times is None:
+            args.num_times = int(minimum["num_times"])
+        if args.exact_steps_multiplier is None:
+            args.exact_steps_multiplier = int(minimum["exact_mult"])
+    else:
+        if args.t_final is None:
+            args.t_final = 20.0
+        if args.num_times is None:
+            args.num_times = 201
+        if args.exact_steps_multiplier is None:
+            args.exact_steps_multiplier = 1
+
+    if not bool(args.smoke_test_intentionally_weak):
+        checks = {
+            "vqe_reps": int(args.vqe_reps) >= int(minimum["reps"]),
+            "vqe_restarts": int(args.vqe_restarts) >= int(minimum["restarts"]),
+            "vqe_maxiter": int(args.vqe_maxiter) >= int(minimum["maxiter"]),
+            "trotter_steps": int(args.trotter_steps) >= int(minimum["trotter_steps"]),
+        }
+        failed = [k for k, ok in checks.items() if not ok]
+        if failed:
+            raise ValueError(
+                "Under-parameterized run rejected by AGENTS minimum table. "
+                f"Failed fields: {failed}. "
+                f"Minimums used for this case: {minimum}. "
+                "Pass --smoke-test-intentionally-weak only for explicit smoke tests."
+            )
+    return args
+
+
+def _build_hamiltonian(args: argparse.Namespace) -> Any:
+    if str(args.problem).strip().lower() == "hh":
+        return build_hubbard_holstein_hamiltonian(
+            dims=int(args.L),
+            J=float(args.t),
+            U=float(args.u),
+            omega0=float(args.omega0),
+            g=float(args.g_ep),
+            n_ph_max=int(args.n_ph_max),
+            boson_encoding=str(args.boson_encoding),
+            v_t=None,
+            v0=float(args.dv),
+            t_eval=None,
+            repr_mode="JW",
+            indexing=str(args.ordering),
+            pbc=(str(args.boundary).strip().lower() == "periodic"),
+            include_zero_point=True,
+        )
+    return build_hubbard_hamiltonian(
+        dims=int(args.L),
+        t=float(args.t),
+        U=float(args.u),
+        v=float(args.dv),
+        repr_mode="JW",
+        indexing=str(args.ordering),
+        pbc=(str(args.boundary).strip().lower() == "periodic"),
+    )
+
+
+def _build_ansatz(args: argparse.Namespace, num_particles: tuple[int, int]) -> Any:
+    problem = str(args.problem).strip().lower()
+    ans = str(args.ansatz).strip().lower()
+    pbc = (str(args.boundary).strip().lower() == "periodic")
+
+    if ans == "hh_hva":
+        if problem != "hh":
+            raise ValueError("ansatz=hh_hva requires --problem hh")
+        return HubbardHolsteinLayerwiseAnsatz(
+            dims=int(args.L),
+            J=float(args.t),
+            U=float(args.u),
+            omega0=float(args.omega0),
+            g=float(args.g_ep),
+            n_ph_max=int(args.n_ph_max),
+            boson_encoding=str(args.boson_encoding),
+            reps=int(args.vqe_reps),
+            repr_mode="JW",
+            indexing=str(args.ordering),
+            pbc=pbc,
+        )
+    if ans == "hh_hva_tw":
+        if problem != "hh":
+            raise ValueError("ansatz=hh_hva_tw requires --problem hh")
+        return HubbardHolsteinTermwiseAnsatz(
+            dims=int(args.L),
+            J=float(args.t),
+            U=float(args.u),
+            omega0=float(args.omega0),
+            g=float(args.g_ep),
+            n_ph_max=int(args.n_ph_max),
+            boson_encoding=str(args.boson_encoding),
+            reps=int(args.vqe_reps),
+            repr_mode="JW",
+            indexing=str(args.ordering),
+            pbc=pbc,
+        )
+    if ans == "hh_hva_ptw":
+        if problem != "hh":
+            raise ValueError("ansatz=hh_hva_ptw requires --problem hh")
+        return HubbardHolsteinPhysicalTermwiseAnsatz(
+            dims=int(args.L),
+            J=float(args.t),
+            U=float(args.u),
+            omega0=float(args.omega0),
+            g=float(args.g_ep),
+            n_ph_max=int(args.n_ph_max),
+            boson_encoding=str(args.boson_encoding),
+            reps=int(args.vqe_reps),
+            repr_mode="JW",
+            indexing=str(args.ordering),
+            pbc=pbc,
+        )
+    if ans == "hva":
+        if problem != "hubbard":
+            raise ValueError("ansatz=hva currently requires --problem hubbard")
+        return HubbardLayerwiseAnsatz(
+            dims=int(args.L),
+            t=float(args.t),
+            U=float(args.u),
+            v=float(args.dv),
+            reps=int(args.vqe_reps),
+            repr_mode="JW",
+            indexing=str(args.ordering),
+            pbc=pbc,
+            include_potential_terms=True,
+        )
+    if ans == "uccsd":
+        if problem != "hubbard":
+            raise ValueError("ansatz=uccsd currently requires --problem hubbard")
+        return HardcodedUCCSDAnsatz(
+            dims=int(args.L),
+            num_particles=num_particles,
+            reps=int(args.vqe_reps),
+            repr_mode="JW",
+            indexing=str(args.ordering),
+            include_singles=True,
+            include_doubles=True,
+        )
+
+    raise ValueError(f"Unsupported ansatz '{ans}'")
+
+
+def _build_reference_state(
+    *,
+    args: argparse.Namespace,
+    num_particles: tuple[int, int],
+) -> np.ndarray:
+    if str(args.problem).strip().lower() == "hh":
+        return np.asarray(
+            hubbard_holstein_reference_state(
+                dims=int(args.L),
+                num_particles=num_particles,
+                n_ph_max=int(args.n_ph_max),
+                boson_encoding=str(args.boson_encoding),
+                indexing=str(args.ordering),
+            ),
+            dtype=complex,
+        ).reshape(-1)
+    return np.asarray(
+        hartree_fock_statevector(
+            int(args.L),
+            num_particles,
+            indexing=str(args.ordering),
+        ),
+        dtype=complex,
+    ).reshape(-1)
+
+
+def _build_adapt_pool(
+    *,
+    args: argparse.Namespace,
+    h_poly: Any,
+    num_particles: tuple[int, int],
+) -> list[AnsatzTerm]:
+    problem = str(args.problem).strip().lower()
+    pool_key = str(args.adapt_pool).strip().lower()
+
+    if problem == "hubbard":
+        if pool_key == "uccsd":
+            return list(
+                HardcodedUCCSDAnsatz(
+                    dims=int(args.L),
+                    num_particles=num_particles,
+                    reps=1,
+                    repr_mode="JW",
+                    indexing=str(args.ordering),
+                    include_singles=True,
+                    include_doubles=True,
+                ).base_terms
+            )
+        if pool_key == "full_hamiltonian":
+            out: list[AnsatzTerm] = []
+            for term in h_poly.return_polynomial():
+                coeff = complex(term.p_coeff)
+                if abs(coeff) <= 1e-15:
+                    continue
+                lbl = str(term.pw2strng())
+                nq = int(term.nqubit())
+                if lbl == ("e" * nq):
+                    continue
+                p = PauliPolynomial(nq)
+                p.add_term(PauliTerm(nq, ps=lbl, pc=1.0))
+                out.append(AnsatzTerm(label=f"ham_term({lbl})", polynomial=p))
+            return out
+        raise ValueError(
+            f"Unsupported Hubbard ADAPT pool '{pool_key}'. Use uccsd or full_hamiltonian."
+        )
+
+    # HH
+    if pool_key == "hva":
+        # Phase-2 default: use HH physical-termwise generators as pool entries.
+        return list(
+            HubbardHolsteinPhysicalTermwiseAnsatz(
+                dims=int(args.L),
+                J=float(args.t),
+                U=float(args.u),
+                omega0=float(args.omega0),
+                g=float(args.g_ep),
+                n_ph_max=int(args.n_ph_max),
+                boson_encoding=str(args.boson_encoding),
+                reps=1,
+                repr_mode="JW",
+                indexing=str(args.ordering),
+                pbc=(str(args.boundary).strip().lower() == "periodic"),
+            ).base_terms
+        )
+    if pool_key == "full_hamiltonian":
+        out = []
+        for term in h_poly.return_polynomial():
+            coeff = complex(term.p_coeff)
+            if abs(coeff) <= 1e-15:
+                continue
+            lbl = str(term.pw2strng())
+            nq = int(term.nqubit())
+            if lbl == ("e" * nq):
+                continue
+            p = PauliPolynomial(nq)
+            p.add_term(PauliTerm(nq, ps=lbl, pc=1.0))
+            out.append(AnsatzTerm(label=f"ham_term({lbl})", polynomial=p))
+        return out
+
+    raise ValueError(
+        f"Unsupported HH ADAPT pool '{pool_key}'. Use hva or full_hamiltonian."
+    )
+
+
+def _adapt_ops_to_circuit(
+    ops: list[AnsatzTerm],
+    theta: np.ndarray,
+    *,
+    num_qubits: int,
+    reference_state: np.ndarray,
+) -> QuantumCircuit:
+    if int(theta.size) != int(len(ops)):
+        raise ValueError(
+            f"theta length {int(theta.size)} does not match selected ADAPT ops {int(len(ops))}"
+        )
+    qc = QuantumCircuit(int(num_qubits))
+    from pipelines.exact_bench.noise_oracle_runtime import _append_reference_state  # local import
+
+    _append_reference_state(qc, np.asarray(reference_state, dtype=complex))
+    synthesis = SuzukiTrotter(order=2, reps=1, preserve_order=True)
+    for op, ang in zip(ops, np.asarray(theta, dtype=float)):
+        qop = _pauli_poly_to_sparse_pauli_op(op.polynomial)
+        if np.max(np.abs(np.asarray(qop.coeffs, dtype=complex))) <= 1e-12:
+            continue
+        qc.append(PauliEvolutionGate(qop, time=float(ang), synthesis=synthesis), list(range(int(num_qubits))))
+    return qc
+
+
+def _run_noisy_adapt(
+    *,
+    args: argparse.Namespace,
+    pool: list[AnsatzTerm],
+    psi_ref: np.ndarray,
+    h_qop: SparsePauliOp,
+    noisy_oracle: ExpectationOracle,
+    ideal_oracle: ExpectationOracle,
+) -> tuple[dict[str, Any], list[AnsatzTerm], np.ndarray]:
+    t0 = time.perf_counter()
+    if not pool:
+        raise ValueError("ADAPT pool is empty.")
+
+    try:
+        from scipy.optimize import minimize
+    except Exception as exc:
+        raise RuntimeError("SciPy is required for phase-2 ADAPT optimization.") from exc
+
+    rng = np.random.default_rng(int(args.adapt_seed))
+    max_depth = int(args.adapt_max_depth)
+    grad_step = float(args.adapt_gradient_step)
+    eps_grad = float(args.adapt_eps_grad)
+    eps_energy = float(args.adapt_eps_energy)
+    min_conf = float(args.adapt_min_confidence)
+    allow_repeats = bool(args.adapt_allow_repeats)
+
+    selected_ops: list[AnsatzTerm] = []
+    theta = np.zeros(0, dtype=float)
+    available = set(range(len(pool)))
+    history: list[dict[str, Any]] = []
+    nfev_total = 0
+    stop_reason = "max_depth"
+
+    qc0 = _adapt_ops_to_circuit(
+        selected_ops,
+        theta,
+        num_qubits=int(h_qop.num_qubits),
+        reference_state=psi_ref,
+    )
+    e0 = noisy_oracle.evaluate(qc0, h_qop)
+    energy_current = float(e0.mean)
+    nfev_total += 1
+
+    for depth in range(max_depth):
+        candidate_indices = list(range(len(pool))) if allow_repeats else sorted(available)
+        if not candidate_indices:
+            stop_reason = "pool_exhausted"
+            break
+
+        best_idx = None
+        best_abs_grad = -1.0
+        best_grad = 0.0
+        best_grad_std = 0.0
+
+        for idx in candidate_indices:
+            trial_ops = selected_ops + [pool[idx]]
+            t_plus = np.append(theta, grad_step)
+            t_minus = np.append(theta, -grad_step)
+            c_plus = _adapt_ops_to_circuit(
+                trial_ops, t_plus, num_qubits=int(h_qop.num_qubits), reference_state=psi_ref
+            )
+            c_minus = _adapt_ops_to_circuit(
+                trial_ops, t_minus, num_qubits=int(h_qop.num_qubits), reference_state=psi_ref
+            )
+            e_plus = noisy_oracle.evaluate(c_plus, h_qop)
+            e_minus = noisy_oracle.evaluate(c_minus, h_qop)
+            nfev_total += 2
+
+            grad = float((e_plus.mean - e_minus.mean) / (2.0 * grad_step))
+            grad_std = float(np.sqrt(e_plus.std ** 2 + e_minus.std ** 2) / (2.0 * grad_step))
+            abs_grad = abs(grad)
+            if abs_grad > best_abs_grad:
+                best_abs_grad = abs_grad
+                best_idx = int(idx)
+                best_grad = float(grad)
+                best_grad_std = float(grad_std)
+
+        if best_idx is None:
+            stop_reason = "no_candidate"
+            break
+
+        grad_conf = float(best_abs_grad / max(best_grad_std, 1e-12))
+        if best_abs_grad < eps_grad:
+            stop_reason = "eps_grad"
+            break
+        if grad_conf < min_conf:
+            stop_reason = "low_gradient_confidence"
+            break
+
+        selected_ops.append(pool[best_idx])
+        theta = np.append(theta, 0.0)
+        if not allow_repeats:
+            available.discard(best_idx)
+
+        energy_prev = float(energy_current)
+        objective_trace: list[dict[str, Any]] = []
+
+        def _obj(x: np.ndarray) -> float:
+            nonlocal nfev_total
+            c = _adapt_ops_to_circuit(
+                selected_ops,
+                np.asarray(x, dtype=float),
+                num_qubits=int(h_qop.num_qubits),
+                reference_state=psi_ref,
+            )
+            est = noisy_oracle.evaluate(c, h_qop)
+            nfev_total += 1
+            objective_trace.append(
+                {
+                    "energy_noisy": float(est.mean),
+                    "energy_noisy_std": float(est.std),
+                    "samples": int(est.n_samples),
+                }
+            )
+            return float(est.mean)
+
+        x0 = np.asarray(theta, dtype=float) + 0.02 * rng.normal(size=theta.size)
+        res = minimize(
+            _obj,
+            x0,
+            method="COBYLA",
+            options={"maxiter": int(args.adapt_maxiter), "rhobeg": 0.3},
+        )
+        theta = np.asarray(res.x, dtype=float)
+        energy_current = float(res.fun)
+        delta_e = float(abs(energy_current - energy_prev))
+
+        history.append(
+            {
+                "depth": int(depth + 1),
+                "selected_pool_index": int(best_idx),
+                "selected_label": str(pool[best_idx].label),
+                "max_gradient": float(best_grad),
+                "max_gradient_abs": float(best_abs_grad),
+                "max_gradient_std": float(best_grad_std),
+                "gradient_confidence": float(grad_conf),
+                "energy_before_opt": float(energy_prev),
+                "energy_after_opt": float(energy_current),
+                "delta_energy_abs": float(delta_e),
+                "opt_nfev": int(getattr(res, "nfev", 0)),
+                "opt_nit": int(getattr(res, "nit", 0)),
+                "opt_success": bool(getattr(res, "success", False)),
+                "opt_message": str(getattr(res, "message", "")),
+                "objective_trace": objective_trace,
+            }
+        )
+        _ai_log(
+            "hh_noise_adapt_iter_done",
+            depth=int(depth + 1),
+            selected_label=str(pool[best_idx].label),
+            energy=float(energy_current),
+            delta_e_abs=float(delta_e),
+            gradient_abs=float(best_abs_grad),
+            gradient_confidence=float(grad_conf),
+        )
+
+        if delta_e < eps_energy:
+            stop_reason = "eps_energy"
+            break
+        if (not allow_repeats) and (not available):
+            stop_reason = "pool_exhausted"
+            break
+
+    final_circuit = _adapt_ops_to_circuit(
+        selected_ops,
+        theta,
+        num_qubits=int(h_qop.num_qubits),
+        reference_state=psi_ref,
+    )
+    e_noisy = noisy_oracle.evaluate(final_circuit, h_qop)
+    e_ideal = ideal_oracle.evaluate(final_circuit, h_qop)
+    payload = {
+        "success": True,
+        "method": "adapt_vqe_noisy_oracle",
+        "pool_type": str(args.adapt_pool),
+        "pool_size": int(len(pool)),
+        "allow_repeats": bool(allow_repeats),
+        "ansatz_depth": int(len(selected_ops)),
+        "num_parameters": int(theta.size),
+        "operators": [str(op.label) for op in selected_ops],
+        "optimal_point": [float(x) for x in theta.tolist()],
+        "energy_noisy": float(e_noisy.mean),
+        "energy_noisy_std": float(e_noisy.std),
+        "energy_ideal_reference": float(e_ideal.mean),
+        "delta_noisy_minus_ideal": float(e_noisy.mean - e_ideal.mean),
+        "stop_reason": str(stop_reason),
+        "nfev_total": int(nfev_total),
+        "history": history,
+        "adapt_eps_grad": float(eps_grad),
+        "adapt_eps_energy": float(eps_energy),
+        "adapt_gradient_step": float(grad_step),
+        "adapt_min_confidence": float(min_conf),
+        "elapsed_s": float(time.perf_counter() - t0),
+    }
+    return payload, selected_ops, theta
+
+
+def _run_noisy_vqe(
+    *,
+    args: argparse.Namespace,
+    ansatz: Any,
+    psi_ref: np.ndarray,
+    h_qop: SparsePauliOp,
+    noisy_oracle: ExpectationOracle,
+    ideal_oracle: ExpectationOracle,
+) -> tuple[dict[str, Any], np.ndarray]:
+    t0 = time.perf_counter()
+    npar = int(getattr(ansatz, "num_parameters", 0))
+    if npar <= 0:
+        raise ValueError("ansatz has no free parameters")
+    rng = np.random.default_rng(int(args.vqe_seed))
+
+    history: list[dict[str, Any]] = []
+    best_energy = float("inf")
+    best_theta = np.zeros(npar, dtype=float)
+    best_restart = -1
+    best_nfev = 0
+    best_nit = 0
+    best_success = False
+    best_message = "no run"
+
+    try:
+        from scipy.optimize import minimize
+    except Exception as exc:
+        raise RuntimeError(
+            "SciPy is required for this validation VQE loop. "
+            "Install scipy to run noisy VQE optimization."
+        ) from exc
+
+    for r in range(max(1, int(args.vqe_restarts))):
+        x0 = 0.3 * rng.normal(size=npar)
+
+        def _objective(x: np.ndarray) -> float:
+            qc = _ansatz_to_circuit(
+                ansatz,
+                np.asarray(x, dtype=float),
+                num_qubits=int(h_qop.num_qubits),
+                reference_state=psi_ref,
+            )
+            estimate = noisy_oracle.evaluate(qc, h_qop)
+            history.append(
+                {
+                    "restart": int(r + 1),
+                    "nfev_local": int(sum(1 for row in history if row["restart"] == int(r + 1)) + 1),
+                    "energy_noisy": float(estimate.mean),
+                    "energy_noisy_std": float(estimate.std),
+                    "oracle_samples": int(estimate.n_samples),
+                }
+            )
+            return float(estimate.mean)
+
+        res = minimize(
+            _objective,
+            x0,
+            method=str(args.vqe_method),
+            options={"maxiter": int(args.vqe_maxiter)},
+        )
+
+        if float(res.fun) < best_energy:
+            best_energy = float(res.fun)
+            best_theta = np.asarray(res.x, dtype=float)
+            best_restart = int(r)
+            best_nfev = int(getattr(res, "nfev", 0))
+            best_nit = int(getattr(res, "nit", 0))
+            best_success = bool(getattr(res, "success", False))
+            best_message = str(getattr(res, "message", ""))
+
+        _ai_log(
+            "hh_noise_vqe_restart_done",
+            restart=int(r + 1),
+            restarts=int(args.vqe_restarts),
+            energy=float(res.fun),
+            best_energy=float(best_energy),
+        )
+
+    best_circuit = _ansatz_to_circuit(
+        ansatz,
+        best_theta,
+        num_qubits=int(h_qop.num_qubits),
+        reference_state=psi_ref,
+    )
+    best_noisy = noisy_oracle.evaluate(best_circuit, h_qop)
+    best_ideal = ideal_oracle.evaluate(best_circuit, h_qop)
+
+    payload = {
+        "success": bool(best_success),
+        "method": "noisy_vqe_qiskit_oracle",
+        "ansatz": str(args.ansatz),
+        "optimizer_method": str(args.vqe_method),
+        "reps": int(args.vqe_reps),
+        "restarts": int(args.vqe_restarts),
+        "maxiter": int(args.vqe_maxiter),
+        "num_parameters": int(npar),
+        "best_restart": int(best_restart + 1),
+        "nfev": int(best_nfev),
+        "nit": int(best_nit),
+        "message": str(best_message),
+        "energy_noisy": float(best_noisy.mean),
+        "energy_noisy_std": float(best_noisy.std),
+        "energy_ideal_reference": float(best_ideal.mean),
+        "delta_noisy_minus_ideal": float(best_noisy.mean - best_ideal.mean),
+        "optimal_point": [float(x) for x in best_theta.tolist()],
+        "objective_history": history,
+        "elapsed_s": float(time.perf_counter() - t0),
+    }
+    return payload, best_theta
+
+
+def _run_noisy_trotter(
+    *,
+    args: argparse.Namespace,
+    initial_circuit: QuantumCircuit,
+    ordered_qop: SparsePauliOp,
+    observables: dict[str, SparsePauliOp],
+    noisy_oracle: ExpectationOracle,
+    ideal_oracle: ExpectationOracle,
+) -> list[dict[str, Any]]:
+    times = np.linspace(0.0, float(args.t_final), int(args.num_times))
+    rows: list[dict[str, Any]] = []
+    total = max(1, int(times.size))
+    stride = max(1, total // 10)
+
+    for idx, t_val in enumerate(times):
+        qc_t = _trotterized_circuit(
+            initial_circuit,
+            ordered_qop,
+            time_value=float(t_val),
+            trotter_steps=int(args.trotter_steps),
+            suzuki_order=int(args.suzuki_order),
+        )
+        row: dict[str, Any] = {"time": float(t_val)}
+        for key, obs in observables.items():
+            noisy = noisy_oracle.evaluate(qc_t, obs)
+            ideal = ideal_oracle.evaluate(qc_t, obs)
+            row[f"{key}_noisy"] = float(noisy.mean)
+            row[f"{key}_noisy_std"] = float(noisy.std)
+            row[f"{key}_ideal"] = float(ideal.mean)
+            row[f"{key}_delta_noisy_minus_ideal"] = float(noisy.mean - ideal.mean)
+        rows.append(row)
+
+        if idx % stride == 0 or idx == total - 1:
+            _ai_log(
+                "hh_noise_trotter_progress",
+                step=int(idx + 1),
+                total_steps=int(total),
+                t=float(t_val),
+            )
+    return rows
+
+
+def _initial_state_selection(
+    *,
+    args: argparse.Namespace,
+    ansatz: Any,
+    psi_ref: np.ndarray,
+    hmat: np.ndarray,
+    best_theta: np.ndarray | None,
+    adapt_ops: list[AnsatzTerm] | None,
+    adapt_theta: np.ndarray | None,
+) -> tuple[str, QuantumCircuit]:
+    source = str(args.initial_state_source).strip().lower()
+    num_qubits = int(round(math.log2(int(hmat.shape[0]))))
+    if source == "vqe":
+        if best_theta is None:
+            raise ValueError(
+                "initial_state_source=vqe requires a VQE run in this invocation."
+            )
+        qc = _ansatz_to_circuit(
+            ansatz,
+            best_theta,
+            num_qubits=num_qubits,
+            reference_state=psi_ref,
+        )
+        return "vqe", qc
+    if source == "adapt":
+        if (adapt_ops is None) or (adapt_theta is None):
+            raise ValueError(
+                "initial_state_source=adapt requires --run-adapt in this invocation."
+            )
+        qc = _adapt_ops_to_circuit(
+            adapt_ops,
+            np.asarray(adapt_theta, dtype=float),
+            num_qubits=num_qubits,
+            reference_state=psi_ref,
+        )
+        return "adapt", qc
+    if source == "hf":
+        qc = QuantumCircuit(num_qubits)
+        from pipelines.exact_bench.noise_oracle_runtime import _append_reference_state  # local import
+
+        _append_reference_state(qc, psi_ref)
+        return "hf", qc
+
+    evals, evecs = np.linalg.eigh(np.asarray(hmat, dtype=complex))
+    psi_exact = np.asarray(evecs[:, int(np.argmin(np.real(evals)))], dtype=complex).reshape(-1)
+    qc = QuantumCircuit(num_qubits)
+    from pipelines.exact_bench.noise_oracle_runtime import _append_reference_state  # local import
+
+    _append_reference_state(qc, psi_exact)
+    return "exact", qc
+
+
+def _write_noise_validation_pdf(
+    *,
+    pdf_path: Path,
+    payload: dict[str, Any],
+) -> None:
+    require_matplotlib()
+    plt = get_plt()
+    PdfPages = get_PdfPages()
+
+    settings = payload.get("settings", {})
+    vqe = payload.get("vqe", {})
+    trajectory = payload.get("trajectory", [])
+    backend = payload.get("backend", {})
+    noise = payload.get("noise_config", {})
+    fallback = payload.get("execution_fallback", {})
+    adapt = payload.get("adapt", {})
+    final = trajectory[-1] if trajectory else {}
+
+    with PdfPages(str(pdf_path)) as pdf:
+        render_parameter_manifest(
+            pdf,
+            model=str(payload.get("model", "Hubbard-Holstein")),
+            ansatz=str(settings.get("ansatz")),
+            drive_enabled=False,
+            t=float(settings.get("t", 0.0)),
+            U=float(settings.get("u", 0.0)),
+            dv=float(settings.get("dv", 0.0)),
+            extra={
+                "problem": settings.get("problem"),
+                "L": settings.get("L"),
+                "noise_mode": noise.get("noise_mode"),
+                "shots": noise.get("shots"),
+                "oracle_repeats": noise.get("oracle_repeats"),
+                "oracle_aggregate": noise.get("oracle_aggregate"),
+                "backend": backend.get("backend_name"),
+                "using_fake_backend": backend.get("using_fake_backend"),
+            },
+            command=str(payload.get("run_command", "")),
+        )
+
+        lines = [
+            "HH/Hubbard Noise Validation Summary",
+            "",
+            f"problem: {settings.get('problem')}",
+            f"ansatz: {settings.get('ansatz')}",
+            f"noise_mode: {noise.get('noise_mode')}",
+            f"backend: {backend.get('backend_name')}",
+            f"fallback_used: {fallback.get('used')}",
+            f"fallback_mode: {fallback.get('mode')}",
+            f"fallback_reason: {str(fallback.get('reason', ''))[:140]}",
+            "",
+            "VQE:",
+            f"  success: {vqe.get('success')}",
+            f"  noisy energy: {vqe.get('energy_noisy')}",
+            f"  ideal reference energy: {vqe.get('energy_ideal_reference')}",
+            f"  noisy-ideal delta: {vqe.get('delta_noisy_minus_ideal')}",
+            "",
+            "ADAPT (phase 2):",
+            f"  enabled: {settings.get('run_adapt')}",
+            f"  success: {adapt.get('success')}",
+            f"  depth: {adapt.get('ansatz_depth')}",
+            f"  stop_reason: {adapt.get('stop_reason')}",
+            f"  noisy-ideal delta: {adapt.get('delta_noisy_minus_ideal')}",
+            "",
+            "Final trajectory point:",
+            f"  energy noisy: {final.get('energy_static_trotter_noisy')}",
+            f"  energy ideal: {final.get('energy_static_trotter_ideal')}",
+            f"  energy delta: {final.get('energy_static_trotter_delta_noisy_minus_ideal')}",
+            f"  doublon noisy: {final.get('doublon_trotter_noisy')}",
+            f"  doublon ideal: {final.get('doublon_trotter_ideal')}",
+            f"  doublon delta: {final.get('doublon_trotter_delta_noisy_minus_ideal')}",
+        ]
+        render_text_page(pdf, lines, fontsize=9)
+
+        if trajectory:
+            ts = np.array([float(r["time"]) for r in trajectory], dtype=float)
+            e_noisy = np.array([float(r["energy_static_trotter_noisy"]) for r in trajectory], dtype=float)
+            e_ideal = np.array([float(r["energy_static_trotter_ideal"]) for r in trajectory], dtype=float)
+            d_noisy = np.array([float(r["doublon_trotter_noisy"]) for r in trajectory], dtype=float)
+            d_ideal = np.array([float(r["doublon_trotter_ideal"]) for r in trajectory], dtype=float)
+
+            fig, axes = plt.subplots(2, 1, figsize=(10.5, 8.0), sharex=True)
+            axes[0].plot(ts, e_noisy, label="energy noisy", color="#1f77b4")
+            axes[0].plot(ts, e_ideal, label="energy ideal", color="#ff7f0e", linestyle="--")
+            axes[0].set_ylabel("Energy")
+            axes[0].grid(alpha=0.25)
+            axes[0].legend(fontsize=8, loc="best")
+
+            axes[1].plot(ts, d_noisy, label="doublon noisy", color="#2ca02c")
+            axes[1].plot(ts, d_ideal, label="doublon ideal", color="#d62728", linestyle="--")
+            axes[1].set_xlabel("Time")
+            axes[1].set_ylabel("Doublon")
+            axes[1].grid(alpha=0.25)
+            axes[1].legend(fontsize=8, loc="best")
+            fig.suptitle("Noisy vs Ideal Trajectory")
+            fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+            pdf.savefig(fig)
+            plt.close(fig)
+
+        if vqe:
+            rows = [
+                ["Noisy VQE", f"{float(vqe.get('energy_noisy', float('nan'))):.8f}"],
+                ["Ideal reference", f"{float(vqe.get('energy_ideal_reference', float('nan'))):.8f}"],
+                ["Noisy-Ideal", f"{float(vqe.get('delta_noisy_minus_ideal', float('nan'))):.3e}"],
+                ["#params", str(vqe.get("num_parameters"))],
+                ["best restart", str(vqe.get("best_restart"))],
+            ]
+            fig_tbl, ax_tbl = plt.subplots(figsize=(8.5, 4.5))
+            render_compact_table(
+                ax_tbl,
+                title="VQE Scoreboard (Noisy Oracle)",
+                col_labels=["Metric", "Value"],
+                rows=rows,
+            )
+            fig_tbl.tight_layout()
+            pdf.savefig(fig_tbl)
+            plt.close(fig_tbl)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="HH-first noisy/hardware feasibility validation runner.")
+    p.add_argument("--problem", choices=["hh", "hubbard"], default="hh")
+    p.add_argument("--ansatz", choices=["hh_hva", "hh_hva_tw", "hh_hva_ptw", "hva", "uccsd"], default="hh_hva")
+    p.add_argument("--L", type=int, required=True)
+    p.add_argument("--t", type=float, default=1.0)
+    p.add_argument("--u", type=float, default=4.0)
+    p.add_argument("--dv", type=float, default=0.0)
+    p.add_argument("--omega0", type=float, default=1.0)
+    p.add_argument("--g-ep", type=float, default=0.5)
+    p.add_argument("--n-ph-max", type=int, default=1)
+    p.add_argument("--boson-encoding", choices=["binary"], default="binary")
+    p.add_argument("--boundary", choices=["periodic", "open"], default="periodic")
+    p.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
+
+    p.add_argument("--noise-mode", choices=["ideal", "shots", "aer_noise", "runtime"], default="ideal")
+    p.add_argument("--shots", type=int, default=2048)
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--oracle-repeats", type=int, default=1)
+    p.add_argument("--oracle-aggregate", choices=["mean", "median"], default="mean")
+    p.add_argument("--backend-name", type=str, default=None)
+    p.add_argument("--use-fake-backend", action="store_true")
+    p.set_defaults(allow_aer_fallback=True)
+    p.add_argument("--allow-aer-fallback", dest="allow_aer_fallback", action="store_true")
+    p.add_argument("--no-allow-aer-fallback", dest="allow_aer_fallback", action="store_false")
+    p.set_defaults(omp_shm_workaround=True)
+    p.add_argument("--omp-shm-workaround", dest="omp_shm_workaround", action="store_true")
+    p.add_argument("--no-omp-shm-workaround", dest="omp_shm_workaround", action="store_false")
+
+    p.set_defaults(run_vqe=True, run_trotter=True)
+    p.add_argument("--run-vqe", dest="run_vqe", action="store_true")
+    p.add_argument("--no-run-vqe", dest="run_vqe", action="store_false")
+    p.add_argument("--run-trotter", dest="run_trotter", action="store_true")
+    p.add_argument("--no-run-trotter", dest="run_trotter", action="store_false")
+    p.set_defaults(run_adapt=False)
+    p.add_argument("--run-adapt", dest="run_adapt", action="store_true")
+    p.add_argument("--no-run-adapt", dest="run_adapt", action="store_false")
+    p.add_argument("--initial-state-source", choices=["hf", "vqe", "adapt", "exact"], default="vqe")
+
+    p.add_argument("--vqe-reps", type=int, default=None)
+    p.add_argument("--vqe-restarts", type=int, default=None)
+    p.add_argument("--vqe-maxiter", type=int, default=None)
+    p.add_argument(
+        "--vqe-method",
+        type=str,
+        choices=["SLSQP", "COBYLA", "L-BFGS-B", "Powell", "Nelder-Mead"],
+        default=None,
+    )
+    p.add_argument("--vqe-seed", type=int, default=7)
+
+    p.add_argument("--adapt-pool", choices=["hva", "uccsd", "full_hamiltonian"], default="hva")
+    p.add_argument("--adapt-max-depth", type=int, default=20)
+    p.add_argument("--adapt-eps-grad", type=float, default=1e-5)
+    p.add_argument("--adapt-eps-energy", type=float, default=1e-8)
+    p.add_argument("--adapt-maxiter", type=int, default=300)
+    p.add_argument("--adapt-seed", type=int, default=7)
+    p.set_defaults(adapt_allow_repeats=True)
+    p.add_argument("--adapt-allow-repeats", dest="adapt_allow_repeats", action="store_true")
+    p.add_argument("--adapt-no-repeats", dest="adapt_allow_repeats", action="store_false")
+    p.add_argument("--adapt-gradient-step", type=float, default=0.1)
+    p.add_argument("--adapt-min-confidence", type=float, default=0.0)
+
+    p.add_argument("--t-final", type=float, default=None)
+    p.add_argument("--num-times", type=int, default=None)
+    p.add_argument("--suzuki-order", type=int, default=2)
+    p.add_argument("--trotter-steps", type=int, default=None)
+    p.add_argument("--exact-steps-multiplier", type=int, default=None)
+
+    p.add_argument(
+        "--smoke-test-intentionally-weak",
+        action="store_true",
+        help="# SMOKE TEST - intentionally weak settings",
+    )
+    p.add_argument("--output-json", type=Path, default=None)
+    p.add_argument("--output-pdf", type=Path, default=None)
+    p.add_argument("--skip-pdf", action="store_true")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _apply_defaults_and_minimums(parse_args(argv))
+    if str(args.problem).strip().lower() == "hubbard" and str(args.adapt_pool).strip().lower() == "hva":
+        _ai_log(
+            "hh_noise_adapt_pool_default_override",
+            problem="hubbard",
+            from_pool="hva",
+            to_pool="uccsd",
+        )
+        args.adapt_pool = "uccsd"
+    _ai_log("hh_noise_validation_start", settings=vars(args))
+
+    artifacts_dir = REPO_ROOT / "artifacts"
+    json_dir = artifacts_dir / "json"
+    pdf_dir = artifacts_dir / "pdf"
+    json_dir.mkdir(parents=True, exist_ok=True)
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+
+    tag = f"L{int(args.L)}_{str(args.problem)}_{str(args.ansatz)}_{str(args.noise_mode)}"
+    output_json = args.output_json or (json_dir / f"hh_noise_validation_{tag}.json")
+    output_pdf = args.output_pdf or (pdf_dir / f"hh_noise_validation_{tag}.pdf")
+
+    num_particles = _half_filled_particles(int(args.L))
+    h_poly = _build_hamiltonian(args)
+    h_qop = _pauli_poly_to_sparse_pauli_op(h_poly)
+    hmat = hamiltonian_matrix(h_poly)
+    native_order, coeff_map_exyz = _collect_hardcoded_terms_exyz(h_poly)
+    ordered_labels_exyz = sorted(native_order)
+    ordered_qop = _ordered_qop_from_exyz(ordered_labels_exyz, coeff_map_exyz)
+
+    if str(args.problem).strip().lower() == "hh":
+        exact_filtered = float(
+            exact_ground_energy_sector_hh(
+                h_poly,
+                num_sites=int(args.L),
+                num_particles=num_particles,
+                n_ph_max=int(args.n_ph_max),
+                boson_encoding=str(args.boson_encoding),
+                indexing=str(args.ordering),
+            )
+        )
+        model_name = "Hubbard-Holstein"
+    else:
+        exact_filtered = float(
+            exact_ground_energy_sector(
+                h_poly,
+                num_sites=int(args.L),
+                num_particles=num_particles,
+                indexing=str(args.ordering),
+            )
+        )
+        model_name = "Hubbard"
+
+    evals = np.linalg.eigvalsh(np.asarray(hmat, dtype=complex))
+    exact_full = float(np.real(np.min(evals)))
+
+    ansatz = _build_ansatz(args, num_particles)
+    psi_ref = _build_reference_state(args=args, num_particles=num_particles)
+
+    noisy_cfg = OracleConfig(
+        noise_mode=str(args.noise_mode),
+        shots=int(args.shots),
+        seed=int(args.seed),
+        oracle_repeats=int(args.oracle_repeats),
+        oracle_aggregate=str(args.oracle_aggregate),
+        backend_name=(None if args.backend_name is None else str(args.backend_name)),
+        use_fake_backend=bool(args.use_fake_backend),
+        allow_aer_fallback=bool(args.allow_aer_fallback),
+        aer_fallback_mode="sampler_shots",
+        omp_shm_workaround=bool(args.omp_shm_workaround),
+    )
+    ideal_cfg = OracleConfig(
+        noise_mode="ideal",
+        shots=int(args.shots),
+        seed=int(args.seed),
+        oracle_repeats=int(args.oracle_repeats),
+        oracle_aggregate=str(args.oracle_aggregate),
+        backend_name=None,
+        use_fake_backend=False,
+    )
+
+    vqe_payload: dict[str, Any] = {
+        "success": False,
+        "skipped": True,
+        "reason": "run_vqe disabled",
+    }
+    adapt_payload: dict[str, Any] = {
+        "success": False,
+        "skipped": True,
+        "reason": "run_adapt disabled",
+    }
+    best_theta: np.ndarray | None = None
+    selected_adapt_ops: list[AnsatzTerm] | None = None
+    selected_adapt_theta: np.ndarray | None = None
+    trajectory_rows: list[dict[str, Any]] = []
+
+    with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
+        backend_info: NoiseBackendInfo = noisy_oracle.backend_info
+        if bool(args.run_adapt):
+            adapt_pool = _build_adapt_pool(
+                args=args,
+                h_poly=h_poly,
+                num_particles=num_particles,
+            )
+            adapt_payload, selected_adapt_ops, selected_adapt_theta = _run_noisy_adapt(
+                args=args,
+                pool=adapt_pool,
+                psi_ref=psi_ref,
+                h_qop=h_qop,
+                noisy_oracle=noisy_oracle,
+                ideal_oracle=ideal_oracle,
+            )
+
+        if bool(args.run_vqe):
+            vqe_payload, best_theta = _run_noisy_vqe(
+                args=args,
+                ansatz=ansatz,
+                psi_ref=psi_ref,
+                h_qop=h_qop,
+                noisy_oracle=noisy_oracle,
+                ideal_oracle=ideal_oracle,
+            )
+
+        if bool(args.run_trotter):
+            init_label, init_circuit = _initial_state_selection(
+                args=args,
+                ansatz=ansatz,
+                psi_ref=psi_ref,
+                hmat=np.asarray(hmat, dtype=complex),
+                best_theta=best_theta,
+                adapt_ops=selected_adapt_ops,
+                adapt_theta=selected_adapt_theta,
+            )
+            up0 = _fermion_mode_index(0, "up", str(args.ordering), int(args.L))
+            dn0 = _fermion_mode_index(0, "dn", str(args.ordering), int(args.L))
+            observables = {
+                "energy_static_trotter": h_qop,
+                "n_up_site0_trotter": _number_operator_qop(int(h_qop.num_qubits), int(up0)),
+                "n_dn_site0_trotter": _number_operator_qop(int(h_qop.num_qubits), int(dn0)),
+                "doublon_trotter": _doublon_site_qop(int(h_qop.num_qubits), int(up0), int(dn0)),
+            }
+            trajectory_rows = _run_noisy_trotter(
+                args=args,
+                initial_circuit=init_circuit,
+                ordered_qop=ordered_qop,
+                observables=observables,
+                noisy_oracle=noisy_oracle,
+                ideal_oracle=ideal_oracle,
+            )
+        else:
+            init_label = str(args.initial_state_source)
+
+    payload: dict[str, Any] = {
+        "pipeline": "hh_noise_hardware_validation",
+        "model": model_name,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "run_command": current_command_string(),
+        "settings": {
+            "problem": str(args.problem),
+            "ansatz": str(args.ansatz),
+            "L": int(args.L),
+            "t": float(args.t),
+            "u": float(args.u),
+            "dv": float(args.dv),
+            "omega0": float(args.omega0),
+            "g_ep": float(args.g_ep),
+            "n_ph_max": int(args.n_ph_max),
+            "boson_encoding": str(args.boson_encoding),
+            "boundary": str(args.boundary),
+            "ordering": str(args.ordering),
+            "run_vqe": bool(args.run_vqe),
+            "run_trotter": bool(args.run_trotter),
+            "run_adapt": bool(args.run_adapt),
+            "initial_state_source": str(args.initial_state_source),
+            "resolved_initial_state_source": str(init_label),
+            "t_final": float(args.t_final),
+            "num_times": int(args.num_times),
+            "suzuki_order": int(args.suzuki_order),
+            "trotter_steps": int(args.trotter_steps),
+            "exact_steps_multiplier": int(args.exact_steps_multiplier),
+            "allow_aer_fallback": bool(args.allow_aer_fallback),
+            "omp_shm_workaround": bool(args.omp_shm_workaround),
+            "vqe_reps": int(args.vqe_reps),
+            "vqe_restarts": int(args.vqe_restarts),
+            "vqe_maxiter": int(args.vqe_maxiter),
+            "vqe_method": str(args.vqe_method),
+            "vqe_seed": int(args.vqe_seed),
+            "adapt_pool": str(args.adapt_pool),
+            "adapt_max_depth": int(args.adapt_max_depth),
+            "adapt_eps_grad": float(args.adapt_eps_grad),
+            "adapt_eps_energy": float(args.adapt_eps_energy),
+            "adapt_maxiter": int(args.adapt_maxiter),
+            "adapt_seed": int(args.adapt_seed),
+            "adapt_allow_repeats": bool(args.adapt_allow_repeats),
+            "adapt_gradient_step": float(args.adapt_gradient_step),
+            "adapt_min_confidence": float(args.adapt_min_confidence),
+        },
+        "noise_config": asdict(noisy_cfg),
+        "backend": asdict(backend_info),
+        "hamiltonian": {
+            "num_qubits": int(h_qop.num_qubits),
+            "num_terms": int(len(native_order)),
+        },
+        "ground_state": {
+            "exact_energy_full_hilbert": float(exact_full),
+            "exact_energy_filtered": float(exact_filtered),
+            "filtered_sector": {"n_up": int(num_particles[0]), "n_dn": int(num_particles[1])},
+        },
+        "vqe": vqe_payload,
+        "adapt": adapt_payload,
+        "trajectory": trajectory_rows,
+        "execution_fallback": {
+            "used": bool(backend_info.details.get("fallback_used", False)),
+            "mode": backend_info.details.get("fallback_mode"),
+            "reason": backend_info.details.get("fallback_reason", ""),
+            "aer_failed": bool(backend_info.details.get("aer_failed", False)),
+        },
+    }
+
+    if trajectory_rows:
+        final = trajectory_rows[-1]
+        payload["summary"] = {
+            "final_energy_delta_noisy_minus_ideal": float(
+                final["energy_static_trotter_delta_noisy_minus_ideal"]
+            ),
+            "final_doublon_delta_noisy_minus_ideal": float(
+                final["doublon_trotter_delta_noisy_minus_ideal"]
+            ),
+        }
+
+    output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _ai_log("hh_noise_validation_json_written", path=str(output_json))
+
+    if not bool(args.skip_pdf):
+        if not HAS_MATPLOTLIB:
+            raise RuntimeError(
+                "matplotlib is required for PDF output. Install matplotlib or run with --skip-pdf."
+            )
+        _write_noise_validation_pdf(pdf_path=output_pdf, payload=payload)
+        _ai_log("hh_noise_validation_pdf_written", path=str(output_pdf))
+
+    _ai_log(
+        "hh_noise_validation_done",
+        output_json=str(output_json),
+        output_pdf=(None if bool(args.skip_pdf) else str(output_pdf)),
+    )
+    print(f"Wrote JSON: {output_json}")
+    if not bool(args.skip_pdf):
+        print(f"Wrote PDF:  {output_pdf}")
+
+
+if __name__ == "__main__":
+    main()

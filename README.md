@@ -205,6 +205,16 @@ graph TB
 - `paop_lf_std`: `paop_std` plus LF-leading odd channel (`curdrag`).
 - HH merge behavior (when `g_ep != 0`): merge `hva` + `hh_termwise_augmented` + selected `paop_*` pool, then deduplicate by polynomial signature.
 
+### ADAPT gradient performance note (2026-03-03)
+
+- `pipelines/hardcoded/adapt_pipeline.py` now caches compiled Pauli actions for repeated ADAPT commutator-gradient evaluations.
+- The cache is built once per ADAPT run (Hamiltonian + pool operators) and reused across gradient sweeps.
+- Cache behavior is always on; there is no dedicated CLI toggle.
+- Numerical behavior is unchanged (cached and uncached paths are parity-tested).
+- ADAPT JSON includes additive telemetry:
+  - `adapt_vqe.compiled_pauli_cache`
+  - `adapt_vqe.history[*].gradient_eval_elapsed_s`
+
 ## Start here (doc priority)
 
 Use this order when onboarding:
@@ -239,6 +249,56 @@ Cross-check suite (exact benchmark; auto-scaled by L/problem defaults):
 ```bash
 python pipelines/exact_bench/cross_check_suite.py --L 2 --problem hubbard
 ```
+
+CFQM propagation (hardcoded pipeline):
+
+```bash
+python pipelines/hardcoded/hubbard_pipeline.py \
+  --L 2 --problem hubbard \
+  --propagator cfqm4 \
+  --cfqm-stage-exp expm_multiply_sparse \
+  --cfqm-coeff-drop-abs-tol 0.0 \
+  --trotter-steps 64 --t-final 10.0 --num-times 201 \
+  --skip-qpe
+```
+
+CFQM propagation status (hardcoded pipeline):
+- `--propagator` defaults to `suzuki2`; existing run behavior is unchanged unless `cfqm4`/`cfqm6` is selected.
+- CFQM uses fixed scheme nodes (`c_j`) and ignores legacy midpoint/left/right `--drive-time-sampling`.
+- `--exact-steps-multiplier` remains a reference-only control and does not change CFQM macro-step count.
+- `--cfqm-stage-exp` default is `expm_multiply_sparse`; `--cfqm-coeff-drop-abs-tol` default is `0.0`; `--cfqm-normalize` default is off.
+- Sparse CFQM stage backend uses native sparse stage assembly + `scipy.sparse.linalg.expm_multiply` (no dense->csc stage materialization).
+- Shared Pauli-term exponentiation helpers are centralized in `src/quantum/pauli_actions.py` (used by both the hardcoded pipeline and CFQM backend).
+- Unknown drive labels are handled with a guardrail policy: nontrivial coefficients warn once per label then are ignored; tiny coefficients (`abs(coeff) <= 1e-14`) are silently ignored.
+- A=0 invariance is preserved by the zero-increment insertion guard; safe-test target is `<= 1e-10`.
+- If non-midpoint sampling is supplied under CFQM, runtime warns:
+  `CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.`
+- If `--cfqm-stage-exp pauli_suzuki2` is selected, runtime warns:
+  `Inner Suzuki-2 makes overall method 2nd order; use expm_multiply_sparse/dense_expm for true CFQM order.`
+
+CFQM6 command:
+
+```bash
+python pipelines/hardcoded/hubbard_pipeline.py \
+  --L 2 --problem hubbard \
+  --propagator cfqm6 \
+  --cfqm-stage-exp expm_multiply_sparse \
+  --cfqm-coeff-drop-abs-tol 0.0 \
+  --trotter-steps 64 --t-final 10.0 --num-times 201 \
+  --skip-qpe
+```
+
+CFQM tests:
+
+```bash
+pytest -q test/test_cfqm_schemes.py test/test_cfqm_propagator.py test/test_cfqm_acceptance.py
+```
+
+Acceptance highlights:
+- static regression vs exact expm
+- A=0 invariance (drive provider present vs absent)
+- manufactured 1-qubit order slopes (`~4` for cfqm4, `~6` for cfqm6, `~2` with inner suzuki2)
+- small HH sanity trend vs fine piecewise reference
 
 For compare/orchestration workflows, use `pipelines/run_guide.md`.
 

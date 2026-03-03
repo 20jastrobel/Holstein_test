@@ -190,6 +190,56 @@ class TestSeedReproducibility:
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# 4. Progress callback telemetry
+# ────────────────────────────────────────────────────────────────────────────
+class TestVQEProgressTelemetry:
+    """Progress callbacks should emit lifecycle + heartbeat events when enabled."""
+
+    def test_progress_callback_emits_events(self):
+        H = _build_hh_hamiltonian()
+        ansatz = HubbardHolsteinLayerwiseAnsatz(
+            dims=_L, J=_T, U=_U, omega0=_OMEGA0, g=_G_EP,
+            n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+            reps=1, indexing=_ORDERING,
+            pbc=(_BOUNDARY == "periodic"),
+        )
+        psi_ref = hubbard_holstein_reference_state(
+            dims=_L, n_ph_max=_N_PH_MAX, boson_encoding=_BOSON_ENCODING,
+            indexing=_ORDERING,
+        )
+
+        events: list[dict] = []
+
+        def _cb(evt: dict) -> None:
+            events.append(dict(evt))
+
+        res = vqe_minimize(
+            H,
+            ansatz,
+            psi_ref,
+            restarts=1,
+            seed=17,
+            maxiter=80,
+            progress_logger=_cb,
+            progress_every_s=0.0,
+            progress_label="test_progress",
+        )
+
+        assert np.isfinite(res.energy)
+        tags = [str(e.get("event", "")) for e in events]
+        assert "restart_start" in tags
+        assert "heartbeat" in tags
+        assert "restart_end" in tags
+        assert "run_end" in tags
+
+        hb = next(e for e in events if str(e.get("event", "")) == "heartbeat")
+        assert hb.get("label") == "test_progress"
+        assert "nfev_so_far" in hb
+        assert "energy_current" in hb
+        assert "energy_best_global" in hb
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # 4. Backward compatibility  — pure Hubbard path unbroken
 # ────────────────────────────────────────────────────────────────────────────
 class TestBackwardCompat:

@@ -17,6 +17,7 @@ for _candidate in (_cwd, *_cwd.parents):
 
 import inspect
 import math
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -1632,10 +1633,15 @@ def vqe_minimize(
     method: str = "SLSQP",
     maxiter: int = 1800,
     bounds: Optional[Tuple[float, float]] = (-math.pi, math.pi),
+    progress_logger: Optional[Callable[[Dict[str, Any]], None]] = None,
+    progress_every_s: float = 60.0,
+    progress_label: str = "vqe_minimize",
+    track_history: bool = False,
 ) -> VQEResult:
     """
     Hardcoded VQE: minimize <psi(theta)|H|psi(theta)> with a statevector backend.
     Uses SciPy if available; otherwise falls back to a tiny coordinate search.
+    Optional progress callback can emit restart/heartbeat lifecycle events.
     """
     minimize = _try_import_scipy_minimize()
     rng = np.random.default_rng(int(seed))
@@ -1655,9 +1661,89 @@ def vqe_minimize(
     best_nit = 0
     best_success = False
     best_message = "no run"
+    total_nfev = 0
+    total_nit = 0
+    run_t0 = time.perf_counter()
+    heartbeat_period = max(0.0, float(progress_every_s))
+    emit_heartbeat = progress_logger is not None
+    history: List[Dict[str, Any]] = []
+
+    def _emit_progress(event: str, **payload: Any) -> None:
+        event_payload: Dict[str, Any] = {
+            "event": str(event),
+            "label": str(progress_label),
+            **payload,
+        }
+        if bool(track_history):
+            history.append(dict(event_payload))
+        if progress_logger is None:
+            return
+        try:
+            progress_logger(event_payload)
+        except Exception:
+            # Progress telemetry must never break optimization.
+            return
+
+    _emit_progress(
+        "run_start",
+        restarts_total=int(restarts),
+        method=str(method),
+        maxiter=int(maxiter),
+        npar=int(npar),
+        elapsed_s=0.0,
+    )
 
     for r in range(int(restarts)):
         x0 = initial_point_stddev * rng.normal(size=npar)
+        restart_t0 = time.perf_counter()
+        restart_nfev = 0
+        restart_best = float("inf")
+        restart_last: Optional[float] = None
+        restart_first: Optional[float] = None
+        heartbeat_last_t = restart_t0
+
+        _emit_progress(
+            "restart_start",
+            restart_index=int(r + 1),
+            restarts_total=int(restarts),
+            elapsed_s=float(restart_t0 - run_t0),
+            elapsed_restart_s=0.0,
+            nfev_so_far=int(total_nfev),
+            energy_best_global=(None if not np.isfinite(best_energy) else float(best_energy)),
+            method=str(method),
+            maxiter=int(maxiter),
+        )
+
+        def _objective_with_progress(x: np.ndarray) -> float:
+            nonlocal restart_nfev, restart_best, restart_last, restart_first, heartbeat_last_t
+            e_val = float(energy_fn(x))
+            restart_nfev += 1
+            restart_last = float(e_val)
+            if restart_first is None:
+                restart_first = float(e_val)
+            if e_val < restart_best:
+                restart_best = float(e_val)
+
+            if emit_heartbeat:
+                now = time.perf_counter()
+                if (heartbeat_period == 0.0) or ((now - heartbeat_last_t) >= heartbeat_period):
+                    energy_best_global = float(min(best_energy, restart_best))
+                    _emit_progress(
+                        "heartbeat",
+                        restart_index=int(r + 1),
+                        restarts_total=int(restarts),
+                        elapsed_s=float(now - run_t0),
+                        elapsed_restart_s=float(now - restart_t0),
+                        nfev_restart=int(restart_nfev),
+                        nfev_so_far=int(total_nfev + restart_nfev),
+                        energy_current=float(restart_last),
+                        energy_restart_best=float(restart_best),
+                        energy_best_global=float(energy_best_global),
+                        method=str(method),
+                        maxiter=int(maxiter),
+                    )
+                    heartbeat_last_t = now
+            return float(e_val)
 
         if minimize is not None:
             bnds = None
@@ -1666,7 +1752,7 @@ def vqe_minimize(
                 bnds = [(lo, hi)] * npar
 
             res = minimize(
-                energy_fn,
+                _objective_with_progress,
                 x0,
                 method=str(method),
                 bounds=bnds,
@@ -1683,9 +1769,9 @@ def vqe_minimize(
         else:
             theta_opt = np.array(x0, dtype=float)
             step = 0.2
-            nfev = 0
+            nfev = int(restart_nfev)
             nit = 0
-            energy = energy_fn(theta_opt)
+            energy = _objective_with_progress(theta_opt)
             nfev += 1
 
             for it in range(int(maxiter)):
@@ -1694,7 +1780,7 @@ def vqe_minimize(
                     for sgn in (+1.0, -1.0):
                         trial = theta_opt.copy()
                         trial[k] += sgn * step
-                        e_trial = energy_fn(trial)
+                        e_trial = _objective_with_progress(trial)
                         nfev += 1
                         if e_trial < energy:
                             energy = e_trial
@@ -1708,6 +1794,34 @@ def vqe_minimize(
             success = True
             message = "fallback coordinate search"
 
+        total_nfev += int(nfev)
+        total_nit += int(nit)
+
+        if restart_last is None:
+            restart_last = float(energy)
+        if not np.isfinite(restart_best):
+            restart_best = float(energy)
+
+        _emit_progress(
+            "restart_end",
+            restart_index=int(r + 1),
+            restarts_total=int(restarts),
+            elapsed_s=float(time.perf_counter() - run_t0),
+            elapsed_restart_s=float(time.perf_counter() - restart_t0),
+            nfev_restart=int(nfev),
+            nit_restart=int(nit),
+            nfev_so_far=int(total_nfev),
+            nit_so_far=int(total_nit),
+            energy_current=float(restart_last),
+            energy_restart_best=float(restart_best),
+            energy_best_global=float(min(best_energy, restart_best)),
+            improvement_from_start=(None if restart_first is None else float(restart_first - restart_best)),
+            success=bool(success),
+            message=str(message),
+            method=str(method),
+            maxiter=int(maxiter),
+        )
+
         if energy < best_energy:
             best_energy = energy
             best_theta = theta_opt
@@ -1718,6 +1832,18 @@ def vqe_minimize(
             best_message = message
 
     assert best_theta is not None
+    _emit_progress(
+        "run_end",
+        elapsed_s=float(time.perf_counter() - run_t0),
+        restarts_total=int(restarts),
+        best_restart=int(best_restart + 1),
+        energy_best=float(best_energy),
+        nfev_total=int(total_nfev),
+        nit_total=int(total_nit),
+        success=bool(best_success),
+        message=str(best_message),
+        history_count=int(len(history)),
+    )
     return VQEResult(
         energy=float(best_energy),
         theta=np.asarray(best_theta, dtype=float),

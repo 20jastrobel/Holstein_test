@@ -372,6 +372,71 @@ projection.
 | `--fidelity-subspace-energy-tol` | float | `1e-8` | Ground-manifold selection tolerance for trajectory subspace fidelity: include filtered-sector states with `E <= E0 + tol`. |
 | `--term-order` | choice | `sorted` | Term ordering for Trotter product. Hardcoded: `native|sorted`. Qiskit: `qiskit|sorted`. |
 
+### CFQM propagators (hardcoded pipeline only)
+
+`pipelines/hardcoded/hubbard_pipeline.py` supports CFQM alongside legacy propagators.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--propagator` | choice | `suzuki2` | `suzuki2`, `piecewise_exact`, `cfqm4`, `cfqm6`. Existing behavior is unchanged unless `cfqm4/cfqm6` is selected. |
+| `--cfqm-stage-exp` | choice | `expm_multiply_sparse` | Stage exponential backend for CFQM: `expm_multiply_sparse`, `dense_expm`, `pauli_suzuki2`. |
+| `--cfqm-coeff-drop-abs-tol` | float | `0.0` | Drops stage coefficients with `abs(coeff) < tol` after stage-map accumulation. |
+| `--cfqm-normalize` | flag | `false` | If set, renormalizes state after each CFQM macro-step. |
+
+CFQM runtime semantics:
+- CFQM uses fixed scheme nodes `c_j`; legacy `--drive-time-sampling midpoint|left|right` does not change CFQM node sampling.
+- `--exact-steps-multiplier` remains reference-only (`piecewise_exact` reference refinement) and does not alter CFQM macro-step count.
+- If `--cfqm-stage-exp pauli_suzuki2` is chosen, runtime warns that inner Suzuki-2 reduces overall order to second order.
+- Defensive checks are enabled: `dt > 0`, `n_steps >= 1`, validated CFQM scheme invariants, and finite drive coefficients (NaN/inf raises with label/time context).
+
+CFQM guardrails + policies:
+- Warning string (sampling semantics): `CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.`
+- Warning string (inner order collapse): `Inner Suzuki-2 makes overall method 2nd order; use expm_multiply_sparse/dense_expm for true CFQM order.`
+- Unknown drive labels use a default safety policy: nontrivial coefficients warn once per label and are ignored; tiny coefficients (`abs(coeff) <= 1e-14`) are silently ignored.
+- Unknown labels are never inserted into stage maps (deterministic stage assembly over `ordered_labels` only).
+- A=0 invariance is preserved via zero-increment insertion guard, with safe-test target `<= 1e-10`.
+
+Backend implementation note:
+- `dense_expm`: dense stage matrix + `scipy.linalg.expm`.
+- `expm_multiply_sparse`: native sparse stage matrix assembly + `scipy.sparse.linalg.expm_multiply`.
+- `pauli_suzuki2`: symmetric inner Suzuki-2 over Pauli terms (runtime order-collapse warning above).
+- Shared Pauli-string action helpers for termwise exponentials live in `src/quantum/pauli_actions.py` (prevents library code from depending on pipeline modules).
+
+Diagnostics summary:
+- With `normalize=false`, observed CFQM norm drift is typically near machine precision (~1e-15 in the added regression diagnostics).
+- Nonzero `--cfqm-coeff-drop-abs-tol` can change trajectories (expected).
+- A=0 invariance remains intact when the drive provider returns exact zeros.
+
+CFQM smoke commands (shared base args):
+
+```bash
+# NOTE (Hubbard smoke): set --adapt-pool uccsd to avoid unsupported paop_std in hubbard ADAPT path.
+
+# 1) Baseline suzuki2
+python pipelines/hardcoded/hubbard_pipeline.py \
+  --L 2 --problem hubbard --trotter-steps 64 --num-times 201 --t-final 10.0 \
+  --vqe-reps 2 --vqe-restarts 2 --vqe-maxiter 600 --vqe-method COBYLA --adapt-pool uccsd \
+  --enable-drive --drive-A 0.2 --drive-omega 1.0 --drive-tbar 1.0 --drive-phi 0.0 \
+  --drive-pattern staggered --drive-time-sampling left --exact-steps-multiplier 2 \
+  --propagator suzuki2 --skip-qpe --skip-pdf
+
+# 2) CFQM4
+python pipelines/hardcoded/hubbard_pipeline.py \
+  --L 2 --problem hubbard --trotter-steps 64 --num-times 201 --t-final 10.0 \
+  --vqe-reps 2 --vqe-restarts 2 --vqe-maxiter 600 --vqe-method COBYLA --adapt-pool uccsd \
+  --enable-drive --drive-A 0.2 --drive-omega 1.0 --drive-tbar 1.0 --drive-phi 0.0 \
+  --drive-pattern staggered --drive-time-sampling left --exact-steps-multiplier 2 \
+  --propagator cfqm4 --cfqm-stage-exp expm_multiply_sparse --skip-qpe --skip-pdf
+
+# 3) piecewise_exact
+python pipelines/hardcoded/hubbard_pipeline.py \
+  --L 2 --problem hubbard --trotter-steps 64 --num-times 201 --t-final 10.0 \
+  --vqe-reps 2 --vqe-restarts 2 --vqe-maxiter 600 --vqe-method COBYLA --adapt-pool uccsd \
+  --enable-drive --drive-A 0.2 --drive-omega 1.0 --drive-tbar 1.0 --drive-phi 0.0 \
+  --drive-pattern staggered --drive-time-sampling left --exact-steps-multiplier 2 \
+  --propagator piecewise_exact --skip-qpe --skip-pdf
+```
+
 ### Time-Dependent Drive Parameters (all three pipelines)
 
 These flags control a Gaussian-envelope sinusoidal onsite density drive:
@@ -389,8 +454,8 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 | `--drive-pattern` | choice | `staggered` | Spatial weight pattern: `staggered`, `dimer_bias`, or `custom` |
 | `--drive-custom-s` | str | `null` | JSON array of custom per-site weights, e.g. `'[1.0,-0.5]'`. Required when `--drive-pattern=custom`. |
 | `--drive-include-identity` | flag | `false` | Include the identity (global-phase) term from n = (I−Z)/2 decomposition |
-| `--drive-time-sampling` | choice | `midpoint` | Time-sampling rule within each Trotter slice: `midpoint`, `left`, or `right` |
-| `--exact-steps-multiplier` | int | `1` | Reference-propagator refinement: N_ref = multiplier × trotter_steps. Has no effect when drive is disabled (static reference uses eigendecomposition). |
+| `--drive-time-sampling` | choice | `midpoint` | Time-sampling rule within each Trotter slice: `midpoint`, `left`, or `right`. CFQM ignores this and uses fixed scheme nodes `c_j`. |
+| `--exact-steps-multiplier` | int | `1` | Reference-propagator refinement: N_ref = multiplier × trotter_steps. Has no effect when drive is disabled (static reference uses eigendecomposition), and does not apply to CFQM macro-step counts. |
 
 ### VQE Parameters
 
@@ -495,6 +560,19 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 The ADAPT-VQE pipeline greedily selects operators from a pool, one per iteration,
 re-optimising all parameters at each depth, until gradient or energy convergence.
+
+### Performance implementation note
+
+- ADAPT commutator-gradient evaluation uses an always-on compiled Pauli-action cache in `hardcoded/adapt_pipeline.py`.
+- Cache build happens once per ADAPT run for the Hamiltonian and pool operators, then is reused across gradient sweeps.
+- There is no separate CLI flag for enabling/disabling this cache path.
+- Output telemetry fields:
+  - `adapt_vqe.compiled_pauli_cache.enabled`
+  - `adapt_vqe.compiled_pauli_cache.compile_elapsed_s`
+  - `adapt_vqe.compiled_pauli_cache.h_terms`
+  - `adapt_vqe.compiled_pauli_cache.pool_terms_total`
+  - `adapt_vqe.history[*].gradient_eval_elapsed_s`
+- These fields are additive and backward-compatible for existing JSON consumers.
 
 ### ADAPT-VQE Parameters
 
@@ -1082,3 +1160,151 @@ The `cmp_hubbard_{tag}_metrics.json` file includes `trajectory_deltas` with per-
   "delta_vqe_hc_minus_qk_at_A1": -1.888e-09
 }
 ```
+
+## 11) HH noise/hardware validation (new)
+
+Use `pipelines/exact_bench/hh_noise_hardware_validation.py` to validate noisy VQE and noisy Trotter observables with one shared expectation oracle.
+
+### 11a) Ideal baseline (HH)
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva --L 2 \
+  --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
+  --noise-mode ideal --oracle-repeats 1 --oracle-aggregate mean
+```
+
+### 11b) Shots-only noise (HH)
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva --L 2 \
+  --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
+  --noise-mode shots --shots 2048 --oracle-repeats 8 --oracle-aggregate mean --seed 7
+```
+
+### 11c) Aer device-noise emulation (HH)
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva --L 2 \
+  --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
+  --noise-mode aer_noise --use-fake-backend --backend-name FakeManilaV2 \
+  --shots 4096 --oracle-repeats 8 --oracle-aggregate mean --seed 7
+```
+
+### 11d) IBM Runtime hardware mode
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva --L 2 \
+  --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
+  --noise-mode runtime --backend-name ibm_brisbane \
+  --shots 4096 --oracle-repeats 8 --oracle-aggregate mean --seed 7
+```
+
+### 11e) Output artifacts
+
+- JSON: `artifacts/json/hh_noise_validation_L{L}_{problem}_{ansatz}_{noise_mode}.json`
+- PDF: `artifacts/pdf/hh_noise_validation_L{L}_{problem}_{ansatz}_{noise_mode}.pdf`
+
+PDF page 1 contains the mandatory parameter manifest (model, ansatz, drive-enabled=false, core physics parameters, and noise/backend settings).
+
+### 11f) Noise interpretation
+
+- `optimizer stochasticity` is induced by noisy objective calls in VQE (`energy_noisy` with per-call spread).
+- `measurement/device noise` appears in trajectory fields as noisy-vs-ideal deltas:
+  - `energy_static_trotter_delta_noisy_minus_ideal`
+  - `n_up_site0_trotter_delta_noisy_minus_ideal`
+  - `n_dn_site0_trotter_delta_noisy_minus_ideal`
+  - `doublon_trotter_delta_noisy_minus_ideal`
+
+### 11g) Hardware-facing reproducibility checklist
+
+- Use fixed seeds (`--seed`, `--vqe-seed`) for reproducible stochastic traces.
+- Keep `L,t,U,dv,omega0,g-ep,n-ph-max,ordering,boundary` unchanged across mode comparisons.
+- Compare `ideal -> shots -> aer_noise -> runtime` in that order.
+- For intentionally weak smoke runs, pass `--smoke-test-intentionally-weak`.
+- Default parameter guards enforce AGENTS minimum VQE/Trotter settings unless smoke mode is explicitly requested.
+
+### 11h) Troubleshooting: OMP/SHM2 startup abort in Aer modes
+
+If `--noise-mode shots` or `--noise-mode aer_noise` fails immediately with output like:
+
+- `OMP: Error #178: Function Can't open SHM2 failed`
+- `OMP: System error ...`
+
+this indicates an **environment-level OpenMP shared-memory restriction**, not a physics/script logic bug.
+
+Important mode distinctions:
+
+- `shots` and `aer_noise` are **local/offline Aer paths** and do **not** require IBM Runtime credentials.
+- `runtime` is the only mode that requires IBM credentials/network (`QISKIT_IBM_TOKEN`, backend access).
+
+Recommended fix path:
+
+- run the command in a non-restricted shell/runtime with working shared-memory support (`/dev/shm` or equivalent),
+- avoid sandbox/container setups that block OpenMP SHM primitives.
+
+## 12) Phase-2 ADAPT noise integration
+
+`pipelines/exact_bench/hh_noise_hardware_validation.py` now supports an optional noisy ADAPT stage.
+
+### 12a) Run ADAPT-only noisy search (HH)
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva --L 2 \
+  --run-adapt --no-run-vqe --no-run-trotter \
+  --adapt-pool hva --adapt-max-depth 12 --adapt-maxiter 200 \
+  --adapt-eps-grad 1e-5 --adapt-eps-energy 1e-8 \
+  --adapt-gradient-step 0.1 --adapt-min-confidence 0.0 \
+  --noise-mode ideal
+```
+
+### 12b) Use ADAPT state as Trotter initial state
+
+```bash
+python pipelines/exact_bench/hh_noise_hardware_validation.py \
+  --problem hh --ansatz hh_hva --L 2 \
+  --run-adapt --no-run-vqe --run-trotter \
+  --initial-state-source adapt \
+  --adapt-pool hva --adapt-max-depth 12 --adapt-maxiter 200 \
+  --noise-mode shots --shots 2048 --oracle-repeats 8 --seed 7
+```
+
+### 12c) ADAPT payload fields
+
+JSON now includes an `adapt` block with:
+
+- `pool_type`, `pool_size`, `allow_repeats`
+- `ansatz_depth`, `num_parameters`, selected `operators`
+- `energy_noisy`, `energy_ideal_reference`, `delta_noisy_minus_ideal`
+- stopping diagnostics: `stop_reason`, gradient/confidence data per iteration in `history`
+
+### 12d) Interpretation
+
+- ADAPT operator ranking noise is controlled by `--adapt-gradient-step` and `--adapt-min-confidence`.
+- `gradient_confidence = |grad| / grad_std`; low confidence can trigger early stop (`low_gradient_confidence`).
+- Keep phase-1 ladder (`ideal -> shots -> aer_noise -> runtime`) for the same physics setup before trusting ADAPT selections on hardware.
+
+### 11i) Aer fallback controls (new)
+
+`hh_noise_hardware_validation.py` now supports reliability flags for constrained environments:
+
+- `--allow-aer-fallback` / `--no-allow-aer-fallback`
+- `--omp-shm-workaround` / `--no-omp-shm-workaround`
+
+Default behavior:
+
+- fallback enabled (`--allow-aer-fallback`)
+- OMP/SHM workaround enabled (`--omp-shm-workaround`)
+
+If Aer fails with OMP/SHM errors in `shots` or `aer_noise`, the oracle auto-switches to a sampler-based shot fallback and records diagnostics in JSON:
+
+- `execution_fallback.used`
+- `execution_fallback.mode`
+- `execution_fallback.reason`
+- `backend.details.fallback_used`
+- `backend.details.fallback_reason`
+- `backend.details.env_workaround_applied`

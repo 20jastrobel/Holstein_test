@@ -102,6 +102,11 @@ Default ansatz should be compatible with future time evolution:
 
 Do not hardcode an ansatz that cannot be decomposed into Pauli exponentials.
 
+### ADAPT gradient cache invariant
+- The production ADAPT gradient path in `pipelines/hardcoded/adapt_pipeline.py` must keep compiled Pauli-action caching enabled for repeated operator evaluations.
+- Do not replace the cached production gradient path with uncached per-term `apply_pauli_string` loops.
+- If refactoring this area, preserve cached-vs-uncached numerical parity and keep regression tests for that parity.
+
 ---
 
 ## 4) Time-dynamics readiness (Suzuki–Trotter / QPE)
@@ -263,6 +268,51 @@ When the user says "run cross-check L=3" or "cross-check L 4":
 - JSON: `<output-dir>/xchk_L{L}_{problem}_t{t}_U{U}.json`
 - PDF: same path with `.pdf` — parameter manifest, scoreboard table, per-ansatz 3-panel trajectory plots (fidelity, energy, occupation), fidelity/energy/doublon overlay pages, command page.
 
+## 4f) CFQM propagation rules (`hubbard_pipeline.py`)
+
+CFQM support is available in the hardcoded pipeline via:
+- `--propagator cfqm4`
+- `--propagator cfqm6`
+
+### CFQM semantics (must preserve)
+- CFQM node sampling is fixed by scheme nodes `c_j`; it does **not** use midpoint/left/right `--drive-time-sampling`.
+- `--exact-steps-multiplier` is reference-only (piecewise/reference refinement) and must not alter CFQM macro-step count.
+- Default behavior remains unchanged unless `--propagator` is switched from `suzuki2`.
+
+### Required warning strings (exact text)
+- `CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.`
+- `Inner Suzuki-2 makes overall method 2nd order; use expm_multiply_sparse/dense_expm for true CFQM order.`
+
+### Invariants and guardrails
+- Keep A=0 safe-test invariant: drive-enabled run with `A=0` must match no-drive within `<= 1e-10`.
+- Keep zero-increment insertion guard in CFQM stage accumulation (do not insert new keys for exact-zero increments).
+- Keep deterministic stage assembly keyed by `ordered_labels`.
+- Drive labels not present in `ordered_labels` must not be inserted.
+- Current default policy: warn once per unknown label for nontrivial coefficients, then ignore; tiny coefficients (`abs(coeff) <= 1e-14`) are silently ignored.
+- Keep fail-fast validation for:
+  - `dt > 0`
+  - `n_steps >= 1`
+  - finite drive coefficients (NaN/inf -> explicit error with label/time)
+  - CFQM scheme validation (`validate_scheme`)
+
+### Backend rule
+- For `--cfqm-stage-exp expm_multiply_sparse`, prefer sparse-native stage assembly + `scipy.sparse.linalg.expm_multiply`.
+- Avoid dense intermediate stage matrices in the sparse backend path.
+- Shared Pauli action primitives live in `src/quantum/pauli_actions.py`; do not reintroduce `src/quantum` -> `pipelines/*` import dependency.
+
+### Normalization rule
+- No renormalization by default; renormalize only when `--cfqm-normalize` is explicitly enabled.
+
+### Minimal post-edit verification commands
+
+```bash
+# CFQM unit/acceptance tests
+pytest -q test/test_cfqm_schemes.py test/test_cfqm_propagator.py test/test_cfqm_acceptance.py
+
+# Help/flag sanity
+python pipelines/hardcoded/hubbard_pipeline.py --help | rg -n "propagator|cfqm-stage-exp|cfqm-coeff-drop-abs-tol|cfqm-normalize"
+```
+
 ---
 
 ## 5) Style and maintainability
@@ -310,4 +360,3 @@ Qiskit baseline scripts may be used to sanity check, but they are not the core t
 - Make the plan extremely consise. Sacrifice grammar for the sake of concision.
 - Near the end of each plan, give me a list of unresolved questions to answer/problems, if any, and the files you will edit.
 - At the end of each plan, state all files intended to alter, and functions and classes to be altered. If none, write 'Files to edit: None'.
-

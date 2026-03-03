@@ -106,6 +106,7 @@ class ProbeConfig:
     warm_maxiter: int
     warm_method: str
     warm_seed: int
+    warm_progress_every_seconds: int
     probe_budget: StageBudget
     medium_budget: StageBudget
     progress_every_depth: int
@@ -843,6 +844,7 @@ def _build_cfg(args: argparse.Namespace) -> ProbeConfig:
         warm_maxiter=int(args.warm_maxiter),
         warm_method=str(args.warm_method),
         warm_seed=int(args.warm_seed),
+        warm_progress_every_seconds=int(args.warm_progress_every_seconds),
         probe_budget=probe_budget,
         medium_budget=medium_budget,
         progress_every_depth=int(args.progress_every_depth),
@@ -891,6 +893,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--warm-maxiter", type=int, default=6000)
     p.add_argument("--warm-method", type=str, default="COBYLA", choices=["COBYLA", "SLSQP", "L-BFGS-B", "Powell", "Nelder-Mead"])
     p.add_argument("--warm-seed", type=int, default=7)
+    p.add_argument("--warm-progress-every-seconds", type=int, default=60)
 
     p.add_argument("--probe-depth", type=int, default=20)
     p.add_argument("--probe-maxiter", type=int, default=1200)
@@ -993,6 +996,50 @@ def main(argv: list[str] | None = None) -> None:
         indexing=str(cfg.ordering),
         pbc=(str(cfg.boundary).strip().lower() == "periodic"),
     )
+    warm_progress_events: list[dict[str, Any]] = []
+
+    def _warm_progress_callback(event: dict[str, Any]) -> None:
+        ev = dict(event)
+        e_cur = ev.get("energy_current")
+        e_best = ev.get("energy_best_global")
+        if isinstance(e_cur, (float, int)):
+            ev["delta_E_abs_current"] = float(abs(float(e_cur) - float(e_exact)))
+        if isinstance(e_best, (float, int)):
+            ev["delta_E_abs_best"] = float(abs(float(e_best) - float(e_exact)))
+        warm_progress_events.append(ev)
+
+        tag = str(ev.get("event", ""))
+        if tag == "restart_start":
+            logger.log(
+                f"WARM restart {ev.get('restart_index')}/{ev.get('restarts_total')} start "
+                f"elapsed_s={float(ev.get('elapsed_s', 0.0)):.1f} nfev_so_far={int(ev.get('nfev_so_far', 0))}"
+            )
+        elif tag == "heartbeat":
+            msg = (
+                f"WARM heartbeat restart {ev.get('restart_index')}/{ev.get('restarts_total')} "
+                f"elapsed_s={float(ev.get('elapsed_s', 0.0)):.1f} "
+                f"nfev_so_far={int(ev.get('nfev_so_far', 0))}"
+            )
+            if "delta_E_abs_current" in ev:
+                msg += f" |DeltaE|={float(ev['delta_E_abs_current']):.6e}"
+            if "delta_E_abs_best" in ev:
+                msg += f" best|DeltaE|={float(ev['delta_E_abs_best']):.6e}"
+            logger.log(msg)
+        elif tag == "restart_end":
+            msg = (
+                f"WARM restart {ev.get('restart_index')}/{ev.get('restarts_total')} end "
+                f"elapsed_s={float(ev.get('elapsed_s', 0.0)):.1f} "
+                f"nfev_restart={int(ev.get('nfev_restart', 0))}"
+            )
+            if "delta_E_abs_best" in ev:
+                msg += f" best|DeltaE|={float(ev['delta_E_abs_best']):.6e}"
+            logger.log(msg)
+        elif tag == "run_end":
+            logger.log(
+                f"WARM run end elapsed_s={float(ev.get('elapsed_s', 0.0)):.1f} "
+                f"best_restart={ev.get('best_restart')} nfev_total={int(ev.get('nfev_total', 0))}"
+            )
+
     warm_res = vqe_minimize(
         h_poly,
         warm_ansatz,
@@ -1001,6 +1048,9 @@ def main(argv: list[str] | None = None) -> None:
         seed=int(cfg.warm_seed),
         maxiter=int(cfg.warm_maxiter),
         method=str(cfg.warm_method),
+        progress_logger=_warm_progress_callback,
+        progress_every_s=float(cfg.warm_progress_every_seconds),
+        progress_label="warm_start_l4_hh",
     )
     psi_warm = np.asarray(warm_ansatz.prepare_state(np.asarray(warm_res.theta, dtype=float), psi_ref), dtype=complex).reshape(-1)
     psi_warm = psi_warm / np.linalg.norm(psi_warm)
@@ -1010,7 +1060,8 @@ def main(argv: list[str] | None = None) -> None:
     logger.log(
         f"WARM done: E={e_warm:.12f} |DeltaE|={d_warm:.6e} rel={rel_warm:.6e} "
         f"reps={cfg.warm_reps} restarts={cfg.warm_restarts} maxiter={cfg.warm_maxiter} "
-        f"nfev={warm_res.nfev} nit={warm_res.nit} runtime_s={time.perf_counter()-t_warm:.2f}"
+        f"nfev={warm_res.nfev} nit={warm_res.nit} runtime_s={time.perf_counter()-t_warm:.2f} "
+        f"heartbeat_events={len(warm_progress_events)}"
     )
 
     # Build pools.
@@ -1059,6 +1110,7 @@ def main(argv: list[str] | None = None) -> None:
             "warm_maxiter": int(cfg.warm_maxiter),
             "warm_method": str(cfg.warm_method),
             "warm_seed": int(cfg.warm_seed),
+            "warm_progress_every_seconds": int(cfg.warm_progress_every_seconds),
             "probe_depth": int(cfg.probe_budget.max_depth),
             "probe_maxiter": int(cfg.probe_budget.maxiter),
             "probe_eps_grad": float(cfg.probe_budget.eps_grad),
@@ -1109,7 +1161,9 @@ def main(argv: list[str] | None = None) -> None:
             "warm_nit": int(warm_res.nit),
             "warm_num_parameters": int(warm_ansatz.num_parameters),
             "runtime_s": float(time.perf_counter() - t_warm),
+            "progress_events_count": int(len(warm_progress_events)),
         },
+        "warm_progress_events": warm_progress_events,
         "pool_components_raw": {
             "uccsd_ferm_only_lifted": int(len(uccsd_pool)),
             "paop": int(len(paop_pool)),
