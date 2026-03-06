@@ -9,6 +9,9 @@ Editing contract (keep stable):
 
 # Hubbard Pipeline Run Guide
 
+This file is the executable runbook layer (commands + operational contracts).
+Contract history: [`docs/AGENT_CONTRACT_CHANGELOG.md`](/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/docs/AGENT_CONTRACT_CHANGELOG.md).
+
 ## HH + drive production prologue (2026-03-02)
 
 ### Scope (current reality)
@@ -62,8 +65,9 @@ Scoped to **HH + drive-enabled** with **L=3**, the last successful runs are:
 ### Bottom line for HH+drive state-prep in this repo
 
 - The parameter set that produced the expected convergence behavior is **Run A**, not the depth-15 proxy.
-- **Current best observed HH L=3 drive-start convergence is** `ΔE_abs ≈ 6.5e-03` (not `1e-4`, not `1e-7`).
-- Any legacy “accuracy gate” language (e.g. `ΔE < 1e-7`) should be treated as **Hubbard-era / aspirational** unless a new HH baseline demonstrates it.
+- **Current best observed HH L=3 drive-start convergence is** `ΔE_abs ≈ 6.5e-03`.
+- **Default Hard Gate (final conventional VQE):** `ΔE_abs < 1e-4`.
+- `1e-7` is **optional strict mode** for the shorthand script, not the default hard stop.
 
 ---
 
@@ -85,20 +89,38 @@ Define workflow-level energy gates for HH warm-start → ADAPT → final VQE:
 Notes:
 - ADAPT internal stopping remains controlled by existing knobs (`adapt-eps-grad`, `adapt-eps-energy`, `adapt-max-depth`, `adapt-maxiter`) and is separate from `ecut_*`.
 - This is a runbook convention. If you script this, enforce `ecut_1/ecut_2` as post-stage checks in the orchestration layer; defaults above apply unless overridden by experiment policy.
-- `run_L_drive_accurate.sh` and HH scaling preset scripts keep their own documented gates unless explicitly overridden in wrappers.
+- `pipelines/shell/run_drive_accurate.sh` and HH scaling preset scripts keep their own documented gates unless explicitly overridden in wrappers.
+
+### Gate semantics by context
+
+| Context | Gate | Purpose |
+|---|---|---|
+| Final conventional VQE (default hard gate) | `ΔE_abs < 1e-4` | Default agent pass/fail gate |
+| Shorthand runner strict mode (`pipelines/shell/run_drive_accurate.sh`) | `ΔE_abs < 1e-7` | Optional strict-mode gate |
+| HH staged handoff (`ecut_1`) | `ΔE_ws <= 1e-2` | Diagnostic handoff guidance (pre-VQE) |
+| HH staged final (`ecut_2`) | `ΔE_final <= 1e-4` | Diagnostic stage target before final replay |
+| HH production pass gate (runbook) | `ΔE_abs <= 1e-2` | Practical quality indicator, not default hard stop |
+
+### Policy-vs-code conflict handling
+
+If AGENTS policy and current code/CLI behavior diverge:
+
+- `AGENTS target`: follow AGENTS contract text.
+- `Current code behavior`: document the observed CLI/code behavior.
+- `Required action: ask user before proceeding`.
 
 ### Agent stage contract (intermediate -> full -> switch -> replay)
 
 For agent-run HH workflows, use this stage contract:
 
 1. Warm-start stage: conventional VQE with intermediate HH ansatz `hh_hva_ptw`.
-2. ADAPT stage: full meta-pool target `uccsd_lifted + hva + paop_full + paop_lf_full`.
+2. ADAPT stage: full meta-pool target via `--adapt-pool full_meta` (`uccsd_lifted + hva + paop_full + paop_lf_full`).
 3. ADAPT -> final VQE switch: apply an energy-drop switching criterion (see "ADAPT continuation stop policy (energy-first, mandatory for agent runs)").
 4. Final VQE replay: initialize from ADAPT state (`--initial-state-source adapt_json`) with `--vqe-reps L`.
 
 CLI note:
-- The full meta-pool in step 2 is a custom merged pool contract, not a single current `--adapt-pool` token.
-- Nearest built-in single preset is `--adapt-pool uccsd_paop_lf_full`.
+- `--adapt-pool full_meta` is the canonical executable token for the full meta-pool contract.
+- Legacy nearest subset remains `--adapt-pool uccsd_paop_lf_full` (`uccsd_lifted + paop_lf_full`).
 
 ### Symbols
 
@@ -128,7 +150,7 @@ Use these as the reference knobs unless you intentionally re-calibrate:
 - `ws_maxiter_ref = 4000`
 
 **ADAPT (historical Run A stage):**
-- `adapt_pool = paop_lf_std`
+- `adapt_pool = full_meta`
 - For current agent target policy, use the full meta-pool contract from "Agent stage contract (intermediate -> full -> switch -> replay)".
 - `adapt_max_depth_ref = 120`
 - `adapt_maxiter_ref = 5000`
@@ -286,6 +308,15 @@ Policy:
 2) Secondary criterion (optional safety):
 - A gradient floor (`pre-opt max|g| < g_floor` for `M` depths) may be used as
   an additional guard, but it must not be the only stop signal.
+3) Hardcoded ADAPT eps-energy guard (`pipelines/hardcoded/adapt_pipeline.py`):
+- `eps_energy` stop is depth-gated and patience-gated by defaults:
+  - `--adapt-eps-energy-min-extra-depth=-1` resolves to `L`
+  - `--adapt-eps-energy-patience=-1` resolves to `L`
+- `eps_energy` stop triggers only when both are true:
+  - local ADAPT depth `>= min_extra_depth`
+  - `|E(d)-E(d-1)| < eps_energy` for `patience` consecutive depths (counted after the gate opens)
+- When `--adapt-ref-json` is used, payload reports cumulative gate depth as:
+  `adapt_ref_base_depth + min_extra_depth_effective`.
 
 Recommended L=4 overnight defaults:
 - `drop_floor = 5e-4`
@@ -350,9 +381,7 @@ python pipelines/hardcoded/hubbard_pipeline.py \
 
 ---
 
-# Hubbard Pipeline Run Guide
-
-This is the comprehensive runtime guide for the simplified repo layout.
+## Comprehensive Runtime Reference
 
 Run from the repository root (`Holstein_test/`).
 
@@ -367,13 +396,13 @@ Run from the repository root (`Holstein_test/`).
 | `pipelines/qiskit_archive/qiskit_baseline.py` | Qiskit Hamiltonian, Qiskit VQE, Qiskit Trotter dynamics, optional QPE |
 | `pipelines/qiskit_archive/compare_hc_vs_qk.py` | Orchestrator — runs both, compares metrics, writes comparison PDFs |
 | `reports/compare_jsons.py` | Standalone JSON-vs-JSON consistency checker |
-| `pipelines/regression_L2_L3.sh` | Automated L=2/L=3 regression harness |
-| `pipelines/run_hva_uccsd_qiskit_L2_L3.sh` | Repro runner for hardcoded layer-wise UCCSD/HVA vs shared qiskit baseline on L=2,3 |
-| `pipelines/run_L_drive_accurate.sh` | Shorthand runner for "run L": drive-only, accuracy-gated (`delta_e < 1e-7`) with L-scaled heaviness |
-| `pipelines/run_scaling_preset_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
+| `pipelines/shell/regression_L2_L3.sh` | Automated L=2/L=3 regression harness |
+| `pipelines/shell/run_qiskit_L2_L3.sh` | Repro runner for hardcoded layer-wise UCCSD/HVA vs shared qiskit baseline on L=2,3 |
+| `pipelines/shell/run_drive_accurate.sh` | Shorthand runner for "run L": drive-only, default hard gate `<1e-4`, optional strict mode `<1e-7`, with L-scaled heaviness |
+| `pipelines/shell/run_scaling_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
 
-> **HH note:** The `run_L_drive_accurate.sh` “`1e-7`” energy gate is legacy / Hubbard-era.
-> For HH production state-prep, use the absolute-error gates in **HH autoscaling preset** above.
+> **HH note:** `run_drive_accurate.sh` supports strict mode at `1e-7`.
+> Default agent hard gate remains `ΔE_abs < 1e-4` for final conventional VQE.
 
 ---
 
@@ -486,10 +515,10 @@ Diagnostics summary:
 - Nonzero `--cfqm-coeff-drop-abs-tol` can change trajectories (expected).
 - A=0 invariance remains intact when the drive provider returns exact zeros.
 
-CFQM smoke commands (shared base args):
+CFQM baseline commands (production-safe, JSON-only):
 
 ```bash
-# NOTE (Hubbard smoke): set --adapt-pool uccsd to avoid unsupported paop_std in hubbard ADAPT path.
+# NOTE: set --adapt-pool uccsd to avoid unsupported paop_std in hubbard ADAPT path.
 
 # 1) Baseline suzuki2
 python pipelines/hardcoded/hubbard_pipeline.py \
@@ -549,7 +578,7 @@ Pipeline sequence:
 1. HVA warm-start with `hh_hva_ptw` (intermediate HH variant)
 2. ADAPT stage:
    - strict legacy mode: Pool B union (`UCCSD_lifted + HVA + PAOP_full`)
-   - full target mode: custom union (`UCCSD_lifted + HVA + PAOP_full + PAOP_lf_full`)
+   - full target mode: `--adapt-pool full_meta` (`UCCSD_lifted + HVA + PAOP_full + PAOP_lf_full`)
 3. switch from ADAPT to final VQE using the energy-drop criterion (see ADAPT continuation stop policy)
 4. conventional VQE seeded from ADAPT with `vqe_reps = L`
 5. noisy dynamics benchmark for selected methods (default `cfqm4,suzuki2`)
@@ -752,7 +781,8 @@ Typical starting values:
 | `--adapt-max-depth` | int | `30` | Max ADAPT depth for internal PAOP branch construction. |
 | `--adapt-eps-grad` | float | `1e-5` | ADAPT gradient stopping threshold for internal PAOP branch run. |
 | `--adapt-eps-energy` | float | `1e-8` | ADAPT energy-improvement stopping threshold for internal PAOP branch run. |
-| `--adapt-maxiter` | int | `800` | COBYLA maxiter per ADAPT re-optimization step. |
+| `--adapt-inner-optimizer` | choice | `SPSA` | Inner optimizer per ADAPT re-optimization step: `COBYLA` or `SPSA`. |
+| `--adapt-maxiter` | int | `800` | Inner optimizer maxiter per ADAPT re-optimization step. |
 | `--adapt-seed` | int | `7` | RNG seed for internal ADAPT branch run. |
 | `--adapt-allow-repeats` / `--adapt-no-repeats` | flag pair | repeats on | Allow/disallow operator repeats in internal ADAPT. |
 | `--adapt-finite-angle-fallback` / `--adapt-no-finite-angle-fallback` | flag pair | fallback on | Enable finite-angle continuation when gradients are near threshold. |
@@ -860,17 +890,27 @@ What it reports:
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--adapt-pool` | choice | `uccsd` | Pool type: `uccsd`, `cse`, `full_hamiltonian`, `hva` (HH only), `paop`, `paop_min`, `paop_std`, `paop_full`, `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf_full` (HH only) |
+| `--adapt-pool` | choice | `uccsd` | Pool type: `uccsd`, `cse`, `full_hamiltonian`, `hva` (HH only), `full_meta` (HH only), `paop`, `paop_min`, `paop_std`, `paop_full`, `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf_full` (HH only) |
 | `--adapt-max-depth` | int | `20` | Maximum ADAPT iterations (operators appended) |
 | `--adapt-eps-grad` | float | `1e-4` | Gradient convergence threshold |
 | `--adapt-eps-energy` | float | `1e-8` | Energy convergence threshold |
-| `--adapt-maxiter` | int | `300` | COBYLA maxiter per re-optimization |
+| `--adapt-eps-energy-min-extra-depth` | int | `-1` | Minimum extra depth before eps-energy stop; `-1 => L` |
+| `--adapt-eps-energy-patience` | int | `-1` | Consecutive low-improvement depths required for eps-energy stop; `-1 => L` |
+| `--adapt-inner-optimizer` | choice | `SPSA` | Inner optimizer per ADAPT re-optimization step: `COBYLA` or `SPSA`. |
+| `--adapt-state-backend` | choice | `compiled` | ADAPT state action backend: `compiled` (production cached path) or `legacy` (lower-memory fallback) |
+| `--adapt-maxiter` | int | `300` | Inner optimizer maxiter per re-optimization |
 | `--adapt-seed` | int | `7` | Random seed |
 | `--adapt-allow-repeats` / `--adapt-no-repeats` | flag | `allow` | Allow selecting the same pool operator more than once |
 | `--adapt-finite-angle-fallback` / `--adapt-no-finite-angle-fallback` | flag | `enabled` | Scan ±theta probes when gradients are below threshold |
 | `--adapt-finite-angle` | float | `0.1` | Probe angle for finite-angle fallback |
 | `--adapt-finite-angle-min-improvement` | float | `1e-12` | Minimum energy drop from probe to accept fallback |
 | `--adapt-disable-hh-seed` | flag | `false` | Disable HH quadrature seed pre-optimization |
+| `--adapt-drop-floor` | float | `-1.0` | Energy-drop plateau floor (`drop = ΔE_abs(d-1)-ΔE_abs(d)`); set `>=0` to enable |
+| `--adapt-drop-patience` | int | `0` | Consecutive low-drop depths needed for plateau stop |
+| `--adapt-drop-min-depth` | int | `0` | Minimum depth before applying drop plateau stop |
+| `--adapt-grad-floor` | float | `-1.0` | Optional secondary gradient floor guard for plateau stop |
+| `--adapt-ref-json` | path | `None` | Import ADAPT reference state from JSON `initial_state.amplitudes_qn_to_q0` |
+| `--dense-eigh-max-dim` | int | `8192` | Skip full dense diagonalization when Hilbert dim exceeds threshold (sector exact remains; trajectory skipped) |
 
 ### PAOP Pool Parameters (HH only)
 
@@ -886,13 +926,14 @@ What it reports:
 | Problem | Available pools |
 |---------|----------------|
 | `hubbard` | `uccsd`, `cse`, `full_hamiltonian` |
-| `hh` | `hva`, `full_hamiltonian`, `paop`, `paop_min`, `paop_std`, `paop_full`, `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf_full` |
+| `hh` | `hva`, `full_meta`, `full_hamiltonian`, `paop`, `paop_min`, `paop_std`, `paop_full`, `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf_full` |
 
 **Pool details:**
 - `uccsd` — UCCSD single + double excitation generators (same as VQE pipeline)
 - `cse` — Term-wise Hubbard ansatz terms (Hamiltonian-variational style)
 - `full_hamiltonian` — One generator per non-identity Hamiltonian Pauli term
 - `hva` (HH) — HH layerwise generators + UCCSD lifted to HH register + termwise-augmented (merged, deduplicated)
+- `full_meta` (HH) — deduplicated union `uccsd_lifted + hva + paop_full + paop_lf_full`
 - `paop_min` — Displacement-only polaron operators (local conditional displacement)
 - `paop_std` — Displacement + dressed hopping
 - `paop_full` — All polaron operators (displacement + doublon dressing + dressed hopping + extended cloud)
@@ -946,11 +987,13 @@ Defaults:
 - `--t 1.0 --u 4.0 --dv 0.0`
 - `--boundary open --ordering blocked`
 - `--problem hubbard` (use `--problem hh` for Hubbard-Holstein)
-- `--adapt-pool uccsd` (`uccsd|cse|full_hamiltonian|hva|paop|paop_min|paop_std|paop_full|paop_lf|paop_lf_std|paop_lf2_std|paop_lf_full`)
+- `--adapt-pool uccsd` (`uccsd|cse|full_hamiltonian|hva|full_meta|paop|paop_min|paop_std|paop_full|paop_lf|paop_lf_std|paop_lf2_std|paop_lf_full`)
 - `--adapt-max-depth 20 --adapt-eps-grad 1e-4 --adapt-eps-energy 1e-8`
+- `--adapt-state-backend compiled` (`compiled|legacy`)
 - `--adapt-maxiter 300 --adapt-seed 7`
 - `--adapt-allow-repeats --adapt-finite-angle-fallback`
 - `--adapt-finite-angle 0.1 --adapt-finite-angle-min-improvement 1e-12`
+- `--dense-eigh-max-dim 8192`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--initial-state-source adapt_vqe` (`adapt_vqe|exact|hf`)
 
@@ -1013,25 +1056,21 @@ Defaults:
 ### 0) Shorthand `run L` convention (drive-only + accurate)
 
 ```bash
-bash pipelines/run_L_drive_accurate.sh --L 4
+bash pipelines/shell/run_drive_accurate.sh --L 4
 ```
 
-### 0b) HVA/UCCSD layer-wise L=2,3 runner
+### 0b) HVA/UCCSD layer-wise L=2,3 runner (production-safe profile)
 
 ```bash
-bash pipelines/run_hva_uccsd_qiskit_L2_L3.sh
-```
-
-Heavy preset:
-
-```bash
-bash pipelines/run_hva_uccsd_qiskit_L2_L3.sh --heavy
+bash pipelines/shell/run_qiskit_L2_L3.sh --heavy
 ```
 
 This enforces the default shorthand contract:
 
 - drive is always enabled (never static),
-- accuracy gate is enforced:
+- default hard gate is enforced on final conventional VQE:
+  `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-4`,
+- optional strict mode in shorthand script:
   `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-7`,
 - settings scale with `L` (heavier defaults for larger systems),
 - fallback attempts auto-escalate if the primary attempt misses the gate.
@@ -1053,17 +1092,17 @@ Fallback behavior:
 Optional flags:
 
 ```bash
-bash pipelines/run_L_drive_accurate.sh --L 5 --with-pdf
+bash pipelines/shell/run_drive_accurate.sh --L 5 --with-pdf
 ```
 
 ```bash
-bash pipelines/run_L_drive_accurate.sh --L 6 --budget-hours 12 --artifacts-dir artifacts
+bash pipelines/shell/run_drive_accurate.sh --L 6 --budget-hours 12 --artifacts-dir artifacts
 ```
 
 HH mode (auto-defaults to `--vqe-ansatz hh_hva` when `--problem hh`):
 
 ```bash
-bash pipelines/run_L_drive_accurate.sh --L 2 \
+bash pipelines/shell/run_drive_accurate.sh --L 2 \
   --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding unary
 ```
 
@@ -1071,7 +1110,7 @@ Scaling preset with HH (env-var driven):
 
 ```bash
 PROBLEM=hh OMEGA0=1.0 G_EP=0.5 N_PH_MAX=1 BOSON_ENCODING=unary \
-  bash pipelines/run_scaling_preset_L2_L6.sh
+  bash pipelines/shell/run_scaling_L2_L6.sh
 ```
 
 ### 1) Run full compare for L=2,3,4 with locked heavy settings
@@ -1268,7 +1307,7 @@ This runs 8 sub-pipeline invocations per L (2 main + 6 amplitude comparison) and
 ### 8) Run the L=2/L=3 regression harness
 
 ```bash
-bash pipelines/regression_L2_L3.sh
+bash pipelines/shell/regression_L2_L3.sh
 ```
 
 This writes `_reg` JSON/PDF outputs for L=2 and L=3, runs the compare runner, runs
@@ -1286,7 +1325,7 @@ python reports/compare_jsons.py \
 ### 10) Run the L=2..6 scaling preset with VQE error gate
 
 ```bash
-bash pipelines/run_scaling_preset_L2_L6.sh
+bash pipelines/shell/run_scaling_L2_L6.sh
 ```
 
 Defaults in this runner:
@@ -1301,11 +1340,11 @@ Defaults in this runner:
 Useful overrides:
 
 ```bash
-L25_BUDGET_HOURS=10 RUN_L6=0 bash pipelines/run_scaling_preset_L2_L6.sh
+L25_BUDGET_HOURS=10 RUN_L6=0 bash pipelines/shell/run_scaling_L2_L6.sh
 ```
 
 ```bash
-ERROR_THRESHOLD=5e-3 SKIP_PDF=0 bash pipelines/run_scaling_preset_L2_L6.sh
+ERROR_THRESHOLD=5e-3 SKIP_PDF=0 bash pipelines/shell/run_scaling_L2_L6.sh
 ```
 
 Artifacts are written to:
@@ -1620,7 +1659,7 @@ JSON now includes an `adapt` block with:
 
 Noisy ADAPT now supports an inner optimizer selector:
 
-- `--adapt-inner-optimizer {COBYLA,SPSA}`
+- `--adapt-inner-optimizer {COBYLA,SPSA}` (default `SPSA`)
 - SPSA knobs:
   - `--adapt-spsa-a`, `--adapt-spsa-c`, `--adapt-spsa-alpha`, `--adapt-spsa-gamma`, `--adapt-spsa-A`
   - `--adapt-spsa-avg-last`, `--adapt-spsa-eval-repeats`, `--adapt-spsa-eval-agg`

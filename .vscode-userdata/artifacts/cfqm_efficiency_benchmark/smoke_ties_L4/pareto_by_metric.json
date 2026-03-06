@@ -1,0 +1,750 @@
+[
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "cx_proxy",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7168.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 28672.0,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "pauli_rot_count",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 3712.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 14848.0,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "expm_calls",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 128.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 512.0,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "wall_time",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 15.298901916947216,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 25.12018695799634,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 34.795785875059664,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 65.76324562495574,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "cx_proxy",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7168.0,
+        "error": 0.0009130691647568634
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 2.0816681711721685e-15
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "pauli_rot_count",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 3712.0,
+        "error": 0.0009130691647568634
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 2.0816681711721685e-15
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "expm_calls",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 128.0,
+        "error": 0.0009130691647568634
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 2.0816681711721685e-15
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "wall_time",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 15.298901916947216,
+        "error": 0.0009130691647568634
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 25.12018695799634,
+        "error": 0.00022660911336393197
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 34.795785875059664,
+        "error": 2.0816681711721685e-15
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "cx_proxy",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7168.0,
+        "error": 8.072347955945247e-05
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 9.059419880941277e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "pauli_rot_count",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 3712.0,
+        "error": 8.072347955945247e-05
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 9.059419880941277e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "expm_calls",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 128.0,
+        "error": 8.072347955945247e-05
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 9.059419880941277e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "wall_time",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 15.298901916947216,
+        "error": 8.072347955945247e-05
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 25.12018695799634,
+        "error": 5.006047628430821e-06
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 34.795785875059664,
+        "error": 9.059419880941277e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "cx_proxy",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7168.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 28672.0,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "pauli_rot_count",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 3712.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 14848.0,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "expm_calls",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 128.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 512.0,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "wall_time",
+    "error_metric": "final_infidelity",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 18.88178220903501,
+        "error": 1.0
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 31.348772999830544,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 38.71994787454605,
+        "error": 1.0
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 71.1738390000537,
+        "error": 1.0
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "cx_proxy",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7168.0,
+        "error": 0.0009130610698651898
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 1.115496583992126e-13
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 28672.0,
+        "error": 3.03368441478824e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "pauli_rot_count",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 3712.0,
+        "error": 0.0009130610698651898
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 1.115496583992126e-13
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 14848.0,
+        "error": 3.03368441478824e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "expm_calls",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 128.0,
+        "error": 0.0009130610698651898
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 1.115496583992126e-13
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 512.0,
+        "error": 3.03368441478824e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "wall_time",
+    "error_metric": "max_doublon_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 18.88178220903501,
+        "error": 0.0009130610698651898
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 31.348772999830544,
+        "error": 0.00022660706084895454
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 38.71994787454605,
+        "error": 1.115496583992126e-13
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 71.1738390000537,
+        "error": 3.03368441478824e-14
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "cx_proxy",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7168.0,
+        "error": 8.080438706059567e-05
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 14336.0,
+        "error": 1.1386447340555605e-12
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 28672.0,
+        "error": 4.169997680492088e-13
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "pauli_rot_count",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 3712.0,
+        "error": 8.080438706059567e-05
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 7424.0,
+        "error": 1.1386447340555605e-12
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 14848.0,
+        "error": 4.169997680492088e-13
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "expm_calls",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 128.0,
+        "error": 8.080438706059567e-05
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 256.0,
+        "error": 1.1386447340555605e-12
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 512.0,
+        "error": 4.169997680492088e-13
+      }
+    ]
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "cost_axis": "wall_time",
+    "error_metric": "max_energy_abs_err",
+    "frontier": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 18.88178220903501,
+        "error": 8.080438706059567e-05
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 31.348772999830544,
+        "error": 5.0262325057559565e-06
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 64,
+        "stage_mode": "exact_sparse",
+        "cost": 38.71994787454605,
+        "error": 1.1386447340555605e-12
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 128,
+        "stage_mode": "exact_sparse",
+        "cost": 71.1738390000537,
+        "error": 4.169997680492088e-13
+      }
+    ]
+  }
+]

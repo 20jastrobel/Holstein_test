@@ -1,0 +1,217 @@
+{
+  "equal_cost_exact_ties": {
+    "cx_proxy": [
+      {
+        "scenario_id": "hh_L3_nb1",
+        "drive_case_id": "sin_om0.5_tb5.0",
+        "track": "integrator_exact_sparse",
+        "axis": "cx_proxy",
+        "target_cost": 6400.0,
+        "rows": [
+          {
+            "run_id": "run_000001_hh_L3_nb1_sin_om0.5_tb5.0_integrator_exact_sparse_suzuki2_S64",
+            "scenario_id": "hh_L3_nb1",
+            "problem": "hh",
+            "drive_case_id": "sin_om0.5_tb5.0",
+            "track": "integrator_exact_sparse",
+            "stage_mode": "exact_sparse",
+            "method": "suzuki2",
+            "trotter_steps": 64,
+            "dt": 0.003125,
+            "reference_steps": 64,
+            "final_infidelity": 1.0,
+            "max_doublon_abs_err": 1.1363601309377636e-06,
+            "max_energy_abs_err": 1.847113573205661e-10,
+            "wall_time_s": 7.106649791821837,
+            "expm_multiply_calls_method": 0,
+            "expm_multiply_calls_reference": 64,
+            "expm_multiply_calls_total": 64,
+            "pauli_rot_count_total": 3968,
+            "cx_proxy_total": 6400,
+            "depth_proxy_total": 3968,
+            "sq_proxy_total": 11648,
+            "transpiled_2q_count": null,
+            "transpiled_depth": null
+          }
+        ]
+      },
+      {
+        "scenario_id": "hh_L3_nb1",
+        "drive_case_id": "sin_om2.0_tb5.0",
+        "track": "integrator_exact_sparse",
+        "axis": "cx_proxy",
+        "target_cost": 6400.0,
+        "rows": [
+          {
+            "run_id": "run_000002_hh_L3_nb1_sin_om2.0_tb5.0_integrator_exact_sparse_suzuki2_S64",
+            "scenario_id": "hh_L3_nb1",
+            "problem": "hh",
+            "drive_case_id": "sin_om2.0_tb5.0",
+            "track": "integrator_exact_sparse",
+            "stage_mode": "exact_sparse",
+            "method": "suzuki2",
+            "trotter_steps": 64,
+            "dt": 0.003125,
+            "reference_steps": 64,
+            "final_infidelity": 1.0,
+            "max_doublon_abs_err": 1.1400921005877418e-06,
+            "max_energy_abs_err": 1.1214371653522903e-09,
+            "wall_time_s": 6.661651291884482,
+            "expm_multiply_calls_method": 0,
+            "expm_multiply_calls_reference": 64,
+            "expm_multiply_calls_total": 64,
+            "pauli_rot_count_total": 3968,
+            "cx_proxy_total": 6400,
+            "depth_proxy_total": 3968,
+            "sq_proxy_total": 11648,
+            "transpiled_2q_count": null,
+            "transpiled_depth": null
+          }
+        ]
+      },
+      {
+        "scenario_id": "hh_L3_nb1",
+        "drive_case_id": "sin_om8.0_tb5.0",
+        "track": "integrator_exact_sparse",
+        "axis": "cx_proxy",
+        "target_cost": 6400.0,
+        "rows": [
+          {
+            "run_id": "run_000003_hh_L3_nb1_sin_om8.0_tb5.0_integrator_exact_sparse_suzuki2_S64",
+            "scenario_id": "hh_L3_nb1",
+            "problem": "hh",
+            "drive_case_id": "sin_om8.0_tb5.0",
+            "track": "integrator_exact_sparse",
+            "stage_mode": "exact_sparse",
+            "method": "suzuki2",
+            "trotter_steps": 64,
+            "dt": 0.003125,
+            "reference_steps": 64,
+            "final_infidelity": 1.0,
+            "max_doublon_abs_err": 1.1524828203990367e-06,
+            "max_energy_abs_err": 3.9053832168178815e-08,
+            "wall_time_s": 6.672484625130892,
+            "expm_multiply_calls_method": 0,
+            "expm_multiply_calls_reference": 64,
+            "expm_multiply_calls_total": 64,
+            "pauli_rot_count_total": 3968,
+            "cx_proxy_total": 6400,
+            "depth_proxy_total": 3968,
+            "sq_proxy_total": 11648,
+            "transpiled_2q_count": null,
+            "transpiled_depth": null
+          }
+        ]
+      }
+    ]
+  },
+  "fallback_appendix": {
+    "cx_proxy": [
+      {
+        "scenario_id": "hh_L3_nb1",
+        "drive_case_id": "sin_om0.5_tb5.0",
+        "track": "integrator_exact_sparse",
+        "axis": "cx_proxy",
+        "target_cost": 6400.0,
+        "rows": [
+          {
+            "run_id": "run_000001_hh_L3_nb1_sin_om0.5_tb5.0_integrator_exact_sparse_suzuki2_S64",
+            "scenario_id": "hh_L3_nb1",
+            "problem": "hh",
+            "drive_case_id": "sin_om0.5_tb5.0",
+            "track": "integrator_exact_sparse",
+            "stage_mode": "exact_sparse",
+            "method": "suzuki2",
+            "trotter_steps": 64,
+            "dt": 0.003125,
+            "reference_steps": 64,
+            "final_infidelity": 1.0,
+            "max_doublon_abs_err": 1.1363601309377636e-06,
+            "max_energy_abs_err": 1.847113573205661e-10,
+            "wall_time_s": 7.106649791821837,
+            "expm_multiply_calls_method": 0,
+            "expm_multiply_calls_reference": 64,
+            "expm_multiply_calls_total": 64,
+            "pauli_rot_count_total": 3968,
+            "cx_proxy_total": 6400,
+            "depth_proxy_total": 3968,
+            "sq_proxy_total": 11648,
+            "transpiled_2q_count": null,
+            "transpiled_depth": null,
+            "fallback_delta": 0.0
+          }
+        ]
+      },
+      {
+        "scenario_id": "hh_L3_nb1",
+        "drive_case_id": "sin_om2.0_tb5.0",
+        "track": "integrator_exact_sparse",
+        "axis": "cx_proxy",
+        "target_cost": 6400.0,
+        "rows": [
+          {
+            "run_id": "run_000002_hh_L3_nb1_sin_om2.0_tb5.0_integrator_exact_sparse_suzuki2_S64",
+            "scenario_id": "hh_L3_nb1",
+            "problem": "hh",
+            "drive_case_id": "sin_om2.0_tb5.0",
+            "track": "integrator_exact_sparse",
+            "stage_mode": "exact_sparse",
+            "method": "suzuki2",
+            "trotter_steps": 64,
+            "dt": 0.003125,
+            "reference_steps": 64,
+            "final_infidelity": 1.0,
+            "max_doublon_abs_err": 1.1400921005877418e-06,
+            "max_energy_abs_err": 1.1214371653522903e-09,
+            "wall_time_s": 6.661651291884482,
+            "expm_multiply_calls_method": 0,
+            "expm_multiply_calls_reference": 64,
+            "expm_multiply_calls_total": 64,
+            "pauli_rot_count_total": 3968,
+            "cx_proxy_total": 6400,
+            "depth_proxy_total": 3968,
+            "sq_proxy_total": 11648,
+            "transpiled_2q_count": null,
+            "transpiled_depth": null,
+            "fallback_delta": 0.0
+          }
+        ]
+      },
+      {
+        "scenario_id": "hh_L3_nb1",
+        "drive_case_id": "sin_om8.0_tb5.0",
+        "track": "integrator_exact_sparse",
+        "axis": "cx_proxy",
+        "target_cost": 6400.0,
+        "rows": [
+          {
+            "run_id": "run_000003_hh_L3_nb1_sin_om8.0_tb5.0_integrator_exact_sparse_suzuki2_S64",
+            "scenario_id": "hh_L3_nb1",
+            "problem": "hh",
+            "drive_case_id": "sin_om8.0_tb5.0",
+            "track": "integrator_exact_sparse",
+            "stage_mode": "exact_sparse",
+            "method": "suzuki2",
+            "trotter_steps": 64,
+            "dt": 0.003125,
+            "reference_steps": 64,
+            "final_infidelity": 1.0,
+            "max_doublon_abs_err": 1.1524828203990367e-06,
+            "max_energy_abs_err": 3.9053832168178815e-08,
+            "wall_time_s": 6.672484625130892,
+            "expm_multiply_calls_method": 0,
+            "expm_multiply_calls_reference": 64,
+            "expm_multiply_calls_total": 64,
+            "pauli_rot_count_total": 3968,
+            "cx_proxy_total": 6400,
+            "depth_proxy_total": 3968,
+            "sq_proxy_total": 11648,
+            "transpiled_2q_count": null,
+            "transpiled_depth": null,
+            "fallback_delta": 0.0
+          }
+        ]
+      }
+    ]
+  }
+}

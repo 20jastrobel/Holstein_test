@@ -1,0 +1,56 @@
+{
+  "runs": [
+    {
+      "L": 2,
+      "sector": [
+        1,
+        1
+      ],
+      "ansatz": "hh_hva_ptw",
+      "reps": 2,
+      "restarts": 3,
+      "maxiter": 800,
+      "seed": 7,
+      "num_parameters": 16,
+      "base_terms_per_layer": 8,
+      "E_exact_sector": 0.1586679041257264,
+      "E_best": 0.17229042845183531,
+      "delta_E_abs": 0.013622524326108915,
+      "n_up_expect": 1.0,
+      "n_dn_expect": 1.0,
+      "n_sector_abs_err_sum": 0.0,
+      "optimizer": "COBYLA",
+      "nfev": 800,
+      "nit": 0,
+      "success": false,
+      "message": "Maximum number of function evaluations has been exceeded.",
+      "runtime_s": 7.028466083109379
+    },
+    {
+      "L": 3,
+      "sector": [
+        2,
+        1
+      ],
+      "ansatz": "hh_hva_ptw",
+      "reps": 2,
+      "restarts": 4,
+      "maxiter": 2400,
+      "seed": 7,
+      "num_parameters": 26,
+      "base_terms_per_layer": 13,
+      "E_exact_sector": 0.2449407001279198,
+      "E_best": 0.4226190970102364,
+      "delta_E_abs": 0.17767839688231662,
+      "n_up_expect": 2.0,
+      "n_dn_expect": 0.9999999999999999,
+      "n_sector_abs_err_sum": 1.1102230246251565e-16,
+      "optimizer": "COBYLA",
+      "nfev": 2400,
+      "nit": 0,
+      "success": false,
+      "message": "Maximum number of function evaluations has been exceeded.",
+      "runtime_s": 427.5664797499776
+    }
+  ]
+}

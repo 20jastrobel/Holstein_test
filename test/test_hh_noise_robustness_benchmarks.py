@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pipelines.exact_bench.hh_noise_robustness_seq_report import (
+    _build_mitigation_config,
     _build_summary,
     _collect_noisy_benchmark_rows,
     _compute_time_dynamics_proxy_cost,
     _disabled_hardcoded_superset_meta,
+    _noise_config_caption,
     _noise_style_legend_lines,
     _parse_noisy_methods_csv,
     _validate_pool_b_strict_composition,
@@ -23,6 +25,49 @@ def test_parse_args_noisy_benchmark_flags() -> None:
     )
     assert str(args.noisy_methods) == "suzuki2,cfqm4"
     assert float(args.benchmark_active_coeff_tol) == 1e-9
+    assert bool(args.disable_time_dynamics) is False
+
+
+def test_parse_args_mitigation_defaults_and_values() -> None:
+    args = parse_args([])
+    assert str(args.mitigation) == "none"
+    assert args.zne_scales is None
+    assert args.dd_sequence is None
+
+    args = parse_args(
+        [
+            "--mitigation",
+            "dd",
+            "--zne-scales",
+            "1.0,2.0",
+            "--dd-sequence",
+            "XY4",
+        ]
+    )
+    assert str(args.mitigation) == "dd"
+    assert str(args.zne_scales) == "1.0,2.0"
+    assert str(args.dd_sequence) == "XY4"
+
+
+def test_parse_args_disable_time_dynamics_flag() -> None:
+    args = parse_args(["--disable-time-dynamics"])
+    assert bool(args.disable_time_dynamics) is True
+
+
+def test_mitigation_schema_defaults_and_caption() -> None:
+    mit = _build_mitigation_config(mitigation="none", zne_scales=None, dd_sequence=None)
+    assert mit == {"mode": "none", "zne_scales": [], "dd_sequence": None}
+
+    caption = _noise_config_caption(
+        {
+            "shots": 2048,
+            "oracle_repeats": 4,
+            "oracle_aggregate": "mean",
+            "mitigation_config": mit,
+        },
+        "shots",
+    )
+    assert "mitigation=none" in caption
 
 
 def test_parse_noisy_methods_csv_validation() -> None:
@@ -108,6 +153,13 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
                         "modes": {
                             "shots": {
                                 "success": True,
+                                "delta_uncertainty": {
+                                    "energy_total": {
+                                        "max_abs_delta": 0.02,
+                                        "max_abs_delta_over_stderr": 4.0,
+                                        "mean_abs_delta_over_stderr": 2.5,
+                                    }
+                                },
                                 "benchmark_cost": {
                                     "term_exp_count_total": 100,
                                     "pauli_rot_count_total": 100,
@@ -127,6 +179,13 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
                         "modes": {
                             "shots": {
                                 "success": True,
+                                "delta_uncertainty": {
+                                    "energy_total": {
+                                        "max_abs_delta": 0.015,
+                                        "max_abs_delta_over_stderr": 3.0,
+                                        "mean_abs_delta_over_stderr": 2.0,
+                                    }
+                                },
                                 "benchmark_cost": {
                                     "term_exp_count_total": 88,
                                     "pauli_rot_count_total": 88,
@@ -164,6 +223,9 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
             "wall_total_s",
             "oracle_eval_s_total",
             "oracle_calls_total",
+            "max_abs_delta",
+            "max_abs_delta_over_stderr",
+            "mean_abs_delta_over_stderr",
         }
 
 
@@ -189,6 +251,13 @@ def test_disabled_hardcoded_superset_metadata_and_summary_shape() -> None:
                             "modes": {
                                 "shots": {
                                     "success": True,
+                                    "delta_uncertainty": {
+                                        "energy_total": {
+                                            "max_abs_delta": 0.01,
+                                            "max_abs_delta_over_stderr": 5.0,
+                                            "mean_abs_delta_over_stderr": 3.5,
+                                        }
+                                    },
                                 }
                             }
                         }
@@ -202,6 +271,51 @@ def test_disabled_hardcoded_superset_metadata_and_summary_shape() -> None:
     assert int(summary["noisy_method_modes_total"]) == 1
     assert int(summary["noisy_method_modes_completed"]) == 1
     assert int(summary["dynamics_benchmark_rows"]) == 1
+    assert float(summary["max_abs_delta"]) == 0.01
+    assert float(summary["max_abs_delta_over_stderr"]) == 5.0
+    assert float(summary["mean_abs_delta_over_stderr"]) == 3.5
+
+
+def test_summary_uses_noisy_final_audit_when_dynamics_disabled() -> None:
+    payload = {
+        "stage_pipeline": {
+            "warm_start": {"delta_abs": 0.1, "stop_reason": "warm_done"},
+            "adapt_pool_b": {"delta_abs": 0.01, "stop_reason": "adapt_done"},
+            "conventional_vqe": {"delta_abs": 0.001, "stop_reason": "final_done"},
+        },
+        "dynamics_noisy": {"profiles": {}},
+        "noisy_final_audit": {
+            "profiles": {
+                "static": {
+                    "modes": {
+                        "shots": {
+                            "success": True,
+                            "delta_uncertainty": {
+                                "energy_total": {
+                                    "max_abs_delta": 0.02,
+                                    "max_abs_delta_over_stderr": 4.5,
+                                    "mean_abs_delta_over_stderr": 2.8,
+                                }
+                            },
+                        },
+                        "aer_noise": {
+                            "success": False,
+                            "reason": "env_blocked",
+                        },
+                    }
+                }
+            }
+        },
+        "dynamics_benchmarks": {"rows": []},
+    }
+    summary = _build_summary(payload)
+    assert int(summary["noisy_audit_modes_total"]) == 2
+    assert int(summary["noisy_audit_modes_completed"]) == 1
+    assert float(summary["noisy_audit_max_abs_delta"]) == 0.02
+    assert float(summary["noisy_audit_max_abs_delta_over_stderr"]) == 4.5
+    assert float(summary["noisy_audit_mean_abs_delta_over_stderr"]) == 2.8
+    # Combined summary fields should still be populated even with no trajectories.
+    assert float(summary["max_abs_delta"]) == 0.02
 
 
 def test_noise_style_legend_semantics_tokens_present() -> None:

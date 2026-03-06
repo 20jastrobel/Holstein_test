@@ -1,0 +1,85 @@
+{
+  "created_utc": "2026-03-02T02:02:13.662703+00:00",
+  "out_dir": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/l3_hh_capacity_sweep/L3_hh_capacity_dryrun_20260302T015147Z",
+  "sector": "(2,1)",
+  "methods": [
+    "m1_hh_hva",
+    "m3_adapt_paop_std",
+    "m4_adapt_paop_lf_std"
+  ],
+  "selected_config": "blocked,open,binary",
+  "method_stop": {
+    "m1_hh_hva": "max_ladder_reached",
+    "m3_adapt_paop_std": "max_ladder_reached",
+    "m4_adapt_paop_lf_std": "max_ladder_reached"
+  },
+  "scout_table": [
+    {
+      "config": "blocked,open,binary",
+      "mean_best_delta": 2.3740605015163854,
+      "mean_best_runtime_s": 104.60490477799128,
+      "timeouts": 0
+    }
+  ],
+  "best_per_method": [
+    {
+      "method": "m1_hh_hva",
+      "best_delta": 1.5404420188624508,
+      "E_best": 1.0135042990968044,
+      "E_exact_sector": -0.5269377197656464,
+      "seed": 101,
+      "rung": "hva_r2_mi3000",
+      "runtime_s": 78.55941916722804
+    },
+    {
+      "method": "m3_adapt_paop_std",
+      "best_delta": 2.790869742843353,
+      "E_best": 2.2639320230777065,
+      "E_exact_sector": -0.5269377197656464,
+      "seed": 101,
+      "rung": "adapt_d80_mi3000",
+      "runtime_s": 117.84260800015181
+    },
+    {
+      "method": "m4_adapt_paop_lf_std",
+      "best_delta": 2.790869742843353,
+      "E_best": 2.2639320230777065,
+      "E_exact_sector": -0.5269377197656464,
+      "seed": 101,
+      "rung": "adapt_d80_mi3000",
+      "runtime_s": 115.79617608338594
+    }
+  ],
+  "rung_table": [
+    {
+      "method": "m1_hh_hva",
+      "rung": "hva_r2_mi3000",
+      "n_runs": 1,
+      "n_ok": 1,
+      "best_delta": 1.5404420188624508,
+      "median_delta": 1.5404420188624508,
+      "median_runtime_s": 78.55941916722804,
+      "decision": "continue"
+    },
+    {
+      "method": "m3_adapt_paop_std",
+      "rung": "adapt_d80_mi3000",
+      "n_runs": 1,
+      "n_ok": 1,
+      "best_delta": 2.790869742843353,
+      "median_delta": 2.790869742843353,
+      "median_runtime_s": 117.84260800015181,
+      "decision": "continue"
+    },
+    {
+      "method": "m4_adapt_paop_lf_std",
+      "rung": "adapt_d80_mi3000",
+      "n_runs": 1,
+      "n_ok": 1,
+      "best_delta": 2.790869742843353,
+      "median_delta": 2.790869742843353,
+      "median_runtime_s": 115.79617608338594,
+      "decision": "continue"
+    }
+  ]
+}

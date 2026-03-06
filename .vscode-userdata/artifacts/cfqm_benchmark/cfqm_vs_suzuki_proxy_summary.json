@@ -1,0 +1,84 @@
+{
+  "pareto_front": [
+    {
+      "method": "suzuki2",
+      "trotter_steps": 16,
+      "cx_proxy_total": 384,
+      "term_exp_count_total": 352,
+      "final_abs_energy_error": 5.385082101794225e-06
+    },
+    {
+      "method": "suzuki2",
+      "trotter_steps": 32,
+      "cx_proxy_total": 768,
+      "term_exp_count_total": 704,
+      "final_abs_energy_error": 3.373689614338815e-07
+    },
+    {
+      "method": "cfqm4",
+      "trotter_steps": 32,
+      "cx_proxy_total": 1536,
+      "term_exp_count_total": 1408,
+      "final_abs_energy_error": 2.109818986184564e-08
+    }
+  ],
+  "ranking_by_error_then_cx": [
+    {
+      "method": "cfqm4",
+      "trotter_steps": 32,
+      "cx_proxy_total": 1536,
+      "term_exp_count_total": 1408,
+      "final_abs_energy_error": 2.109818986184564e-08
+    },
+    {
+      "method": "suzuki2",
+      "trotter_steps": 32,
+      "cx_proxy_total": 768,
+      "term_exp_count_total": 704,
+      "final_abs_energy_error": 3.373689614338815e-07
+    },
+    {
+      "method": "cfqm4",
+      "trotter_steps": 16,
+      "cx_proxy_total": 768,
+      "term_exp_count_total": 704,
+      "final_abs_energy_error": 3.3736900784120394e-07
+    },
+    {
+      "method": "suzuki2",
+      "trotter_steps": 16,
+      "cx_proxy_total": 384,
+      "term_exp_count_total": 352,
+      "final_abs_energy_error": 5.385082101794225e-06
+    }
+  ],
+  "best_by_budget": [
+    {
+      "cx_budget": 384,
+      "best_method": "suzuki2",
+      "best_steps": 16,
+      "best_final_abs_energy_error": 5.385082101794225e-06,
+      "best_cx_proxy_total": 384
+    },
+    {
+      "cx_budget": 768,
+      "best_method": "suzuki2",
+      "best_steps": 32,
+      "best_final_abs_energy_error": 3.373689614338815e-07,
+      "best_cx_proxy_total": 768
+    },
+    {
+      "cx_budget": 1536,
+      "best_method": "cfqm4",
+      "best_steps": 32,
+      "best_final_abs_energy_error": 2.109818986184564e-08,
+      "best_cx_proxy_total": 1536
+    }
+  ],
+  "cost_match": {
+    "enabled": false,
+    "metric": "cx_proxy_total",
+    "tolerance": 0.0,
+    "pairs": []
+  }
+}

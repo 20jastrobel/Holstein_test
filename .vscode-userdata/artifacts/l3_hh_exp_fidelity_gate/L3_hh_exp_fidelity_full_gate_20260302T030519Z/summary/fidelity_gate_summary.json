@@ -1,0 +1,55 @@
+{
+  "created_utc": "2026-03-02T04:37:16.440398+00:00",
+  "out_dir": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/l3_hh_exp_fidelity_gate/L3_hh_exp_fidelity_full_gate_20260302T030519Z",
+  "total_rows": 19,
+  "branch_summary": [
+    {
+      "branch": "m1_hh_hva|interleaved,periodic,binary",
+      "method_id": "m1_hh_hva",
+      "config": "interleaved,periodic,binary",
+      "stop_reason": "max_rungs_reached",
+      "best_delta_seen": 1.6047392523470771,
+      "rungs_completed": 2
+    },
+    {
+      "branch": "m3_adapt_paop_std|interleaved,periodic,binary",
+      "method_id": "m3_adapt_paop_std",
+      "config": "interleaved,periodic,binary",
+      "stop_reason": "stop_small_improvement_twice",
+      "best_delta_seen": 2.962740410009445,
+      "rungs_completed": 3
+    },
+    {
+      "branch": "m4_adapt_paop_lf_std|interleaved,periodic,binary",
+      "method_id": "m4_adapt_paop_lf_std",
+      "config": "interleaved,periodic,binary",
+      "stop_reason": "stop_small_improvement_twice",
+      "best_delta_seen": 2.962740410009445,
+      "rungs_completed": 3
+    },
+    {
+      "branch": "m1_hh_hva|blocked,open,binary",
+      "method_id": "m1_hh_hva",
+      "config": "blocked,open,binary",
+      "stop_reason": "global_wallclock_cap",
+      "best_delta_seen": 1.6591660679030367,
+      "rungs_completed": 1
+    },
+    {
+      "branch": "m3_adapt_paop_std|blocked,open,binary",
+      "method_id": "m3_adapt_paop_std",
+      "config": "blocked,open,binary",
+      "stop_reason": "global_wallclock_cap",
+      "best_delta_seen": null,
+      "rungs_completed": 0
+    },
+    {
+      "branch": "m4_adapt_paop_lf_std|blocked,open,binary",
+      "method_id": "m4_adapt_paop_lf_std",
+      "config": "blocked,open,binary",
+      "stop_reason": "global_wallclock_cap",
+      "best_delta_seen": null,
+      "rungs_completed": 0
+    }
+  ]
+}

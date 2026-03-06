@@ -1,0 +1,79 @@
+[
+  {
+    "tag": "piecewise_exact_ref",
+    "propagator": "piecewise_exact",
+    "steps": 512,
+    "runtime_s": 46.68006804212928,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.9867677685174381,
+    "stderr_tail": "",
+    "max_abs_energy_total_vs_ref": 0.0,
+    "final_abs_energy_total_vs_ref": 0.0
+  },
+  {
+    "tag": "cfqm4_s16",
+    "propagator": "cfqm4",
+    "steps": 16,
+    "runtime_s": 6.852034250274301,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.9867678137275875,
+    "stderr_tail": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "max_abs_energy_total_vs_ref": 4.5210149401953004e-08,
+    "final_abs_energy_total_vs_ref": 4.5210149401953004e-08
+  },
+  {
+    "tag": "cfqm4_s32",
+    "propagator": "cfqm4",
+    "steps": 32,
+    "runtime_s": 11.247150000184774,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.9867676466707891,
+    "stderr_tail": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "max_abs_energy_total_vs_ref": 1.2184664899272946e-07,
+    "final_abs_energy_total_vs_ref": 1.2184664899272946e-07
+  },
+  {
+    "tag": "cfqm4_s64",
+    "propagator": "cfqm4",
+    "steps": 64,
+    "runtime_s": 20.82211104175076,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.9867676356657789,
+    "stderr_tail": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "max_abs_energy_total_vs_ref": 1.3285165922916065e-07,
+    "final_abs_energy_total_vs_ref": 1.3285165922916065e-07
+  },
+  {
+    "tag": "cfqm6_s16",
+    "propagator": "cfqm6",
+    "steps": 16,
+    "runtime_s": 12.735870874952525,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.9867676347875736,
+    "stderr_tail": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "max_abs_energy_total_vs_ref": 1.3372986451543056e-07,
+    "final_abs_energy_total_vs_ref": 1.3372986451543056e-07
+  },
+  {
+    "tag": "cfqm6_s32",
+    "propagator": "cfqm6",
+    "steps": 32,
+    "runtime_s": 25.525640457868576,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.98676763492072,
+    "stderr_tail": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "max_abs_energy_total_vs_ref": 1.3359671813262253e-07,
+    "final_abs_energy_total_vs_ref": 1.3359671813262253e-07
+  },
+  {
+    "tag": "cfqm6_s64",
+    "propagator": "cfqm6",
+    "steps": 64,
+    "runtime_s": 46.689756833948195,
+    "final_fidelity": 0.0,
+    "final_energy_total_trotter": -0.9867676349228022,
+    "stderr_tail": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "max_abs_energy_total_vs_ref": 1.3359463590933984e-07,
+    "final_abs_energy_total_vs_ref": 1.3359463590933984e-07
+  }
+]

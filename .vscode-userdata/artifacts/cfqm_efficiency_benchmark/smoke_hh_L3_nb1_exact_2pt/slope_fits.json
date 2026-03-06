@@ -1,0 +1,146 @@
+[
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.000005906089973
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.9855956923632403
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0000738812350005
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.9999711676481298
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0000062410299893
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.9994873559405277
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.999982099446269
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.9999810827719264
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.000004138916381
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.00031713281104
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0001606496804194
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.000132659557497
+  }
+]

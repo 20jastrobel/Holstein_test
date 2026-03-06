@@ -1,0 +1,47 @@
+AI_LOG {"event": "hardcoded_adapt_main_start", "settings": {"L": 4, "adapt_allow_repeats": true, "adapt_disable_hh_seed": false, "adapt_drop_floor": 0.0005, "adapt_drop_min_depth": 12, "adapt_drop_patience": 3, "adapt_eps_energy": 1e-09, "adapt_eps_grad": 5e-07, "adapt_finite_angle": 0.1, "adapt_finite_angle_fallback": true, "adapt_finite_angle_min_improvement": 1e-12, "adapt_grad_floor": 0.02, "adapt_gradient_parity_check": false, "adapt_inner_optimizer": "SPSA", "adapt_max_depth": 160, "adapt_maxiter": 5000, "adapt_pool": "full_meta", "adapt_ref_json": null, "adapt_seed": 7, "adapt_spsa_A": 10.0, "adapt_spsa_a": 0.2, "adapt_spsa_alpha": 0.602, "adapt_spsa_avg_last": 0, "adapt_spsa_c": 0.1, "adapt_spsa_callback_every": 2, "adapt_spsa_eval_agg": "mean", "adapt_spsa_eval_repeats": 1, "adapt_spsa_gamma": 0.101, "adapt_spsa_progress_every_s": 30.0, "adapt_state_backend": "legacy", "boson_encoding": "binary", "boundary": "open", "dense_eigh_max_dim": 8192, "dv": 0.0, "g_ep": 0.5, "initial_state_source": "adapt_vqe", "n_ph_max": 2, "num_times": 1, "omega0": 1.0, "ordering": "blocked", "output_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/json/l4_hh_redo_nph2_fullmeta_adapt_spsa_detached_20260305T020801.json", "output_pdf": null, "paop_normalization": "none", "paop_prune_eps": 0.0, "paop_r": 1, "paop_split_paulis": false, "problem": "hh", "skip_pdf": true, "suzuki_order": 2, "t": 1.0, "t_final": 0.0, "term_order": "sorted", "trotter_steps": 1, "u": 4.0}, "ts_utc": "2026-03-05T02:08:02.486411+00:00"}
+AI_LOG {"L": 4, "event": "hardcoded_adapt_hamiltonian_built", "num_terms": 69, "ts_utc": "2026-03-05T02:08:02.500222+00:00"}
+AI_LOG {"dense_eigh_max_dim": 8192, "event": "hardcoded_adapt_dense_eigh_skipped", "hilbert_dim": 65536, "ts_utc": "2026-03-05T02:08:02.500286+00:00"}
+AI_LOG {"L": 4, "adapt_drop_floor": 0.0005, "adapt_drop_min_depth": 12, "adapt_drop_patience": 3, "adapt_drop_policy_enabled": true, "adapt_grad_floor": 0.02, "adapt_gradient_parity_check": false, "adapt_inner_optimizer": "SPSA", "adapt_pool": "full_meta", "adapt_state_backend": "legacy", "event": "hardcoded_adapt_vqe_start", "finite_angle": 0.1, "finite_angle_fallback": true, "finite_angle_min_improvement": 1e-12, "max_depth": 160, "maxiter": 5000, "problem": "hh", "ts_utc": "2026-03-05T02:08:02.789472+00:00"}
+AI_LOG {"dedup_total": 323, "event": "hardcoded_adapt_full_meta_pool_built", "raw_hh_termwise_augmented": 84, "raw_hva": 164, "raw_paop_full": 23, "raw_paop_lf_full": 45, "raw_total": 342, "raw_uccsd_lifted": 26, "ts_utc": "2026-03-05T02:08:02.974579+00:00"}
+AI_LOG {"event": "hardcoded_adapt_pool_built", "pool_size": 323, "pool_type": "full_meta", "ts_utc": "2026-03-05T02:08:02.974650+00:00"}
+AI_LOG {"compile_elapsed_s": 1.0991761675104499, "event": "hardcoded_adapt_compiled_cache_ready", "h_terms": 69, "pool_size": 323, "pool_terms_total": 1418, "ts_utc": "2026-03-05T02:08:04.073951+00:00", "unique_pauli_actions": 948}
+AI_LOG {"compile_elapsed_s": 1.0991761675104499, "event": "hardcoded_adapt_compile_timing", "pool_size": 323, "pool_terms_total": 1418, "ts_utc": "2026-03-05T02:08:04.074034+00:00", "unique_pauli_actions": 948}
+AI_LOG {"energy": 10.0, "event": "hardcoded_adapt_initial_energy", "ts_utc": "2026-03-05T02:08:04.123883+00:00"}
+AI_LOG {"event": "hardcoded_adapt_exact_override_used", "exact_gs": 0.016089430889349953, "ts_utc": "2026-03-05T02:08:04.123954+00:00"}
+AI_LOG {"best_fun": 9.842759702330452, "delta_abs_best": 9.826670271441102, "depth": 0, "elapsed_opt_s": 36.63831862527877, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 10, "nfev_opt_so_far": 20, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:08:40.762698+00:00"}
+AI_LOG {"best_fun": 9.77369715416197, "delta_abs_best": 9.75760772327262, "depth": 0, "elapsed_opt_s": 73.29830112494528, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 20, "nfev_opt_so_far": 40, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:09:17.424711+00:00"}
+AI_LOG {"best_fun": 9.717052644186422, "delta_abs_best": 9.700963213297072, "depth": 0, "elapsed_opt_s": 109.65053404122591, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 30, "nfev_opt_so_far": 60, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:09:53.793046+00:00"}
+AI_LOG {"best_fun": 9.691377492750336, "delta_abs_best": 9.675288061860986, "depth": 0, "elapsed_opt_s": 145.71125695854425, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 40, "nfev_opt_so_far": 80, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:10:29.855644+00:00"}
+AI_LOG {"best_fun": 9.664265656569988, "delta_abs_best": 9.648176225680638, "depth": 0, "elapsed_opt_s": 183.08406970836222, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 50, "nfev_opt_so_far": 100, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:11:07.229012+00:00"}
+AI_LOG {"best_fun": 9.644513784907991, "delta_abs_best": 9.628424354018641, "depth": 0, "elapsed_opt_s": 219.87229999992996, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 60, "nfev_opt_so_far": 120, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:11:44.018036+00:00"}
+AI_LOG {"best_fun": 9.631883851957177, "delta_abs_best": 9.615794421067827, "depth": 0, "elapsed_opt_s": 256.7180404579267, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 70, "nfev_opt_so_far": 140, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:12:20.863811+00:00"}
+AI_LOG {"best_fun": 9.609060576213173, "delta_abs_best": 9.592971145323823, "depth": 0, "elapsed_opt_s": 293.93471250031143, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 80, "nfev_opt_so_far": 160, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:12:58.080877+00:00"}
+AI_LOG {"best_fun": 9.578851354418008, "delta_abs_best": 9.562761923528658, "depth": 0, "elapsed_opt_s": 329.3741747085005, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 90, "nfev_opt_so_far": 180, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:13:33.520693+00:00"}
+AI_LOG {"best_fun": 9.550182911533758, "delta_abs_best": 9.534093480644408, "depth": 0, "elapsed_opt_s": 365.4791044164449, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 100, "nfev_opt_so_far": 200, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:14:09.626048+00:00"}
+AI_LOG {"best_fun": 9.550182911533758, "delta_abs_best": 9.534093480644408, "depth": 0, "elapsed_opt_s": 401.3686018753797, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 110, "nfev_opt_so_far": 220, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:14:45.515945+00:00"}
+AI_LOG {"best_fun": 9.517570731529863, "delta_abs_best": 9.501481300640513, "depth": 0, "elapsed_opt_s": 437.6199507918209, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 120, "nfev_opt_so_far": 240, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:15:21.767696+00:00"}
+AI_LOG {"best_fun": 9.517342568925963, "delta_abs_best": 9.501253138036613, "depth": 0, "elapsed_opt_s": 473.81746358331293, "event": "hardcoded_adapt_spsa_heartbeat", "iter": 130, "nfev_opt_so_far": 260, "stage": "hh_seed_preopt", "ts_utc": "2026-03-05T02:15:57.965627+00:00"}
+Traceback (most recent call last):
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/adapt_pipeline.py", line 2687, in <module>
+    main()
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/adapt_pipeline.py", line 2454, in main
+    adapt_payload, psi_adapt = _run_hardcoded_adapt_vqe(
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/adapt_pipeline.py", line 1430, in _run_hardcoded_adapt_vqe
+    seed_result = spsa_minimize(
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/spsa_optimizer.py", line 183, in spsa_minimize
+    y_plus = _aggregate_eval(
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/spsa_optimizer.py", line 121, in _aggregate_eval
+    vals[rep] = float(fun(x_eval))
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/adapt_pipeline.py", line 1399, in _seed_obj
+    return _adapt_energy_fn(
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/adapt_pipeline.py", line 860, in _adapt_energy_fn
+    psi = _prepare_adapt_state(psi_ref, selected_ops, theta)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/adapt_pipeline.py", line 847, in _prepare_adapt_state
+    psi = apply_exp_pauli_polynomial(psi, op.polynomial, float(theta[k]))
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 386, in apply_exp_pauli_polynomial
+    psi = apply_pauli_rotation(psi, ps, angle)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 346, in apply_pauli_rotation
+    Ppsi = apply_pauli_string(state, pauli)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 258, in apply_pauli_string
+    continue
+KeyboardInterrupt

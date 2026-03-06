@@ -1,0 +1,35 @@
+[
+  {
+    "tag": "suzuki2_s64",
+    "propagator": "suzuki2",
+    "steps": 64,
+    "runtime_s": 4.042433333117515,
+    "max_abs_energy_total_vs_ref": 0.0001371587293544918,
+    "final_abs_energy_total_vs_ref": 0.00012808079238812997,
+    "max_abs_nup0_vs_ref": 0.006826714907747999,
+    "final_abs_nup0_vs_ref": 0.006826714907747999,
+    "nan_inf_found": false
+  },
+  {
+    "tag": "suzuki2_s128",
+    "propagator": "suzuki2",
+    "steps": 128,
+    "runtime_s": 5.641277041751891,
+    "max_abs_energy_total_vs_ref": 3.689245030646937e-05,
+    "final_abs_energy_total_vs_ref": 3.689245030646937e-05,
+    "max_abs_nup0_vs_ref": 0.00282064859690645,
+    "final_abs_nup0_vs_ref": 0.00282064859690645,
+    "nan_inf_found": false
+  },
+  {
+    "tag": "suzuki2_s256",
+    "propagator": "suzuki2",
+    "steps": 256,
+    "runtime_s": 10.837833082769066,
+    "max_abs_energy_total_vs_ref": 9.73636829360025e-06,
+    "final_abs_energy_total_vs_ref": 9.73636829360025e-06,
+    "max_abs_nup0_vs_ref": 0.0012023548751662894,
+    "final_abs_nup0_vs_ref": 0.0012023548751662894,
+    "nan_inf_found": false
+  }
+]

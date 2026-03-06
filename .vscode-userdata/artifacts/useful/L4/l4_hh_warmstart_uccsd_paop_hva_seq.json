@@ -1,0 +1,4818 @@
+{
+  "generated_utc": "2026-03-03T06:50:51Z",
+  "config": {
+    "L": 4,
+    "sector": [
+      2,
+      2
+    ],
+    "t": 1.0,
+    "U": 4.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 0.5,
+    "n_ph_max": 1,
+    "boson_encoding": "binary",
+    "ordering": "blocked",
+    "boundary": "open",
+    "allow_repeats": true,
+    "paop_key": "paop_lf_std",
+    "paop_r": 1,
+    "paop_split_paulis": false,
+    "paop_prune_eps": 0.0,
+    "paop_normalization": "none",
+    "seed": 7,
+    "warm_ansatz": "hh_hva_ptw",
+    "warm_reps": 4,
+    "warm_restarts": 6,
+    "warm_maxiter": 6000,
+    "warm_method": "COBYLA",
+    "warm_seed": 7,
+    "probe_depth": 20,
+    "probe_maxiter": 1200,
+    "probe_eps_grad": 1e-06,
+    "probe_eps_energy": 1e-08,
+    "probe_wallclock_cap_s": 900,
+    "medium_depth": 48,
+    "medium_maxiter": 3600,
+    "medium_eps_grad": 5e-07,
+    "medium_eps_energy": 1e-09,
+    "medium_wallclock_cap_s": 1800,
+    "medium_delta_target": 0.001,
+    "probe_abs_drop_min": 0.001,
+    "probe_rel_drop_min": 0.1,
+    "progress_every_depth": 1,
+    "progress_every_seconds": 15,
+    "l3_reference_profile": {
+      "L": 3,
+      "boundary": "open",
+      "ordering": "blocked",
+      "boson_encoding": "binary",
+      "n_ph_max": 1,
+      "sector": [
+        2,
+        1
+      ],
+      "warm_reps": [
+        3,
+        3
+      ],
+      "warm_restarts": [
+        5,
+        6
+      ],
+      "warm_maxiter": [
+        4000,
+        6000
+      ],
+      "adapt_depth_caps": [
+        120,
+        160
+      ],
+      "adapt_maxiter": [
+        5000,
+        8000
+      ],
+      "adapt_wallclock_cap_s": 1200
+    }
+  },
+  "exact": {
+    "E_exact_sector": 0.01665790635825912,
+    "nq_total": 12,
+    "fermion_qubits": 8,
+    "boson_qubits": 4
+  },
+  "warm_start": {
+    "ansatz": "hh_hva_ptw",
+    "reps": 4,
+    "restarts": 6,
+    "maxiter": 6000,
+    "method": "COBYLA",
+    "seed": 7,
+    "E_warm": 0.228154958518035,
+    "delta_E_abs": 0.21149705215977588,
+    "relative_error_abs": 12.696496643163922,
+    "warm_nfev": 6000,
+    "warm_nit": 0,
+    "warm_num_parameters": 72,
+    "runtime_s": 36399.93224695884
+  },
+  "pool_components_raw": {
+    "uccsd_ferm_only_lifted": 26,
+    "paop": 10,
+    "hva": 18
+  },
+  "pool_A_meta": {
+    "raw_sizes": {
+      "uccsd": 26,
+      "paop": 10
+    },
+    "dedup_total": 36,
+    "dedup_source_presence_counts": {
+      "uccsd": 26,
+      "paop": 10,
+      "hva": 0
+    },
+    "overlap_count": 0
+  },
+  "pool_B_meta": {
+    "raw_sizes": {
+      "uccsd": 26,
+      "paop": 10,
+      "hva": 18
+    },
+    "dedup_total": 54,
+    "dedup_source_presence_counts": {
+      "uccsd": 26,
+      "paop": 10,
+      "hva": 18
+    },
+    "overlap_count": 0
+  },
+  "runs": {
+    "A_probe": {
+      "ok": true,
+      "label": "A_probe",
+      "budget": {
+        "name": "probe",
+        "max_depth": 20,
+        "maxiter": 1200,
+        "eps_grad": 1e-06,
+        "eps_energy": 1e-08,
+        "wallclock_cap_s": 900
+      },
+      "E_initial": 0.22815495851803178,
+      "E_best": 0.16584950321575187,
+      "E_last": 0.16584950321575187,
+      "delta_E_abs": 0.14919159685749275,
+      "relative_error_abs": 8.956203357663995,
+      "delta_E_abs_initial": 0.21149705215977266,
+      "adapt_depth_reached": 11,
+      "adapt_stop_reason": "wallclock_cap",
+      "num_parameters": 11,
+      "nfev_total": 1810,
+      "nit_total": 0,
+      "runtime_s": 900.3805696666241,
+      "energy_trace": [
+        0.22815495851803178,
+        0.20617868393743718,
+        0.2048869225836427,
+        0.1901748609112059,
+        0.18501794589159257,
+        0.18427460451835886,
+        0.1806681547427793,
+        0.18048653289980696,
+        0.17429975439434445,
+        0.1705664680798833,
+        0.1684072472363603,
+        0.16584950321575187
+      ],
+      "grad_max_trace": [
+        0.41740147762738516,
+        0.38322537262220613,
+        0.337537763810782,
+        0.18663416746714967,
+        0.18086402143080915,
+        0.15589751839787197,
+        0.14418995012977137,
+        0.1416836548742026,
+        0.12702994987309663,
+        0.09771530142352396,
+        0.0926643697498793,
+        0.0627861621133821
+      ],
+      "selected_trace": [
+        {
+          "depth": 1,
+          "selected_idx": 7,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.41740147762738516,
+          "E_before": 0.22815495851803178,
+          "E_after": 0.20617868393743718,
+          "delta_E_step": -0.02197627458059459
+        },
+        {
+          "depth": 2,
+          "selected_idx": 30,
+          "selected_label": "paop_lf_std:paop_hopdrag(0,1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.38322537262220613,
+          "E_before": 0.20617868393743718,
+          "E_after": 0.2048869225836427,
+          "delta_E_step": -0.001291761353794496
+        },
+        {
+          "depth": 3,
+          "selected_idx": 3,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.337537763810782,
+          "E_before": 0.2048869225836427,
+          "E_after": 0.1901748609112059,
+          "delta_E_step": -0.0147120616724368
+        },
+        {
+          "depth": 4,
+          "selected_idx": 4,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18663416746714967,
+          "E_before": 0.1901748609112059,
+          "E_after": 0.18501794589159257,
+          "delta_E_step": -0.005156915019613323
+        },
+        {
+          "depth": 5,
+          "selected_idx": 31,
+          "selected_label": "paop_lf_std:paop_hopdrag(1,2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18086402143080915,
+          "E_before": 0.18501794589159257,
+          "E_after": 0.18427460451835886,
+          "delta_E_step": -0.0007433413732337024
+        },
+        {
+          "depth": 6,
+          "selected_idx": 0,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.15589751839787197,
+          "E_before": 0.18427460451835886,
+          "E_after": 0.1806681547427793,
+          "delta_E_step": -0.0036064497755795566
+        },
+        {
+          "depth": 7,
+          "selected_idx": 32,
+          "selected_label": "paop_lf_std:paop_hopdrag(2,3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.14418995012977137,
+          "E_before": 0.1806681547427793,
+          "E_after": 0.18048653289980696,
+          "delta_E_step": -0.0001816218429723515
+        },
+        {
+          "depth": 8,
+          "selected_idx": 29,
+          "selected_label": "paop_lf_std:paop_disp(site=3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.1416836548742026,
+          "E_before": 0.18048653289980696,
+          "E_after": 0.17429975439434445,
+          "delta_E_step": -0.006186778505462509
+        },
+        {
+          "depth": 9,
+          "selected_idx": 28,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.12702994987309663,
+          "E_before": 0.17429975439434445,
+          "E_after": 0.1705664680798833,
+          "delta_E_step": -0.003733286314461154
+        },
+        {
+          "depth": 10,
+          "selected_idx": 27,
+          "selected_label": "paop_lf_std:paop_disp(site=1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.09771530142352396,
+          "E_before": 0.1705664680798833,
+          "E_after": 0.1684072472363603,
+          "delta_E_step": -0.002159220843522991
+        },
+        {
+          "depth": 11,
+          "selected_idx": 26,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.0926643697498793,
+          "E_before": 0.1684072472363603,
+          "E_after": 0.16584950321575187,
+          "delta_E_step": -0.0025577440206084323
+        }
+      ],
+      "sector_diag": {
+        "N_up_target": 2.0,
+        "N_dn_target": 2.0,
+        "N_up_expect": 2.0,
+        "N_dn_expect": 1.9999999999999998,
+        "N_up_abs_err": 0.0,
+        "N_dn_abs_err": 2.220446049250313e-16,
+        "N_sector_abs_err_sum": 2.220446049250313e-16
+      },
+      "medium_gate_pass": null
+    },
+    "A_medium": {
+      "ok": true,
+      "label": "A_medium",
+      "budget": {
+        "name": "medium",
+        "max_depth": 48,
+        "maxiter": 3600,
+        "eps_grad": 5e-07,
+        "eps_energy": 1e-09,
+        "wallclock_cap_s": 1800
+      },
+      "E_initial": 0.22815495851803178,
+      "E_best": 0.16334973119772364,
+      "E_last": 0.16334973119772364,
+      "delta_E_abs": 0.14669182483946452,
+      "relative_error_abs": 8.806138159537293,
+      "delta_E_abs_initial": 0.21149705215977266,
+      "adapt_depth_reached": 15,
+      "adapt_stop_reason": "wallclock_cap",
+      "num_parameters": 15,
+      "nfev_total": 3167,
+      "nit_total": 0,
+      "runtime_s": 1800.7405920000747,
+      "energy_trace": [
+        0.22815495851803178,
+        0.20617868393743718,
+        0.2048869225836427,
+        0.1901748609112059,
+        0.18501794589159257,
+        0.18427460451835886,
+        0.1806681547427793,
+        0.18048653289980696,
+        0.17429975439434445,
+        0.1705664680798833,
+        0.1684072472363603,
+        0.16584950321575187,
+        0.16577592748359718,
+        0.16416645978081945,
+        0.16362477834262537,
+        0.16334973119772364
+      ],
+      "grad_max_trace": [
+        0.41740147762738516,
+        0.38322537262220613,
+        0.337537763810782,
+        0.18663416746714967,
+        0.18086402143080915,
+        0.15589751839787197,
+        0.14418995012977137,
+        0.1416836548742026,
+        0.12702994987309663,
+        0.09771530142352396,
+        0.0926643697498793,
+        0.0627861621133821,
+        0.060241030666194254,
+        0.06854061398420384,
+        0.05223270954936714,
+        0.04343882434487542
+      ],
+      "selected_trace": [
+        {
+          "depth": 1,
+          "selected_idx": 7,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.41740147762738516,
+          "E_before": 0.22815495851803178,
+          "E_after": 0.20617868393743718,
+          "delta_E_step": -0.02197627458059459
+        },
+        {
+          "depth": 2,
+          "selected_idx": 30,
+          "selected_label": "paop_lf_std:paop_hopdrag(0,1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.38322537262220613,
+          "E_before": 0.20617868393743718,
+          "E_after": 0.2048869225836427,
+          "delta_E_step": -0.001291761353794496
+        },
+        {
+          "depth": 3,
+          "selected_idx": 3,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.337537763810782,
+          "E_before": 0.2048869225836427,
+          "E_after": 0.1901748609112059,
+          "delta_E_step": -0.0147120616724368
+        },
+        {
+          "depth": 4,
+          "selected_idx": 4,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18663416746714967,
+          "E_before": 0.1901748609112059,
+          "E_after": 0.18501794589159257,
+          "delta_E_step": -0.005156915019613323
+        },
+        {
+          "depth": 5,
+          "selected_idx": 31,
+          "selected_label": "paop_lf_std:paop_hopdrag(1,2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18086402143080915,
+          "E_before": 0.18501794589159257,
+          "E_after": 0.18427460451835886,
+          "delta_E_step": -0.0007433413732337024
+        },
+        {
+          "depth": 6,
+          "selected_idx": 0,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.15589751839787197,
+          "E_before": 0.18427460451835886,
+          "E_after": 0.1806681547427793,
+          "delta_E_step": -0.0036064497755795566
+        },
+        {
+          "depth": 7,
+          "selected_idx": 32,
+          "selected_label": "paop_lf_std:paop_hopdrag(2,3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.14418995012977137,
+          "E_before": 0.1806681547427793,
+          "E_after": 0.18048653289980696,
+          "delta_E_step": -0.0001816218429723515
+        },
+        {
+          "depth": 8,
+          "selected_idx": 29,
+          "selected_label": "paop_lf_std:paop_disp(site=3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.1416836548742026,
+          "E_before": 0.18048653289980696,
+          "E_after": 0.17429975439434445,
+          "delta_E_step": -0.006186778505462509
+        },
+        {
+          "depth": 9,
+          "selected_idx": 28,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.12702994987309663,
+          "E_before": 0.17429975439434445,
+          "E_after": 0.1705664680798833,
+          "delta_E_step": -0.003733286314461154
+        },
+        {
+          "depth": 10,
+          "selected_idx": 27,
+          "selected_label": "paop_lf_std:paop_disp(site=1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.09771530142352396,
+          "E_before": 0.1705664680798833,
+          "E_after": 0.1684072472363603,
+          "delta_E_step": -0.002159220843522991
+        },
+        {
+          "depth": 11,
+          "selected_idx": 26,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.0926643697498793,
+          "E_before": 0.1684072472363603,
+          "E_after": 0.16584950321575187,
+          "delta_E_step": -0.0025577440206084323
+        },
+        {
+          "depth": 12,
+          "selected_idx": 34,
+          "selected_label": "paop_lf_std:paop_curdrag(1,2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.0627861621133821,
+          "E_before": 0.16584950321575187,
+          "E_after": 0.16577592748359718,
+          "delta_E_step": -7.357573215469038e-05
+        },
+        {
+          "depth": 13,
+          "selected_idx": 12,
+          "selected_label": "uccsd_ferm_lifted::uccsd_dbl(ab:0,4->3,6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.060241030666194254,
+          "E_before": 0.16577592748359718,
+          "E_after": 0.16416645978081945,
+          "delta_E_step": -0.0016094677027777282
+        },
+        {
+          "depth": 14,
+          "selected_idx": 5,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->7)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.06854061398420384,
+          "E_before": 0.16416645978081945,
+          "E_after": 0.16362477834262537,
+          "delta_E_step": -0.0005416814381940804
+        },
+        {
+          "depth": 15,
+          "selected_idx": 2,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->2)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.05223270954936714,
+          "E_before": 0.16362477834262537,
+          "E_after": 0.16334973119772364,
+          "delta_E_step": -0.00027504714490173
+        }
+      ],
+      "sector_diag": {
+        "N_up_target": 2.0,
+        "N_dn_target": 2.0,
+        "N_up_expect": 2.0,
+        "N_dn_expect": 2.0,
+        "N_up_abs_err": 0.0,
+        "N_dn_abs_err": 0.0,
+        "N_sector_abs_err_sum": 0.0
+      },
+      "medium_gate_pass": false
+    },
+    "B_probe": {
+      "ok": true,
+      "label": "B_probe",
+      "budget": {
+        "name": "probe",
+        "max_depth": 20,
+        "maxiter": 1200,
+        "eps_grad": 1e-06,
+        "eps_energy": 1e-08,
+        "wallclock_cap_s": 900
+      },
+      "E_initial": 0.22815495851803178,
+      "E_best": 0.16709866627126013,
+      "E_last": 0.16709866627126013,
+      "delta_E_abs": 0.15044075991300102,
+      "relative_error_abs": 9.031192556705141,
+      "delta_E_abs_initial": 0.21149705215977266,
+      "adapt_depth_reached": 11,
+      "adapt_stop_reason": "wallclock_cap",
+      "num_parameters": 11,
+      "nfev_total": 1708,
+      "nit_total": 0,
+      "runtime_s": 900.4927587499842,
+      "energy_trace": [
+        0.22815495851803178,
+        0.20617868393743718,
+        0.2048869225836427,
+        0.1901748609112059,
+        0.18501794589159257,
+        0.18427460451835886,
+        0.1806681547427793,
+        0.18048653289980696,
+        0.17429975439434445,
+        0.1705664680798833,
+        0.1692184287265449,
+        0.16709866627126013
+      ],
+      "grad_max_trace": [
+        0.41740147762738516,
+        0.38322537262220613,
+        0.337537763810782,
+        0.18663416746714967,
+        0.18086402143080915,
+        0.15589751839787197,
+        0.14418995012977137,
+        0.1416836548742026,
+        0.12702994987309663,
+        0.10612302190150344,
+        0.09674458550640877,
+        0.09248585393706331
+      ],
+      "selected_trace": [
+        {
+          "depth": 1,
+          "selected_idx": 7,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.41740147762738516,
+          "E_before": 0.22815495851803178,
+          "E_after": 0.20617868393743718,
+          "delta_E_step": -0.02197627458059459
+        },
+        {
+          "depth": 2,
+          "selected_idx": 30,
+          "selected_label": "paop_lf_std:paop_hopdrag(0,1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.38322537262220613,
+          "E_before": 0.20617868393743718,
+          "E_after": 0.2048869225836427,
+          "delta_E_step": -0.001291761353794496
+        },
+        {
+          "depth": 3,
+          "selected_idx": 3,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.337537763810782,
+          "E_before": 0.2048869225836427,
+          "E_after": 0.1901748609112059,
+          "delta_E_step": -0.0147120616724368
+        },
+        {
+          "depth": 4,
+          "selected_idx": 4,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18663416746714967,
+          "E_before": 0.1901748609112059,
+          "E_after": 0.18501794589159257,
+          "delta_E_step": -0.005156915019613323
+        },
+        {
+          "depth": 5,
+          "selected_idx": 31,
+          "selected_label": "paop_lf_std:paop_hopdrag(1,2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18086402143080915,
+          "E_before": 0.18501794589159257,
+          "E_after": 0.18427460451835886,
+          "delta_E_step": -0.0007433413732337024
+        },
+        {
+          "depth": 6,
+          "selected_idx": 0,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.15589751839787197,
+          "E_before": 0.18427460451835886,
+          "E_after": 0.1806681547427793,
+          "delta_E_step": -0.0036064497755795566
+        },
+        {
+          "depth": 7,
+          "selected_idx": 32,
+          "selected_label": "paop_lf_std:paop_hopdrag(2,3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.14418995012977137,
+          "E_before": 0.1806681547427793,
+          "E_after": 0.18048653289980696,
+          "delta_E_step": -0.0001816218429723515
+        },
+        {
+          "depth": 8,
+          "selected_idx": 29,
+          "selected_label": "paop_lf_std:paop_disp(site=3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.1416836548742026,
+          "E_before": 0.18048653289980696,
+          "E_after": 0.17429975439434445,
+          "delta_E_step": -0.006186778505462509
+        },
+        {
+          "depth": 9,
+          "selected_idx": 28,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.12702994987309663,
+          "E_before": 0.17429975439434445,
+          "E_after": 0.1705664680798833,
+          "delta_E_step": -0.003733286314461154
+        },
+        {
+          "depth": 10,
+          "selected_idx": 39,
+          "selected_label": "hh_hop(i=1,j=2,spin=1)",
+          "source": "hva",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.10612302190150344,
+          "E_before": 0.1705664680798833,
+          "E_after": 0.1692184287265449,
+          "delta_E_step": -0.0013480393533383817
+        },
+        {
+          "depth": 11,
+          "selected_idx": 27,
+          "selected_label": "paop_lf_std:paop_disp(site=1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.09674458550640877,
+          "E_before": 0.1692184287265449,
+          "E_after": 0.16709866627126013,
+          "delta_E_step": -0.0021197624552847794
+        }
+      ],
+      "sector_diag": {
+        "N_up_target": 2.0,
+        "N_dn_target": 2.0,
+        "N_up_expect": 2.0,
+        "N_dn_expect": 2.0,
+        "N_up_abs_err": 0.0,
+        "N_dn_abs_err": 0.0,
+        "N_sector_abs_err_sum": 0.0
+      },
+      "medium_gate_pass": null
+    },
+    "B_medium": {
+      "ok": true,
+      "label": "B_medium",
+      "budget": {
+        "name": "medium",
+        "max_depth": 48,
+        "maxiter": 3600,
+        "eps_grad": 5e-07,
+        "eps_energy": 1e-09,
+        "wallclock_cap_s": 1800
+      },
+      "E_initial": 0.22815495851803178,
+      "E_best": 0.16350199362198015,
+      "E_last": 0.16350199362198015,
+      "delta_E_abs": 0.14684408726372103,
+      "relative_error_abs": 8.81527870943485,
+      "delta_E_abs_initial": 0.21149705215977266,
+      "adapt_depth_reached": 16,
+      "adapt_stop_reason": "wallclock_cap",
+      "num_parameters": 16,
+      "nfev_total": 3080,
+      "nit_total": 0,
+      "runtime_s": 1800.4273936669342,
+      "energy_trace": [
+        0.22815495851803178,
+        0.20617868393743718,
+        0.2048869225836427,
+        0.1901748609112059,
+        0.18501794589159257,
+        0.18427460451835886,
+        0.1806681547427793,
+        0.18048653289980696,
+        0.17429975439434445,
+        0.1705664680798833,
+        0.1692184287265449,
+        0.16709866627126013,
+        0.16454925730419417,
+        0.1644215881713294,
+        0.1641643640683017,
+        0.16384388359363083,
+        0.16350199362198015
+      ],
+      "grad_max_trace": [
+        0.41740147762738516,
+        0.38322537262220613,
+        0.337537763810782,
+        0.18663416746714967,
+        0.18086402143080915,
+        0.15589751839787197,
+        0.14418995012977137,
+        0.1416836548742026,
+        0.12702994987309663,
+        0.10612302190150344,
+        0.09674458550640877,
+        0.09248585393706331,
+        0.08366446809076475,
+        0.06175387780008444,
+        0.05567222481327612,
+        0.05733125714073707,
+        0.05516153031811618
+      ],
+      "selected_trace": [
+        {
+          "depth": 1,
+          "selected_idx": 7,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.41740147762738516,
+          "E_before": 0.22815495851803178,
+          "E_after": 0.20617868393743718,
+          "delta_E_step": -0.02197627458059459
+        },
+        {
+          "depth": 2,
+          "selected_idx": 30,
+          "selected_label": "paop_lf_std:paop_hopdrag(0,1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.38322537262220613,
+          "E_before": 0.20617868393743718,
+          "E_after": 0.2048869225836427,
+          "delta_E_step": -0.001291761353794496
+        },
+        {
+          "depth": 3,
+          "selected_idx": 3,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.337537763810782,
+          "E_before": 0.2048869225836427,
+          "E_after": 0.1901748609112059,
+          "delta_E_step": -0.0147120616724368
+        },
+        {
+          "depth": 4,
+          "selected_idx": 4,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18663416746714967,
+          "E_before": 0.1901748609112059,
+          "E_after": 0.18501794589159257,
+          "delta_E_step": -0.005156915019613323
+        },
+        {
+          "depth": 5,
+          "selected_idx": 31,
+          "selected_label": "paop_lf_std:paop_hopdrag(1,2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.18086402143080915,
+          "E_before": 0.18501794589159257,
+          "E_after": 0.18427460451835886,
+          "delta_E_step": -0.0007433413732337024
+        },
+        {
+          "depth": 6,
+          "selected_idx": 0,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.15589751839787197,
+          "E_before": 0.18427460451835886,
+          "E_after": 0.1806681547427793,
+          "delta_E_step": -0.0036064497755795566
+        },
+        {
+          "depth": 7,
+          "selected_idx": 32,
+          "selected_label": "paop_lf_std:paop_hopdrag(2,3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.14418995012977137,
+          "E_before": 0.1806681547427793,
+          "E_after": 0.18048653289980696,
+          "delta_E_step": -0.0001816218429723515
+        },
+        {
+          "depth": 8,
+          "selected_idx": 29,
+          "selected_label": "paop_lf_std:paop_disp(site=3)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.1416836548742026,
+          "E_before": 0.18048653289980696,
+          "E_after": 0.17429975439434445,
+          "delta_E_step": -0.006186778505462509
+        },
+        {
+          "depth": 9,
+          "selected_idx": 28,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.12702994987309663,
+          "E_before": 0.17429975439434445,
+          "E_after": 0.1705664680798833,
+          "delta_E_step": -0.003733286314461154
+        },
+        {
+          "depth": 10,
+          "selected_idx": 39,
+          "selected_label": "hh_hop(i=1,j=2,spin=1)",
+          "source": "hva",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.10612302190150344,
+          "E_before": 0.1705664680798833,
+          "E_after": 0.1692184287265449,
+          "delta_E_step": -0.0013480393533383817
+        },
+        {
+          "depth": 11,
+          "selected_idx": 27,
+          "selected_label": "paop_lf_std:paop_disp(site=1)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.09674458550640877,
+          "E_before": 0.1692184287265449,
+          "E_after": 0.16709866627126013,
+          "delta_E_step": -0.0021197624552847794
+        },
+        {
+          "depth": 12,
+          "selected_idx": 26,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.09248585393706331,
+          "E_before": 0.16709866627126013,
+          "E_after": 0.16454925730419417,
+          "delta_E_step": -0.002549408967065958
+        },
+        {
+          "depth": 13,
+          "selected_idx": 34,
+          "selected_label": "paop_lf_std:paop_curdrag(1,2)",
+          "source": "paop",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.08366446809076475,
+          "E_before": 0.16454925730419417,
+          "E_after": 0.1644215881713294,
+          "delta_E_step": -0.00012766913286477166
+        },
+        {
+          "depth": 14,
+          "selected_idx": 16,
+          "selected_label": "uccsd_ferm_lifted::uccsd_dbl(ab:0,5->3,6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.06175387780008444,
+          "E_before": 0.1644215881713294,
+          "E_after": 0.1641643640683017,
+          "delta_E_step": -0.0002572241030276978
+        },
+        {
+          "depth": 15,
+          "selected_idx": 6,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->6)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.05567222481327612,
+          "E_before": 0.1641643640683017,
+          "E_after": 0.16384388359363083,
+          "delta_E_step": -0.00032048047467087004
+        },
+        {
+          "depth": 16,
+          "selected_idx": 2,
+          "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->2)",
+          "source": "uccsd",
+          "init_theta": 0.0,
+          "max_abs_grad_among_candidates": 0.05733125714073707,
+          "E_before": 0.16384388359363083,
+          "E_after": 0.16350199362198015,
+          "delta_E_step": -0.00034188997165068846
+        }
+      ],
+      "sector_diag": {
+        "N_up_target": 2.0,
+        "N_dn_target": 2.0,
+        "N_up_expect": 2.0,
+        "N_dn_expect": 1.9999999999999996,
+        "N_up_abs_err": 0.0,
+        "N_dn_abs_err": 4.440892098500626e-16,
+        "N_sector_abs_err_sum": 4.440892098500626e-16
+      },
+      "medium_gate_pass": false
+    }
+  },
+  "progress_events": [
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 1,
+      "elapsed_s": 0.19473920855671167,
+      "E_current": 0.22815495851803178,
+      "delta_E_abs_current": 0.21149705215977266,
+      "delta_E_abs_best": 0.21149705215977266,
+      "max_grad": 0.41740147762738516
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 1,
+      "elapsed_s": 13.11510124988854,
+      "E_after": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "delta_E_step": -0.02197627458059459,
+      "max_grad": 0.41740147762738516,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 2,
+      "elapsed_s": 13.11510462500155,
+      "E_current": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "max_grad": 0.38322537262220613
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 2,
+      "elapsed_s": 34.35841358359903,
+      "E_after": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "delta_E_step": -0.001291761353794496,
+      "max_grad": 0.38322537262220613,
+      "selected_label": "paop_lf_std:paop_hopdrag(0,1)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 3,
+      "elapsed_s": 34.35841983370483,
+      "E_current": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "max_grad": 0.337537763810782
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 3,
+      "elapsed_s": 58.27502674981952,
+      "delta_E_abs_current": 0.17358310752051903,
+      "delta_E_abs_best": 0.17358310752051903,
+      "local_calls": 56
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 3,
+      "elapsed_s": 72.05158166680485,
+      "E_after": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "delta_E_step": -0.0147120616724368,
+      "max_grad": 0.337537763810782,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 4,
+      "elapsed_s": 72.05158479185775,
+      "E_current": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "max_grad": 0.18663416746714967
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 4,
+      "elapsed_s": 96.02664583362639,
+      "delta_E_abs_current": 0.16852357081010128,
+      "delta_E_abs_best": 0.16852357081010128,
+      "local_calls": 55
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 4,
+      "elapsed_s": 107.47145091695711,
+      "E_after": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "delta_E_step": -0.005156915019613323,
+      "max_grad": 0.18663416746714967,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 5,
+      "elapsed_s": 107.4714686665684,
+      "E_current": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "max_grad": 0.18086402143080915
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 5,
+      "elapsed_s": 131.434181666933,
+      "delta_E_abs_current": 0.167623237780978,
+      "delta_E_abs_best": 0.167623237780978,
+      "local_calls": 47
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 5,
+      "elapsed_s": 139.4701887089759,
+      "E_after": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "delta_E_step": -0.0007433413732337024,
+      "max_grad": 0.18086402143080915,
+      "selected_label": "paop_lf_std:paop_hopdrag(1,2)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 6,
+      "elapsed_s": 139.47019220888615,
+      "E_current": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "max_grad": 0.15589751839787197
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 163.1636204170063,
+      "delta_E_abs_current": 0.1643263356143975,
+      "delta_E_abs_best": 0.1643263356143975,
+      "local_calls": 45
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 178.4347033747472,
+      "delta_E_abs_current": 0.16404339288311945,
+      "delta_E_abs_best": 0.16404231398807628,
+      "local_calls": 89
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 193.64336633356288,
+      "delta_E_abs_current": 0.16401036485120385,
+      "delta_E_abs_best": 0.16401036485120385,
+      "local_calls": 133
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 6,
+      "elapsed_s": 196.51901691686362,
+      "E_after": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "delta_E_step": -0.0036064497755795566,
+      "max_grad": 0.15589751839787197,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 7,
+      "elapsed_s": 196.51902241678908,
+      "E_current": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "max_grad": 0.14418995012977137
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 220.78491737460718,
+      "delta_E_abs_current": 0.1638391180103092,
+      "delta_E_abs_best": 0.16383433153320584,
+      "local_calls": 40
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 236.11494141677395,
+      "delta_E_abs_current": 0.16382851275870933,
+      "delta_E_abs_best": 0.16382851275870933,
+      "local_calls": 78
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 7,
+      "elapsed_s": 237.6396097498946,
+      "E_after": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "delta_E_step": -0.0001816218429723515,
+      "max_grad": 0.14418995012977137,
+      "selected_label": "paop_lf_std:paop_hopdrag(2,3)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 8,
+      "elapsed_s": 237.63961474969983,
+      "E_current": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "max_grad": 0.1416836548742026
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 261.64408837491646,
+      "delta_E_abs_current": 0.16131128213353976,
+      "delta_E_abs_best": 0.16094871459892277,
+      "local_calls": 38
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 276.82132812496275,
+      "delta_E_abs_current": 0.15894807406688752,
+      "delta_E_abs_best": 0.15894807406688752,
+      "local_calls": 75
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 292.18342220876366,
+      "delta_E_abs_current": 0.15835772449167632,
+      "delta_E_abs_best": 0.15832476117242092,
+      "local_calls": 112
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 307.3781717089005,
+      "delta_E_abs_current": 0.15784691110068053,
+      "delta_E_abs_best": 0.15784691110068053,
+      "local_calls": 149
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 322.55490624997765,
+      "delta_E_abs_current": 0.15769376287981896,
+      "delta_E_abs_best": 0.15769193040325494,
+      "local_calls": 186
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 337.569145291578,
+      "delta_E_abs_current": 0.15765829169357004,
+      "delta_E_abs_best": 0.15765829169357004,
+      "local_calls": 223
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 353.0670215836726,
+      "delta_E_abs_current": 0.15764904721409972,
+      "delta_E_abs_best": 0.15764895622647268,
+      "local_calls": 261
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 368.2614297918044,
+      "delta_E_abs_current": 0.15764290349345772,
+      "delta_E_abs_best": 0.15764290349345772,
+      "local_calls": 298
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 8,
+      "elapsed_s": 375.18166066659614,
+      "E_after": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "delta_E_step": -0.006186778505462509,
+      "max_grad": 0.1416836548742026,
+      "selected_label": "paop_lf_std:paop_disp(site=3)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 9,
+      "elapsed_s": 375.18167145876214,
+      "E_current": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "max_grad": 0.12702994987309663
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 399.3513887086883,
+      "delta_E_abs_current": 0.15784348739211115,
+      "delta_E_abs_best": 0.15764184803608533,
+      "local_calls": 38
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 414.54756187461317,
+      "delta_E_abs_current": 0.15524001101074938,
+      "delta_E_abs_best": 0.15524001101074938,
+      "local_calls": 74
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 429.8284021667205,
+      "delta_E_abs_current": 0.15425584417654034,
+      "delta_E_abs_best": 0.15425584417654034,
+      "local_calls": 111
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 444.90949495881796,
+      "delta_E_abs_current": 0.15399253844621513,
+      "delta_E_abs_best": 0.15399253844621513,
+      "local_calls": 147
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 460.00149441696703,
+      "delta_E_abs_current": 0.15393340813427583,
+      "delta_E_abs_best": 0.1539310952816917,
+      "local_calls": 184
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 475.11092733358964,
+      "delta_E_abs_current": 0.1539154467261112,
+      "delta_E_abs_best": 0.1539154467261112,
+      "local_calls": 220
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 490.27387224975973,
+      "delta_E_abs_current": 0.15391010676419217,
+      "delta_E_abs_best": 0.15391010676419217,
+      "local_calls": 257
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 505.3039448335767,
+      "delta_E_abs_current": 0.15390859024844933,
+      "delta_E_abs_best": 0.15390859024844933,
+      "local_calls": 293
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 9,
+      "elapsed_s": 507.48271712474525,
+      "E_after": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "delta_E_step": -0.003733286314461154,
+      "max_grad": 0.12702994987309663,
+      "selected_label": "paop_lf_std:paop_disp(site=2)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 10,
+      "elapsed_s": 507.4827208337374,
+      "E_current": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "max_grad": 0.09771530142352396
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 531.4130132496357,
+      "delta_E_abs_current": 0.1620633444190328,
+      "delta_E_abs_best": 0.15264646902833545,
+      "local_calls": 36
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 546.509861541912,
+      "delta_E_abs_current": 0.15230426078029394,
+      "delta_E_abs_best": 0.15230426078029394,
+      "local_calls": 71
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 561.7437693336979,
+      "delta_E_abs_current": 0.1519259530027918,
+      "delta_E_abs_best": 0.1519259530027918,
+      "local_calls": 106
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 576.9798316666856,
+      "delta_E_abs_current": 0.15179677923782497,
+      "delta_E_abs_best": 0.15179659619455055,
+      "local_calls": 141
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 591.9941606665961,
+      "delta_E_abs_current": 0.15177077139330414,
+      "delta_E_abs_best": 0.15177077139330414,
+      "local_calls": 176
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 607.0968875419348,
+      "delta_E_abs_current": 0.15175837682788437,
+      "delta_E_abs_best": 0.1517572533124136,
+      "local_calls": 211
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 622.5180971249938,
+      "delta_E_abs_current": 0.15175110729762292,
+      "delta_E_abs_best": 0.15175093497772071,
+      "local_calls": 247
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 637.6198049588129,
+      "delta_E_abs_current": 0.15174934213854704,
+      "delta_E_abs_best": 0.15174934213854704,
+      "local_calls": 282
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 10,
+      "elapsed_s": 639.8971647499129,
+      "E_after": 0.1684072472363603,
+      "delta_E_abs_current": 0.15174934087810119,
+      "delta_E_abs_best": 0.15174934087810119,
+      "delta_E_step": -0.002159220843522991,
+      "max_grad": 0.09771530142352396,
+      "selected_label": "paop_lf_std:paop_disp(site=1)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 11,
+      "elapsed_s": 639.8971844585612,
+      "E_current": 0.1684072472363603,
+      "delta_E_abs_current": 0.15174934087810119,
+      "delta_E_abs_best": 0.15174934087810119,
+      "max_grad": 0.0926643697498793
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 663.763642499689,
+      "delta_E_abs_current": 0.15203661554677914,
+      "delta_E_abs_best": 0.15174934087810119,
+      "local_calls": 35
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 679.1153104999103,
+      "delta_E_abs_current": 0.15081381007658556,
+      "delta_E_abs_best": 0.15081381007658556,
+      "local_calls": 70
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 694.441974083893,
+      "delta_E_abs_current": 0.15004228660635954,
+      "delta_E_abs_best": 0.15004228660635954,
+      "local_calls": 105
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 709.5092837917618,
+      "delta_E_abs_current": 0.14953460697520807,
+      "delta_E_abs_best": 0.14953460697520807,
+      "local_calls": 139
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 724.933073666878,
+      "delta_E_abs_current": 0.14934048094400318,
+      "delta_E_abs_best": 0.14933760994121206,
+      "local_calls": 174
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 740.35325549962,
+      "delta_E_abs_current": 0.1492428895629556,
+      "delta_E_abs_best": 0.1492428895629556,
+      "local_calls": 209
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 755.7497992916033,
+      "delta_E_abs_current": 0.14921040545447498,
+      "delta_E_abs_best": 0.14921040545447498,
+      "local_calls": 245
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 770.852328708861,
+      "delta_E_abs_current": 0.14919893004440032,
+      "delta_E_abs_best": 0.14919893004440032,
+      "local_calls": 279
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 785.8843448748812,
+      "delta_E_abs_current": 0.14919350719606078,
+      "delta_E_abs_best": 0.14919346133764758,
+      "local_calls": 313
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 800.9541472089477,
+      "delta_E_abs_current": 0.14919167379553963,
+      "delta_E_abs_best": 0.14919167379553963,
+      "local_calls": 347
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_postopt",
+      "depth": 11,
+      "elapsed_s": 803.9775121249259,
+      "E_after": 0.16584950321575187,
+      "delta_E_abs_current": 0.14919159685749275,
+      "delta_E_abs_best": 0.14919159685749275,
+      "delta_E_step": -0.0025577440206084323,
+      "max_grad": 0.0926643697498793,
+      "selected_label": "paop_lf_std:paop_disp(site=0)"
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "depth_preopt",
+      "depth": 12,
+      "elapsed_s": 803.9775181249715,
+      "E_current": 0.16584950321575187,
+      "delta_E_abs_current": 0.14919159685749275,
+      "delta_E_abs_best": 0.14919159685749275,
+      "max_grad": 0.0627861621133821
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 828.0173805416562,
+      "delta_E_abs_current": 0.2875510943513434,
+      "delta_E_abs_best": 0.14919159685749275,
+      "local_calls": 32
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 843.3851022087038,
+      "delta_E_abs_current": 0.14915697626292418,
+      "delta_E_abs_best": 0.14915248284927796,
+      "local_calls": 63
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 858.4023239589296,
+      "delta_E_abs_current": 0.14913353077287117,
+      "delta_E_abs_best": 0.14913262599834404,
+      "local_calls": 94
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 873.8408014588058,
+      "delta_E_abs_current": 0.14912378692816125,
+      "delta_E_abs_best": 0.14912378692816125,
+      "local_calls": 125
+    },
+    {
+      "run_id": "A_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 889.0874654585496,
+      "delta_E_abs_current": 0.14911989696435138,
+      "delta_E_abs_best": 0.14911989696435138,
+      "local_calls": 156
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 1,
+      "elapsed_s": 0.22757916618138552,
+      "E_current": 0.22815495851803178,
+      "delta_E_abs_current": 0.21149705215977266,
+      "delta_E_abs_best": 0.21149705215977266,
+      "max_grad": 0.41740147762738516
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 1,
+      "elapsed_s": 13.143426416441798,
+      "E_after": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "delta_E_step": -0.02197627458059459,
+      "max_grad": 0.41740147762738516,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 2,
+      "elapsed_s": 13.14343020832166,
+      "E_current": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "max_grad": 0.38322537262220613
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 2,
+      "elapsed_s": 34.179430791176856,
+      "E_after": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "delta_E_step": -0.001291761353794496,
+      "max_grad": 0.38322537262220613,
+      "selected_label": "paop_lf_std:paop_hopdrag(0,1)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 3,
+      "elapsed_s": 34.17943366616964,
+      "E_current": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "max_grad": 0.337537763810782
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 3,
+      "elapsed_s": 57.944833625108004,
+      "delta_E_abs_current": 0.17358836904512934,
+      "delta_E_abs_best": 0.17358836904512934,
+      "local_calls": 55
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 3,
+      "elapsed_s": 71.84712758334354,
+      "E_after": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "delta_E_step": -0.0147120616724368,
+      "max_grad": 0.337537763810782,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 4,
+      "elapsed_s": 71.84713570820168,
+      "E_current": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "max_grad": 0.18663416746714967
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 4,
+      "elapsed_s": 95.99868983309716,
+      "delta_E_abs_current": 0.16852896887927518,
+      "delta_E_abs_best": 0.16852896887927518,
+      "local_calls": 54
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 4,
+      "elapsed_s": 107.59346429118887,
+      "E_after": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "delta_E_step": -0.005156915019613323,
+      "max_grad": 0.18663416746714967,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 5,
+      "elapsed_s": 107.59346725000069,
+      "E_current": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "max_grad": 0.18086402143080915
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 5,
+      "elapsed_s": 131.4719303753227,
+      "delta_E_abs_current": 0.16762363109856096,
+      "delta_E_abs_best": 0.16762363109856096,
+      "local_calls": 46
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 5,
+      "elapsed_s": 140.02129529137164,
+      "E_after": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "delta_E_step": -0.0007433413732337024,
+      "max_grad": 0.18086402143080915,
+      "selected_label": "paop_lf_std:paop_hopdrag(1,2)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 6,
+      "elapsed_s": 140.0212992504239,
+      "E_current": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "max_grad": 0.15589751839787197
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 164.06976995803416,
+      "delta_E_abs_current": 0.1643263356143975,
+      "delta_E_abs_best": 0.1643263356143975,
+      "local_calls": 45
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 179.10686450032517,
+      "delta_E_abs_current": 0.16404339288311945,
+      "delta_E_abs_best": 0.16404231398807628,
+      "local_calls": 89
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 194.24347545811906,
+      "delta_E_abs_current": 0.16401036485120385,
+      "delta_E_abs_best": 0.16401036485120385,
+      "local_calls": 133
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 6,
+      "elapsed_s": 197.0679807914421,
+      "E_after": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "delta_E_step": -0.0036064497755795566,
+      "max_grad": 0.15589751839787197,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 7,
+      "elapsed_s": 197.0679837912321,
+      "E_current": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "max_grad": 0.14418995012977137
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 221.0222666254267,
+      "delta_E_abs_current": 0.1639373502778793,
+      "delta_E_abs_best": 0.16383433153320584,
+      "local_calls": 39
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 236.33161950018257,
+      "delta_E_abs_current": 0.16382851275870933,
+      "delta_E_abs_best": 0.16382851275870933,
+      "local_calls": 78
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 7,
+      "elapsed_s": 237.88491741614416,
+      "E_after": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "delta_E_step": -0.0001816218429723515,
+      "max_grad": 0.14418995012977137,
+      "selected_label": "paop_lf_std:paop_hopdrag(2,3)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 8,
+      "elapsed_s": 237.88492112513632,
+      "E_current": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "max_grad": 0.1416836548742026
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 261.62016783328727,
+      "delta_E_abs_current": 0.16131128213353976,
+      "delta_E_abs_best": 0.16094871459892277,
+      "local_calls": 38
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 276.99604858318344,
+      "delta_E_abs_current": 0.15892871800690386,
+      "delta_E_abs_best": 0.15892871800690386,
+      "local_calls": 76
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 292.4701939160004,
+      "delta_E_abs_current": 0.15826757247940962,
+      "delta_E_abs_best": 0.15826757247940962,
+      "local_calls": 114
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 307.5514263333753,
+      "delta_E_abs_current": 0.1578308806056414,
+      "delta_E_abs_best": 0.1578163793938899,
+      "local_calls": 151
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 322.7188205001876,
+      "delta_E_abs_current": 0.15768724950506913,
+      "delta_E_abs_best": 0.15768724950506913,
+      "local_calls": 188
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 337.9223934584297,
+      "delta_E_abs_current": 0.15765690700436927,
+      "delta_E_abs_best": 0.15765690700436927,
+      "local_calls": 226
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 353.3410290000029,
+      "delta_E_abs_current": 0.15764875118729435,
+      "delta_E_abs_best": 0.15764875118729435,
+      "local_calls": 263
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 368.6057238751091,
+      "delta_E_abs_current": 0.15764254483313972,
+      "delta_E_abs_best": 0.15764254483313972,
+      "local_calls": 300
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 8,
+      "elapsed_s": 374.47571875015274,
+      "E_after": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "delta_E_step": -0.006186778505462509,
+      "max_grad": 0.1416836548742026,
+      "selected_label": "paop_lf_std:paop_disp(site=3)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 9,
+      "elapsed_s": 374.4757385831326,
+      "E_current": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "max_grad": 0.12702994987309663
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 398.709193458315,
+      "delta_E_abs_current": 0.15784348739211115,
+      "delta_E_abs_best": 0.15764184803608533,
+      "local_calls": 38
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 414.0364097501151,
+      "delta_E_abs_current": 0.15524001101074938,
+      "delta_E_abs_best": 0.15524001101074938,
+      "local_calls": 74
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 429.2976357913576,
+      "delta_E_abs_current": 0.15425584417654034,
+      "delta_E_abs_best": 0.15425584417654034,
+      "local_calls": 111
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 444.389862250071,
+      "delta_E_abs_current": 0.15399253844621513,
+      "delta_E_abs_best": 0.15399253844621513,
+      "local_calls": 147
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 459.50486579118297,
+      "delta_E_abs_current": 0.1539310952816917,
+      "delta_E_abs_best": 0.1539310952816917,
+      "local_calls": 183
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 474.78819895815104,
+      "delta_E_abs_current": 0.15391795245428375,
+      "delta_E_abs_best": 0.15391605034975026,
+      "local_calls": 219
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 489.7971070832573,
+      "delta_E_abs_current": 0.1539107642991542,
+      "delta_E_abs_best": 0.15391054825361913,
+      "local_calls": 255
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 504.9939749161713,
+      "delta_E_abs_current": 0.153908619927112,
+      "delta_E_abs_best": 0.1539086144786354,
+      "local_calls": 291
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 9,
+      "elapsed_s": 507.94397770799696,
+      "E_after": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "delta_E_step": -0.003733286314461154,
+      "max_grad": 0.12702994987309663,
+      "selected_label": "paop_lf_std:paop_disp(site=2)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 10,
+      "elapsed_s": 507.9439817504026,
+      "E_current": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "max_grad": 0.09771530142352396
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 531.8424007911235,
+      "delta_E_abs_current": 0.15291642318785892,
+      "delta_E_abs_best": 0.15264646902833545,
+      "local_calls": 37
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 547.0732900830917,
+      "delta_E_abs_current": 0.1522700024598065,
+      "delta_E_abs_best": 0.1522700024598065,
+      "local_calls": 72
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 562.180390750058,
+      "delta_E_abs_current": 0.15196685182426548,
+      "delta_E_abs_best": 0.1519259530027918,
+      "local_calls": 107
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 577.3149800831452,
+      "delta_E_abs_current": 0.1518007290955176,
+      "delta_E_abs_best": 0.15179659619455055,
+      "local_calls": 142
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 592.6653494583443,
+      "delta_E_abs_current": 0.15177247076415007,
+      "delta_E_abs_best": 0.15177077139330414,
+      "local_calls": 178
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 607.7531251660548,
+      "delta_E_abs_current": 0.1517564592640927,
+      "delta_E_abs_best": 0.1517564592640927,
+      "local_calls": 213
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 623.095958000049,
+      "delta_E_abs_current": 0.15175076592147907,
+      "delta_E_abs_best": 0.15175076592147907,
+      "local_calls": 249
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 638.4914121660404,
+      "delta_E_abs_current": 0.1517492932788226,
+      "delta_E_abs_best": 0.1517492615151451,
+      "local_calls": 285
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 10,
+      "elapsed_s": 639.3569510830566,
+      "E_after": 0.1684072472363603,
+      "delta_E_abs_current": 0.15174934087810119,
+      "delta_E_abs_best": 0.15174934087810119,
+      "delta_E_step": -0.002159220843522991,
+      "max_grad": 0.09771530142352396,
+      "selected_label": "paop_lf_std:paop_disp(site=1)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 11,
+      "elapsed_s": 639.3569599161856,
+      "E_current": 0.1684072472363603,
+      "delta_E_abs_current": 0.15174934087810119,
+      "delta_E_abs_best": 0.15174934087810119,
+      "max_grad": 0.0926643697498793
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 663.1749260830693,
+      "delta_E_abs_current": 0.15203661554677914,
+      "delta_E_abs_best": 0.15174934087810119,
+      "local_calls": 35
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 678.1961917500012,
+      "delta_E_abs_current": 0.15097493193416867,
+      "delta_E_abs_best": 0.1508186255956434,
+      "local_calls": 69
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 693.30371491611,
+      "delta_E_abs_current": 0.1500557038856651,
+      "delta_E_abs_best": 0.1500557038856651,
+      "local_calls": 103
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 708.5594925410114,
+      "delta_E_abs_current": 0.14954021214741622,
+      "delta_E_abs_best": 0.14954021214741622,
+      "local_calls": 138
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 723.9651747504249,
+      "delta_E_abs_current": 0.14933760994121206,
+      "delta_E_abs_best": 0.14933760994121206,
+      "local_calls": 173
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 739.3648118753918,
+      "delta_E_abs_current": 0.14924955455302627,
+      "delta_E_abs_best": 0.14924955455302627,
+      "local_calls": 208
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 754.7140459162183,
+      "delta_E_abs_current": 0.14921203351975276,
+      "delta_E_abs_best": 0.14921130134138724,
+      "local_calls": 243
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 769.9395054164343,
+      "delta_E_abs_current": 0.14919979737044733,
+      "delta_E_abs_best": 0.14919932897663316,
+      "local_calls": 277
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 785.2784085413441,
+      "delta_E_abs_current": 0.14919346133764758,
+      "delta_E_abs_best": 0.14919346133764758,
+      "local_calls": 312
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 800.3719880003482,
+      "delta_E_abs_current": 0.14919190500773982,
+      "delta_E_abs_best": 0.14919170138824706,
+      "local_calls": 346
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 11,
+      "elapsed_s": 804.0202462081797,
+      "E_after": 0.16584950321575187,
+      "delta_E_abs_current": 0.14919159685749275,
+      "delta_E_abs_best": 0.14919159685749275,
+      "delta_E_step": -0.0025577440206084323,
+      "max_grad": 0.0926643697498793,
+      "selected_label": "paop_lf_std:paop_disp(site=0)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 12,
+      "elapsed_s": 804.0202673333697,
+      "E_current": 0.16584950321575187,
+      "delta_E_abs_current": 0.14919159685749275,
+      "delta_E_abs_best": 0.14919159685749275,
+      "max_grad": 0.0627861621133821
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 827.8460683752783,
+      "delta_E_abs_current": 0.2875510943513434,
+      "delta_E_abs_best": 0.14919159685749275,
+      "local_calls": 32
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 842.8562871660106,
+      "delta_E_abs_current": 0.14915248284927796,
+      "delta_E_abs_best": 0.14915248284927796,
+      "local_calls": 62
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 858.1962686250918,
+      "delta_E_abs_current": 0.14913326678576325,
+      "delta_E_abs_best": 0.14913262599834404,
+      "local_calls": 93
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 873.5826881662942,
+      "delta_E_abs_current": 0.14912415776010884,
+      "delta_E_abs_best": 0.14912379625996816,
+      "local_calls": 124
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 888.598433541134,
+      "delta_E_abs_current": 0.1491199359829779,
+      "delta_E_abs_best": 0.1491199359829779,
+      "local_calls": 155
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 904.0441635414027,
+      "delta_E_abs_current": 0.14911823577326944,
+      "delta_E_abs_best": 0.14911823577326944,
+      "local_calls": 186
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 12,
+      "elapsed_s": 912.687713958323,
+      "E_after": 0.16577592748359718,
+      "delta_E_abs_current": 0.14911802112533806,
+      "delta_E_abs_best": 0.14911802112533806,
+      "delta_E_step": -7.357573215469038e-05,
+      "max_grad": 0.0627861621133821,
+      "selected_label": "paop_lf_std:paop_curdrag(1,2)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 13,
+      "elapsed_s": 912.6877292082645,
+      "E_current": 0.16577592748359718,
+      "delta_E_abs_current": 0.14911802112533806,
+      "delta_E_abs_best": 0.14911802112533806,
+      "max_grad": 0.060241030666194254
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 937.0134227504022,
+      "delta_E_abs_current": 0.2889325767665246,
+      "delta_E_abs_best": 0.14911802112533806,
+      "local_calls": 29
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 952.674661333207,
+      "delta_E_abs_current": 0.1490313111588784,
+      "delta_E_abs_best": 0.1490246973284187,
+      "local_calls": 57
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 968.1064501660876,
+      "delta_E_abs_current": 0.14877621813039502,
+      "delta_E_abs_best": 0.14877239686390695,
+      "local_calls": 85
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 983.4751823330298,
+      "delta_E_abs_current": 0.14848402220451357,
+      "delta_E_abs_best": 0.14848350284521195,
+      "local_calls": 113
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 998.6216659164056,
+      "delta_E_abs_current": 0.14829170688952895,
+      "delta_E_abs_best": 0.14829170688952895,
+      "local_calls": 141
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1014.1508383750916,
+      "delta_E_abs_current": 0.14812506123339414,
+      "delta_E_abs_best": 0.1481247898948875,
+      "local_calls": 169
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1029.6558122914284,
+      "delta_E_abs_current": 0.14796155747017692,
+      "delta_E_abs_best": 0.14796155747017692,
+      "local_calls": 197
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1044.8496817080304,
+      "delta_E_abs_current": 0.1478556803272609,
+      "delta_E_abs_best": 0.1478556803272609,
+      "local_calls": 225
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1059.8874844582751,
+      "delta_E_abs_current": 0.1477723743805205,
+      "delta_E_abs_best": 0.1477704624094916,
+      "local_calls": 253
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1075.1004725834355,
+      "delta_E_abs_current": 0.14768729028486435,
+      "delta_E_abs_best": 0.14768729028486435,
+      "local_calls": 281
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1090.4141862080432,
+      "delta_E_abs_current": 0.14763336415792705,
+      "delta_E_abs_best": 0.14762761417516887,
+      "local_calls": 309
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1105.4397446662188,
+      "delta_E_abs_current": 0.1475953655875254,
+      "delta_E_abs_best": 0.1475953655875254,
+      "local_calls": 336
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1120.5891963751055,
+      "delta_E_abs_current": 0.1475676027046565,
+      "delta_E_abs_best": 0.1475676027046565,
+      "local_calls": 364
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1136.0100210001692,
+      "delta_E_abs_current": 0.1475466742718379,
+      "delta_E_abs_best": 0.1475466742718379,
+      "local_calls": 392
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1151.2685891664587,
+      "delta_E_abs_current": 0.14753784757204694,
+      "delta_E_abs_best": 0.14753784757204694,
+      "local_calls": 420
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1166.6916404580697,
+      "delta_E_abs_current": 0.14753062053675264,
+      "delta_E_abs_best": 0.14753062053675264,
+      "local_calls": 448
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1182.1038090004586,
+      "delta_E_abs_current": 0.1475237652603807,
+      "delta_E_abs_best": 0.1475237652603807,
+      "local_calls": 476
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1197.1316251661628,
+      "delta_E_abs_current": 0.14751934794575958,
+      "delta_E_abs_best": 0.14751934794575958,
+      "local_calls": 503
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1212.3491873331368,
+      "delta_E_abs_current": 0.1475155932889596,
+      "delta_E_abs_best": 0.14751546883062966,
+      "local_calls": 531
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1227.417491958011,
+      "delta_E_abs_current": 0.14751327323495753,
+      "delta_E_abs_best": 0.14751296830637303,
+      "local_calls": 559
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1242.4528777911328,
+      "delta_E_abs_current": 0.14751108805973073,
+      "delta_E_abs_best": 0.14751108805973073,
+      "local_calls": 587
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1257.7675694162026,
+      "delta_E_abs_current": 0.14750981443357444,
+      "delta_E_abs_best": 0.14750980115763113,
+      "local_calls": 615
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1272.9673240412958,
+      "delta_E_abs_current": 0.14750896404064817,
+      "delta_E_abs_best": 0.14750896404064817,
+      "local_calls": 643
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 13,
+      "elapsed_s": 1286.3591693751514,
+      "E_after": 0.16416645978081945,
+      "delta_E_abs_current": 0.14750855342256033,
+      "delta_E_abs_best": 0.14750855342256033,
+      "delta_E_step": -0.0016094677027777282,
+      "max_grad": 0.060241030666194254,
+      "selected_label": "uccsd_ferm_lifted::uccsd_dbl(ab:0,4->3,6)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 14,
+      "elapsed_s": 1286.359176875092,
+      "E_current": 0.16416645978081945,
+      "delta_E_abs_current": 0.14750855342256033,
+      "delta_E_abs_best": 0.14750855342256033,
+      "max_grad": 0.06854061398420384
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1310.712404708378,
+      "delta_E_abs_current": 0.14882984515080358,
+      "delta_E_abs_best": 0.14750855342256033,
+      "local_calls": 29
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1325.88560300041,
+      "delta_E_abs_current": 0.147230234788826,
+      "delta_E_abs_best": 0.147230234788826,
+      "local_calls": 56
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1340.9292875831015,
+      "delta_E_abs_current": 0.147008309974667,
+      "delta_E_abs_best": 0.14699989159034138,
+      "local_calls": 83
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1356.2807814162225,
+      "delta_E_abs_current": 0.14698446538065799,
+      "delta_E_abs_best": 0.1469839320245808,
+      "local_calls": 111
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1371.3445600001141,
+      "delta_E_abs_current": 0.14697478524293597,
+      "delta_E_abs_best": 0.14697413833617273,
+      "local_calls": 138
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1386.515305500012,
+      "delta_E_abs_current": 0.1469714406612926,
+      "delta_E_abs_best": 0.14696998796246805,
+      "local_calls": 165
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1401.8101921253838,
+      "delta_E_abs_current": 0.14696824179065762,
+      "delta_E_abs_best": 0.14696824179065762,
+      "local_calls": 193
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1416.9108299161308,
+      "delta_E_abs_current": 0.14696751214768344,
+      "delta_E_abs_best": 0.14696743464561302,
+      "local_calls": 220
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1432.5371712082997,
+      "delta_E_abs_current": 0.14696687151312568,
+      "delta_E_abs_best": 0.14696687151312568,
+      "local_calls": 248
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 14,
+      "elapsed_s": 1437.1465743752196,
+      "E_after": 0.16362477834262537,
+      "delta_E_abs_current": 0.14696687198436625,
+      "delta_E_abs_best": 0.14696687198436625,
+      "delta_E_step": -0.0005416814381940804,
+      "max_grad": 0.06854061398420384,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->7)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 15,
+      "elapsed_s": 1437.1465808330104,
+      "E_current": 0.16362477834262537,
+      "delta_E_abs_current": 0.14696687198436625,
+      "delta_E_abs_best": 0.14696687198436625,
+      "max_grad": 0.05223270954936714
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1461.7240388751961,
+      "delta_E_abs_current": 0.14824796425979414,
+      "delta_E_abs_best": 0.14696687198436625,
+      "local_calls": 28
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1477.068659291137,
+      "delta_E_abs_current": 0.14676392004418487,
+      "delta_E_abs_best": 0.14674202079844442,
+      "local_calls": 55
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1492.4998638750985,
+      "delta_E_abs_current": 0.1467312361315301,
+      "delta_E_abs_best": 0.1467312361315301,
+      "local_calls": 82
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1508.047367125284,
+      "delta_E_abs_current": 0.14670859607660466,
+      "delta_E_abs_best": 0.14670763630053105,
+      "local_calls": 109
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1523.5645393752493,
+      "delta_E_abs_current": 0.14669931468902764,
+      "delta_E_abs_best": 0.14669867251564045,
+      "local_calls": 136
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1538.9929121662863,
+      "delta_E_abs_current": 0.14669479092733811,
+      "delta_E_abs_best": 0.14669479092733811,
+      "local_calls": 163
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1554.3947791662067,
+      "delta_E_abs_current": 0.14669336809725858,
+      "delta_E_abs_best": 0.14669336809725858,
+      "local_calls": 190
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1569.709308666177,
+      "delta_E_abs_current": 0.14669221133354907,
+      "delta_E_abs_best": 0.14669221133354907,
+      "local_calls": 217
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_postopt",
+      "depth": 15,
+      "elapsed_s": 1579.4598466660827,
+      "E_after": 0.16334973119772364,
+      "delta_E_abs_current": 0.14669182483946452,
+      "delta_E_abs_best": 0.14669182483946452,
+      "delta_E_step": -0.00027504714490173,
+      "max_grad": 0.05223270954936714,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->2)"
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "depth_preopt",
+      "depth": 16,
+      "elapsed_s": 1579.459851208143,
+      "E_current": 0.16334973119772364,
+      "delta_E_abs_current": 0.14669182483946452,
+      "delta_E_abs_best": 0.14669182483946452,
+      "max_grad": 0.04343882434487542
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1604.0387244583108,
+      "delta_E_abs_current": 0.22181580528892147,
+      "delta_E_abs_best": 0.14669182483946452,
+      "local_calls": 26
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1619.4695081254467,
+      "delta_E_abs_current": 0.1477646613990049,
+      "delta_E_abs_best": 0.14669182483946452,
+      "local_calls": 50
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1634.5868624160066,
+      "delta_E_abs_current": 0.1466275332663323,
+      "delta_E_abs_best": 0.14661666274416382,
+      "local_calls": 74
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1649.7878063330427,
+      "delta_E_abs_current": 0.14649662523755216,
+      "delta_E_abs_best": 0.14649662523755216,
+      "local_calls": 98
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1665.2390092913993,
+      "delta_E_abs_current": 0.14635236004547078,
+      "delta_E_abs_best": 0.14635236004547078,
+      "local_calls": 123
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1680.3537060003728,
+      "delta_E_abs_current": 0.14626765747305065,
+      "delta_E_abs_best": 0.14626318957020862,
+      "local_calls": 147
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1695.6732859164476,
+      "delta_E_abs_current": 0.14612567881245603,
+      "delta_E_abs_best": 0.14612558091606517,
+      "local_calls": 172
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1710.8395077502355,
+      "delta_E_abs_current": 0.14598046677575682,
+      "delta_E_abs_best": 0.1459740349034268,
+      "local_calls": 196
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1725.8765040412545,
+      "delta_E_abs_current": 0.14590310253487862,
+      "delta_E_abs_best": 0.14590300839956902,
+      "local_calls": 220
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1741.0922460001893,
+      "delta_E_abs_current": 0.14579366361821167,
+      "delta_E_abs_best": 0.14579366361821167,
+      "local_calls": 243
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1756.18012000015,
+      "delta_E_abs_current": 0.14566753783094263,
+      "delta_E_abs_best": 0.14566753783094263,
+      "local_calls": 267
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1771.765886166133,
+      "delta_E_abs_current": 0.14559142001715544,
+      "delta_E_abs_best": 0.1455849033058871,
+      "local_calls": 292
+    },
+    {
+      "run_id": "A_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1786.9951366661116,
+      "delta_E_abs_current": 0.14548853363489203,
+      "delta_E_abs_best": 0.14548853363489203,
+      "local_calls": 316
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 1,
+      "elapsed_s": 0.2197036249563098,
+      "E_current": 0.22815495851803178,
+      "delta_E_abs_current": 0.21149705215977266,
+      "delta_E_abs_best": 0.21149705215977266,
+      "max_grad": 0.41740147762738516
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 1,
+      "elapsed_s": 16.915054249577224,
+      "E_after": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "delta_E_step": -0.02197627458059459,
+      "max_grad": 0.41740147762738516,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 2,
+      "elapsed_s": 16.915058083832264,
+      "E_current": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "max_grad": 0.38322537262220613
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 2,
+      "elapsed_s": 41.81714087491855,
+      "E_after": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "delta_E_step": -0.001291761353794496,
+      "max_grad": 0.38322537262220613,
+      "selected_label": "paop_lf_std:paop_hopdrag(0,1)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 3,
+      "elapsed_s": 41.8171442495659,
+      "E_current": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "max_grad": 0.337537763810782
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 3,
+      "elapsed_s": 69.57591858366504,
+      "delta_E_abs_current": 0.1735823487393528,
+      "delta_E_abs_best": 0.1735823487393528,
+      "local_calls": 57
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 3,
+      "elapsed_s": 83.14255670877174,
+      "E_after": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "delta_E_step": -0.0147120616724368,
+      "max_grad": 0.337537763810782,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 4,
+      "elapsed_s": 83.14256112463772,
+      "E_current": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "max_grad": 0.18663416746714967
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 4,
+      "elapsed_s": 110.53374108392745,
+      "delta_E_abs_current": 0.16852896887927518,
+      "delta_E_abs_best": 0.16852896887927518,
+      "local_calls": 54
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 4,
+      "elapsed_s": 122.29270579153672,
+      "E_after": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "delta_E_step": -0.005156915019613323,
+      "max_grad": 0.18663416746714967,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 5,
+      "elapsed_s": 122.29271016689017,
+      "E_current": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "max_grad": 0.18086402143080915
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 5,
+      "elapsed_s": 149.90335324965417,
+      "delta_E_abs_current": 0.167623237780978,
+      "delta_E_abs_best": 0.167623237780978,
+      "local_calls": 47
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 5,
+      "elapsed_s": 157.72418091678992,
+      "E_after": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "delta_E_step": -0.0007433413732337024,
+      "max_grad": 0.18086402143080915,
+      "selected_label": "paop_lf_std:paop_hopdrag(1,2)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 6,
+      "elapsed_s": 157.7241834588349,
+      "E_current": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "max_grad": 0.15589751839787197
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 185.14774383371696,
+      "delta_E_abs_current": 0.1643263356143975,
+      "delta_E_abs_best": 0.1643263356143975,
+      "local_calls": 45
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 200.29457599995658,
+      "delta_E_abs_current": 0.16404339288311945,
+      "delta_E_abs_best": 0.16404231398807628,
+      "local_calls": 89
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 215.53102212492377,
+      "delta_E_abs_current": 0.16401036485120385,
+      "delta_E_abs_best": 0.16401036485120385,
+      "local_calls": 133
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 6,
+      "elapsed_s": 218.33496608398855,
+      "E_after": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "delta_E_step": -0.0036064497755795566,
+      "max_grad": 0.15589751839787197,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 7,
+      "elapsed_s": 218.334977874998,
+      "E_current": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "max_grad": 0.14418995012977137
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 245.87915049958974,
+      "delta_E_abs_current": 0.1638391180103092,
+      "delta_E_abs_best": 0.16383433153320584,
+      "local_calls": 40
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 261.25173058360815,
+      "delta_E_abs_current": 0.16382851275870933,
+      "delta_E_abs_best": 0.16382851275870933,
+      "local_calls": 78
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 7,
+      "elapsed_s": 262.9288256247528,
+      "E_after": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "delta_E_step": -0.0001816218429723515,
+      "max_grad": 0.14418995012977137,
+      "selected_label": "paop_lf_std:paop_hopdrag(2,3)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 8,
+      "elapsed_s": 262.92882804200053,
+      "E_current": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "max_grad": 0.1416836548742026
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 290.46544004185125,
+      "delta_E_abs_current": 0.16131128213353976,
+      "delta_E_abs_best": 0.16094871459892277,
+      "local_calls": 38
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 305.7627549995668,
+      "delta_E_abs_current": 0.15894807406688752,
+      "delta_E_abs_best": 0.15894807406688752,
+      "local_calls": 75
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 320.87603574991226,
+      "delta_E_abs_current": 0.1582975951203431,
+      "delta_E_abs_best": 0.1582975951203431,
+      "local_calls": 113
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 336.027170416899,
+      "delta_E_abs_current": 0.1578163793938899,
+      "delta_E_abs_best": 0.1578163793938899,
+      "local_calls": 150
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 351.286600291729,
+      "delta_E_abs_current": 0.15769641527351433,
+      "delta_E_abs_best": 0.15769193040325494,
+      "local_calls": 187
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 366.39346758369356,
+      "delta_E_abs_current": 0.15765855386054647,
+      "delta_E_abs_best": 0.15765829169357004,
+      "local_calls": 224
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 381.52918208390474,
+      "delta_E_abs_current": 0.15764904455725492,
+      "delta_E_abs_best": 0.15764895622647268,
+      "local_calls": 262
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 396.816743333824,
+      "delta_E_abs_current": 0.15764254483313972,
+      "delta_E_abs_best": 0.15764254483313972,
+      "local_calls": 300
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 8,
+      "elapsed_s": 402.91753145866096,
+      "E_after": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "delta_E_step": -0.006186778505462509,
+      "max_grad": 0.1416836548742026,
+      "selected_label": "paop_lf_std:paop_disp(site=3)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 9,
+      "elapsed_s": 402.91753899957985,
+      "E_current": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "max_grad": 0.12702994987309663
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 430.88119479175657,
+      "delta_E_abs_current": 0.15784348739211115,
+      "delta_E_abs_best": 0.15764184803608533,
+      "local_calls": 38
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 445.9746548747644,
+      "delta_E_abs_current": 0.15524001101074938,
+      "delta_E_abs_best": 0.15524001101074938,
+      "local_calls": 74
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 461.0588360838592,
+      "delta_E_abs_current": 0.15431491144635107,
+      "delta_E_abs_best": 0.15425950192166912,
+      "local_calls": 110
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 476.3914123745635,
+      "delta_E_abs_current": 0.15399855481086522,
+      "delta_E_abs_best": 0.15399855481086522,
+      "local_calls": 146
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 491.60467195883393,
+      "delta_E_abs_current": 0.1539310952816917,
+      "delta_E_abs_best": 0.1539310952816917,
+      "local_calls": 183
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 506.9121810835786,
+      "delta_E_abs_current": 0.15391795245428375,
+      "delta_E_abs_best": 0.15391605034975026,
+      "local_calls": 219
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 521.9447736665606,
+      "delta_E_abs_current": 0.1539107642991542,
+      "delta_E_abs_best": 0.15391054825361913,
+      "local_calls": 255
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 537.239562291652,
+      "delta_E_abs_current": 0.153908619927112,
+      "delta_E_abs_best": 0.1539086144786354,
+      "local_calls": 291
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 9,
+      "elapsed_s": 540.2625679587945,
+      "E_after": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "delta_E_step": -0.003733286314461154,
+      "max_grad": 0.12702994987309663,
+      "selected_label": "paop_lf_std:paop_disp(site=2)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 10,
+      "elapsed_s": 540.2625717916526,
+      "E_current": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "max_grad": 0.10612302190150344
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 568.2761893337592,
+      "delta_E_abs_current": 0.1538924751482088,
+      "delta_E_abs_best": 0.1537049465462048,
+      "local_calls": 37
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 583.7254101247527,
+      "delta_E_abs_current": 0.15302407276663044,
+      "delta_E_abs_best": 0.1530175655999161,
+      "local_calls": 73
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 599.0408442085609,
+      "delta_E_abs_current": 0.15262918832731537,
+      "delta_E_abs_best": 0.15262918832731537,
+      "local_calls": 108
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 614.1352137918584,
+      "delta_E_abs_current": 0.15256834548368636,
+      "delta_E_abs_best": 0.15256768835120996,
+      "local_calls": 143
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 629.196520708967,
+      "delta_E_abs_current": 0.15256196746874187,
+      "delta_E_abs_best": 0.15256196746874187,
+      "local_calls": 178
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 10,
+      "elapsed_s": 639.939321666956,
+      "E_after": 0.1692184287265449,
+      "delta_E_abs_current": 0.1525605223682858,
+      "delta_E_abs_best": 0.1525605223682858,
+      "delta_E_step": -0.0013480393533383817,
+      "max_grad": 0.10612302190150344,
+      "selected_label": "hh_hop(i=1,j=2,spin=1)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 11,
+      "elapsed_s": 639.9393291668966,
+      "E_current": 0.1692184287265449,
+      "delta_E_abs_current": 0.1525605223682858,
+      "delta_E_abs_best": 0.1525605223682858,
+      "max_grad": 0.09674458550640877
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 667.4326148335822,
+      "delta_E_abs_current": 0.1526104209282138,
+      "delta_E_abs_best": 0.1525605223682858,
+      "local_calls": 36
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 682.4415473337285,
+      "delta_E_abs_current": 0.1519367147540166,
+      "delta_E_abs_best": 0.1519367147540166,
+      "local_calls": 70
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 697.7313109999523,
+      "delta_E_abs_current": 0.15111028054943446,
+      "delta_E_abs_best": 0.15109868352535055,
+      "local_calls": 105
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 712.7996180839837,
+      "delta_E_abs_current": 0.1507587775283997,
+      "delta_E_abs_best": 0.1507554307728425,
+      "local_calls": 139
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 728.1456682495773,
+      "delta_E_abs_current": 0.15060431755748638,
+      "delta_E_abs_best": 0.15058006465879362,
+      "local_calls": 174
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 743.2489382089116,
+      "delta_E_abs_current": 0.15049936281805068,
+      "delta_E_abs_best": 0.15049936281805068,
+      "local_calls": 208
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 758.6587682086974,
+      "delta_E_abs_current": 0.15046142619146596,
+      "delta_E_abs_best": 0.15046142619146596,
+      "local_calls": 243
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 774.1106125419028,
+      "delta_E_abs_current": 0.1504449223187314,
+      "delta_E_abs_best": 0.15044480499460305,
+      "local_calls": 278
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 789.3549542916007,
+      "delta_E_abs_current": 0.1504419913461624,
+      "delta_E_abs_best": 0.15044179036286193,
+      "local_calls": 312
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_postopt",
+      "depth": 11,
+      "elapsed_s": 799.9604410836473,
+      "E_after": 0.16709866627126013,
+      "delta_E_abs_current": 0.15044075991300102,
+      "delta_E_abs_best": 0.15044075991300102,
+      "delta_E_step": -0.0021197624552847794,
+      "max_grad": 0.09674458550640877,
+      "selected_label": "paop_lf_std:paop_disp(site=1)"
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "depth_preopt",
+      "depth": 12,
+      "elapsed_s": 799.9604450836778,
+      "E_current": 0.16709866627126013,
+      "delta_E_abs_current": 0.15044075991300102,
+      "delta_E_abs_best": 0.15044075991300102,
+      "max_grad": 0.09248585393706331
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 827.7664885837585,
+      "delta_E_abs_current": 0.15007442960578096,
+      "delta_E_abs_best": 0.1494483088076854,
+      "local_calls": 34
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 842.8758810837753,
+      "delta_E_abs_current": 0.14888586495352504,
+      "delta_E_abs_best": 0.14884817923461133,
+      "local_calls": 67
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 857.9941939166747,
+      "delta_E_abs_current": 0.14842649624929352,
+      "delta_E_abs_best": 0.14842649624929352,
+      "local_calls": 99
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 873.3796244999394,
+      "delta_E_abs_current": 0.14813071729488678,
+      "delta_E_abs_best": 0.14812692387712542,
+      "local_calls": 133
+    },
+    {
+      "run_id": "B_probe",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 888.410988333635,
+      "delta_E_abs_current": 0.14800017757631512,
+      "delta_E_abs_best": 0.14799421549845446,
+      "local_calls": 166
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 1,
+      "elapsed_s": 0.27643762482330203,
+      "E_current": 0.22815495851803178,
+      "delta_E_abs_current": 0.21149705215977266,
+      "delta_E_abs_best": 0.21149705215977266,
+      "max_grad": 0.41740147762738516
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 1,
+      "elapsed_s": 17.144190249964595,
+      "E_after": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "delta_E_step": -0.02197627458059459,
+      "max_grad": 0.41740147762738516,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->7)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 2,
+      "elapsed_s": 17.1441931668669,
+      "E_current": 0.20617868393743718,
+      "delta_E_abs_current": 0.18952077757917807,
+      "delta_E_abs_best": 0.18952077757917807,
+      "max_grad": 0.38322537262220613
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 2,
+      "elapsed_s": 43.08890787512064,
+      "E_after": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "delta_E_step": -0.001291761353794496,
+      "max_grad": 0.38322537262220613,
+      "selected_label": "paop_lf_std:paop_hopdrag(0,1)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 3,
+      "elapsed_s": 43.08891083300114,
+      "E_current": 0.2048869225836427,
+      "delta_E_abs_current": 0.18822901622538357,
+      "delta_E_abs_best": 0.18822901622538357,
+      "max_grad": 0.337537763810782
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 3,
+      "elapsed_s": 71.3611975829117,
+      "delta_E_abs_current": 0.17360178769031148,
+      "delta_E_abs_best": 0.17360178769031148,
+      "local_calls": 51
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 3,
+      "elapsed_s": 86.58645804226398,
+      "delta_E_abs_current": 0.17351703997573203,
+      "delta_E_abs_best": 0.17351703126005144,
+      "local_calls": 101
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 3,
+      "elapsed_s": 88.42930233292282,
+      "E_after": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "delta_E_step": -0.0147120616724368,
+      "max_grad": 0.337537763810782,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->3)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 4,
+      "elapsed_s": 88.42931349994615,
+      "E_current": 0.1901748609112059,
+      "delta_E_abs_current": 0.17351695455294677,
+      "delta_E_abs_best": 0.17351695455294677,
+      "max_grad": 0.18663416746714967
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 4,
+      "elapsed_s": 117.41652595810592,
+      "delta_E_abs_current": 0.1685474587726144,
+      "delta_E_abs_best": 0.1685474587726144,
+      "local_calls": 49
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 4,
+      "elapsed_s": 131.16631804220378,
+      "E_after": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "delta_E_step": -0.005156915019613323,
+      "max_grad": 0.18663416746714967,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:4->6)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 5,
+      "elapsed_s": 131.16632162500173,
+      "E_current": 0.18501794589159257,
+      "delta_E_abs_current": 0.16836003953333345,
+      "delta_E_abs_best": 0.16836003953333345,
+      "max_grad": 0.18086402143080915
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 5,
+      "elapsed_s": 159.4574904581532,
+      "delta_E_abs_current": 0.16762786077455677,
+      "delta_E_abs_best": 0.167624608078319,
+      "local_calls": 45
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 5,
+      "elapsed_s": 168.76593879191205,
+      "E_after": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "delta_E_step": -0.0007433413732337024,
+      "max_grad": 0.18086402143080915,
+      "selected_label": "paop_lf_std:paop_hopdrag(1,2)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 6,
+      "elapsed_s": 168.76594937499613,
+      "E_current": 0.18427460451835886,
+      "delta_E_abs_current": 0.16761669816009975,
+      "delta_E_abs_best": 0.16761669816009975,
+      "max_grad": 0.15589751839787197
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 197.45013599982485,
+      "delta_E_abs_current": 0.1643648764943895,
+      "delta_E_abs_best": 0.1643648764943895,
+      "local_calls": 44
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 212.758582000155,
+      "delta_E_abs_current": 0.16404810647137474,
+      "delta_E_abs_best": 0.16404810647137474,
+      "local_calls": 86
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 6,
+      "elapsed_s": 227.93825833313167,
+      "delta_E_abs_current": 0.1640107419435808,
+      "delta_E_abs_best": 0.1640107419435808,
+      "local_calls": 128
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 6,
+      "elapsed_s": 232.8679982079193,
+      "E_after": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "delta_E_step": -0.0036064497755795566,
+      "max_grad": 0.15589751839787197,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:0->2)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 7,
+      "elapsed_s": 232.86800200026482,
+      "E_current": 0.1806681547427793,
+      "delta_E_abs_current": 0.1640102483845202,
+      "delta_E_abs_best": 0.1640102483845202,
+      "max_grad": 0.14418995012977137
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 261.2297257082537,
+      "delta_E_abs_current": 0.16384209409593978,
+      "delta_E_abs_best": 0.16383433153320584,
+      "local_calls": 38
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 7,
+      "elapsed_s": 276.65057404199615,
+      "delta_E_abs_current": 0.16382874255529264,
+      "delta_E_abs_best": 0.1638286011437619,
+      "local_calls": 76
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 7,
+      "elapsed_s": 279.35731941694394,
+      "E_after": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "delta_E_step": -0.0001816218429723515,
+      "max_grad": 0.14418995012977137,
+      "selected_label": "paop_lf_std:paop_hopdrag(2,3)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 8,
+      "elapsed_s": 279.35732304211706,
+      "E_current": 0.18048653289980696,
+      "delta_E_abs_current": 0.16382862654154784,
+      "delta_E_abs_best": 0.16382862654154784,
+      "max_grad": 0.1416836548742026
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 307.525949541945,
+      "delta_E_abs_current": 0.16094871459892277,
+      "delta_E_abs_best": 0.16094871459892277,
+      "local_calls": 37
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 322.5389415831305,
+      "delta_E_abs_current": 0.1591267086202866,
+      "delta_E_abs_best": 0.15909954364419904,
+      "local_calls": 72
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 337.5769166252576,
+      "delta_E_abs_current": 0.15835105903881905,
+      "delta_E_abs_best": 0.15835105903881905,
+      "local_calls": 108
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 352.80507024982944,
+      "delta_E_abs_current": 0.1578823177305741,
+      "delta_E_abs_best": 0.1578823177305741,
+      "local_calls": 143
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 368.03485137503594,
+      "delta_E_abs_current": 0.15770914704719394,
+      "delta_E_abs_best": 0.15770914704719394,
+      "local_calls": 178
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 383.29020254220814,
+      "delta_E_abs_current": 0.1576634126930536,
+      "delta_E_abs_best": 0.15766192241127652,
+      "local_calls": 212
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 398.47168650012463,
+      "delta_E_abs_current": 0.15765189463250645,
+      "delta_E_abs_best": 0.15765189463250645,
+      "local_calls": 245
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 413.8468379578553,
+      "delta_E_abs_current": 0.15764595709669849,
+      "delta_E_abs_best": 0.15764581704939826,
+      "local_calls": 278
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 8,
+      "elapsed_s": 429.2717774999328,
+      "delta_E_abs_current": 0.15764189325091832,
+      "delta_E_abs_best": 0.1576417689679012,
+      "local_calls": 313
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 8,
+      "elapsed_s": 430.1564527079463,
+      "E_after": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "delta_E_step": -0.006186778505462509,
+      "max_grad": 0.1416836548742026,
+      "selected_label": "paop_lf_std:paop_disp(site=3)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 9,
+      "elapsed_s": 430.15647062519565,
+      "E_current": 0.17429975439434445,
+      "delta_E_abs_current": 0.15764184803608533,
+      "delta_E_abs_best": 0.15764184803608533,
+      "max_grad": 0.12702994987309663
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 458.5442739170976,
+      "delta_E_abs_current": 0.15809221886443114,
+      "delta_E_abs_best": 0.15764184803608533,
+      "local_calls": 36
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 473.7784571251832,
+      "delta_E_abs_current": 0.15525763843249077,
+      "delta_E_abs_best": 0.15525763843249077,
+      "local_calls": 71
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 489.0464309169911,
+      "delta_E_abs_current": 0.1543137522477501,
+      "delta_E_abs_best": 0.15428370202748487,
+      "local_calls": 106
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 504.06997708324343,
+      "delta_E_abs_current": 0.15403752829281828,
+      "delta_E_abs_best": 0.1540213173507022,
+      "local_calls": 141
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 519.2839857921936,
+      "delta_E_abs_current": 0.15394686365450652,
+      "delta_E_abs_best": 0.15394219696534053,
+      "local_calls": 176
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 534.6888929582201,
+      "delta_E_abs_current": 0.1539183892560557,
+      "delta_E_abs_best": 0.1539183892560557,
+      "local_calls": 211
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 550.1203165831976,
+      "delta_E_abs_current": 0.1539112796115814,
+      "delta_E_abs_best": 0.15391114593431077,
+      "local_calls": 246
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 9,
+      "elapsed_s": 565.2191972918808,
+      "delta_E_abs_current": 0.15390898828074717,
+      "delta_E_abs_best": 0.1539089782536032,
+      "local_calls": 279
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 9,
+      "elapsed_s": 573.8508075000718,
+      "E_after": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "delta_E_step": -0.003733286314461154,
+      "max_grad": 0.12702994987309663,
+      "selected_label": "paop_lf_std:paop_disp(site=2)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 10,
+      "elapsed_s": 573.85081991693,
+      "E_current": 0.1705664680798833,
+      "delta_E_abs_current": 0.15390856172162418,
+      "delta_E_abs_best": 0.15390856172162418,
+      "max_grad": 0.10612302190150344
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 602.4900099579245,
+      "delta_E_abs_current": 0.15649613355217312,
+      "delta_E_abs_best": 0.1537049465462048,
+      "local_calls": 33
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 617.8205001670867,
+      "delta_E_abs_current": 0.1531318687100207,
+      "delta_E_abs_best": 0.1531318687100207,
+      "local_calls": 67
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 632.8672465421259,
+      "delta_E_abs_current": 0.1526758525216748,
+      "delta_E_abs_best": 0.15267207647112502,
+      "local_calls": 101
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 647.9799746251665,
+      "delta_E_abs_current": 0.1525775556634778,
+      "delta_E_abs_best": 0.15257331255519757,
+      "local_calls": 135
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 10,
+      "elapsed_s": 663.0879203332588,
+      "delta_E_abs_current": 0.1525642631243463,
+      "delta_E_abs_best": 0.1525642631243463,
+      "local_calls": 169
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 10,
+      "elapsed_s": 678.3585249171592,
+      "E_after": 0.1692184287265449,
+      "delta_E_abs_current": 0.1525605223682858,
+      "delta_E_abs_best": 0.1525605223682858,
+      "delta_E_step": -0.0013480393533383817,
+      "max_grad": 0.10612302190150344,
+      "selected_label": "hh_hop(i=1,j=2,spin=1)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 11,
+      "elapsed_s": 678.3585392502137,
+      "E_current": 0.1692184287265449,
+      "delta_E_abs_current": 0.1525605223682858,
+      "delta_E_abs_best": 0.1525605223682858,
+      "max_grad": 0.09674458550640877
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 706.3946376251988,
+      "delta_E_abs_current": 0.15312578638548519,
+      "delta_E_abs_best": 0.1525605223682858,
+      "local_calls": 34
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 721.6099159172736,
+      "delta_E_abs_current": 0.1520485550775216,
+      "delta_E_abs_best": 0.15203370275751513,
+      "local_calls": 67
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 737.0486303330399,
+      "delta_E_abs_current": 0.15116919461265507,
+      "delta_E_abs_best": 0.15116919461265507,
+      "local_calls": 101
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 752.0996095831506,
+      "delta_E_abs_current": 0.15080387795548578,
+      "delta_E_abs_best": 0.15080387795548578,
+      "local_calls": 134
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 767.4044146249071,
+      "delta_E_abs_current": 0.15058006465879362,
+      "delta_E_abs_best": 0.15058006465879362,
+      "local_calls": 168
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 782.4761478751898,
+      "delta_E_abs_current": 0.15051174504006318,
+      "delta_E_abs_best": 0.1505113425304304,
+      "local_calls": 201
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 797.5828299168497,
+      "delta_E_abs_current": 0.15047087653751035,
+      "delta_E_abs_best": 0.15047087653751035,
+      "local_calls": 234
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 812.7110931249335,
+      "delta_E_abs_current": 0.15045055271931468,
+      "delta_E_abs_best": 0.15044952986056429,
+      "local_calls": 267
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 827.9698454998434,
+      "delta_E_abs_current": 0.1504426883802351,
+      "delta_E_abs_best": 0.1504426883802351,
+      "local_calls": 298
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 11,
+      "elapsed_s": 843.2725217919797,
+      "delta_E_abs_current": 0.15044061157103275,
+      "delta_E_abs_best": 0.15044061157103275,
+      "local_calls": 331
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 11,
+      "elapsed_s": 845.6138599170372,
+      "E_after": 0.16709866627126013,
+      "delta_E_abs_current": 0.15044075991300102,
+      "delta_E_abs_best": 0.15044075991300102,
+      "delta_E_step": -0.0021197624552847794,
+      "max_grad": 0.09674458550640877,
+      "selected_label": "paop_lf_std:paop_disp(site=1)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 12,
+      "elapsed_s": 845.6138699580915,
+      "E_current": 0.16709866627126013,
+      "delta_E_abs_current": 0.15044075991300102,
+      "delta_E_abs_best": 0.15044075991300102,
+      "max_grad": 0.09248585393706331
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 874.1020605419762,
+      "delta_E_abs_current": 0.18439143251715553,
+      "delta_E_abs_best": 0.1494483088076854,
+      "local_calls": 33
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 889.2658732081763,
+      "delta_E_abs_current": 0.14916220090138035,
+      "delta_E_abs_best": 0.14884817923461133,
+      "local_calls": 66
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 904.6063587078825,
+      "delta_E_abs_current": 0.14844436255402021,
+      "delta_E_abs_best": 0.1484340498191688,
+      "local_calls": 98
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 919.7631240002811,
+      "delta_E_abs_current": 0.1481368958054586,
+      "delta_E_abs_best": 0.1481368958054586,
+      "local_calls": 130
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 935.1776147079654,
+      "delta_E_abs_current": 0.1479985215717125,
+      "delta_E_abs_best": 0.1479985215717125,
+      "local_calls": 162
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 950.4359273752198,
+      "delta_E_abs_current": 0.1479431164584311,
+      "delta_E_abs_best": 0.14794121947776473,
+      "local_calls": 195
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 965.7383914999664,
+      "delta_E_abs_current": 0.14791646675146153,
+      "delta_E_abs_best": 0.14791646675146153,
+      "local_calls": 228
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 980.8493949580006,
+      "delta_E_abs_current": 0.14790289924761332,
+      "delta_E_abs_best": 0.14790289924761332,
+      "local_calls": 260
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 996.3121781251393,
+      "delta_E_abs_current": 0.14789350519375474,
+      "delta_E_abs_best": 0.14789350519375474,
+      "local_calls": 293
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 12,
+      "elapsed_s": 1011.3319632499479,
+      "delta_E_abs_current": 0.14789121320523388,
+      "delta_E_abs_best": 0.14789121320523388,
+      "local_calls": 325
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 12,
+      "elapsed_s": 1014.7621791251004,
+      "E_after": 0.16454925730419417,
+      "delta_E_abs_current": 0.14789135094593506,
+      "delta_E_abs_best": 0.14789135094593506,
+      "delta_E_step": -0.002549408967065958,
+      "max_grad": 0.09248585393706331,
+      "selected_label": "paop_lf_std:paop_disp(site=0)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 13,
+      "elapsed_s": 1014.7621864578687,
+      "E_current": 0.16454925730419417,
+      "delta_E_abs_current": 0.14789135094593506,
+      "delta_E_abs_best": 0.14789135094593506,
+      "max_grad": 0.08366446809076475
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1042.6330961249769,
+      "delta_E_abs_current": 0.2927327525401611,
+      "delta_E_abs_best": 0.14789135094593506,
+      "local_calls": 30
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1058.1341238329187,
+      "delta_E_abs_current": 0.14785338381271332,
+      "delta_E_abs_best": 0.14784728728446114,
+      "local_calls": 60
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1073.5535768750124,
+      "delta_E_abs_current": 0.14777787508220502,
+      "delta_E_abs_best": 0.14777787508220502,
+      "local_calls": 90
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1088.9224527920596,
+      "delta_E_abs_current": 0.1477682732887643,
+      "delta_E_abs_best": 0.14776708624409363,
+      "local_calls": 120
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1104.039624582976,
+      "delta_E_abs_current": 0.14776552398171358,
+      "delta_E_abs_best": 0.14776552398171358,
+      "local_calls": 149
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 13,
+      "elapsed_s": 1119.1749119581655,
+      "delta_E_abs_current": 0.1477637759793795,
+      "delta_E_abs_best": 0.1477637759793795,
+      "local_calls": 178
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 13,
+      "elapsed_s": 1126.4931305418722,
+      "E_after": 0.1644215881713294,
+      "delta_E_abs_current": 0.14776368181307029,
+      "delta_E_abs_best": 0.14776368181307029,
+      "delta_E_step": -0.00012766913286477166,
+      "max_grad": 0.08366446809076475,
+      "selected_label": "paop_lf_std:paop_curdrag(1,2)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 14,
+      "elapsed_s": 1126.4931475422345,
+      "E_current": 0.1644215881713294,
+      "delta_E_abs_current": 0.14776368181307029,
+      "delta_E_abs_best": 0.14776368181307029,
+      "max_grad": 0.06175387780008444
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1154.9921436668374,
+      "delta_E_abs_current": 0.15342149639401179,
+      "delta_E_abs_best": 0.14776368181307029,
+      "local_calls": 28
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1169.9946650420316,
+      "delta_E_abs_current": 0.14771353158761602,
+      "delta_E_abs_best": 0.14771353158761602,
+      "local_calls": 54
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1185.247564875055,
+      "delta_E_abs_current": 0.1475709773383475,
+      "delta_E_abs_best": 0.14756584619046295,
+      "local_calls": 80
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1200.4772871248424,
+      "delta_E_abs_current": 0.1475286537971648,
+      "delta_E_abs_best": 0.1475286537971648,
+      "local_calls": 106
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1215.5777405002154,
+      "delta_E_abs_current": 0.1475143840092781,
+      "delta_E_abs_best": 0.14751278996863076,
+      "local_calls": 132
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1230.595112749841,
+      "delta_E_abs_current": 0.14751096205606565,
+      "delta_E_abs_best": 0.14750956453238612,
+      "local_calls": 158
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1246.1431982498616,
+      "delta_E_abs_current": 0.14750828958924314,
+      "delta_E_abs_best": 0.14750828958924314,
+      "local_calls": 185
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1261.2769312919118,
+      "delta_E_abs_current": 0.1475073005288103,
+      "delta_E_abs_best": 0.14750708402368198,
+      "local_calls": 211
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 14,
+      "elapsed_s": 1276.8160250000656,
+      "delta_E_abs_current": 0.14750658014046,
+      "delta_E_abs_best": 0.1475065272832008,
+      "local_calls": 238
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 14,
+      "elapsed_s": 1283.8135622502305,
+      "E_after": 0.1641643640683017,
+      "delta_E_abs_current": 0.1475064577100426,
+      "delta_E_abs_best": 0.1475064577100426,
+      "delta_E_step": -0.0002572241030276978,
+      "max_grad": 0.06175387780008444,
+      "selected_label": "uccsd_ferm_lifted::uccsd_dbl(ab:0,5->3,6)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 15,
+      "elapsed_s": 1283.8135654171929,
+      "E_current": 0.1641643640683017,
+      "delta_E_abs_current": 0.1475064577100426,
+      "delta_E_abs_best": 0.1475064577100426,
+      "max_grad": 0.05567222481327612
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1312.3410676671192,
+      "delta_E_abs_current": 0.16829103442738483,
+      "delta_E_abs_best": 0.1475064577100426,
+      "local_calls": 27
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1327.4068126250058,
+      "delta_E_abs_current": 0.1479253044558466,
+      "delta_E_abs_best": 0.1474047056597038,
+      "local_calls": 53
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1342.8222369169816,
+      "delta_E_abs_current": 0.14738301048178631,
+      "delta_E_abs_best": 0.14738301048178631,
+      "local_calls": 79
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1358.4050457919948,
+      "delta_E_abs_current": 0.1472719199855838,
+      "delta_E_abs_best": 0.1472719199855838,
+      "local_calls": 106
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1373.4578014579602,
+      "delta_E_abs_current": 0.14722735803182865,
+      "delta_E_abs_best": 0.14722735803182865,
+      "local_calls": 131
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1388.4994221669622,
+      "delta_E_abs_current": 0.14720635846605104,
+      "delta_E_abs_best": 0.14720513442957406,
+      "local_calls": 157
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1403.6998152500018,
+      "delta_E_abs_current": 0.14720063343737677,
+      "delta_E_abs_best": 0.14719998715416086,
+      "local_calls": 183
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1419.1429407079704,
+      "delta_E_abs_current": 0.1471936069448911,
+      "delta_E_abs_best": 0.1471936069448911,
+      "local_calls": 209
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1434.5748262498528,
+      "delta_E_abs_current": 0.1471901172252818,
+      "delta_E_abs_best": 0.147189997503304,
+      "local_calls": 235
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1449.612733375281,
+      "delta_E_abs_current": 0.14718801806189327,
+      "delta_E_abs_best": 0.14718801806189327,
+      "local_calls": 261
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1464.8254388752393,
+      "delta_E_abs_current": 0.14718694528833262,
+      "delta_E_abs_best": 0.1471869444351576,
+      "local_calls": 287
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 15,
+      "elapsed_s": 1480.3913599168882,
+      "delta_E_abs_current": 0.14718633785824434,
+      "delta_E_abs_best": 0.1471862420896467,
+      "local_calls": 314
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 15,
+      "elapsed_s": 1490.5817970000207,
+      "E_after": 0.16384388359363083,
+      "delta_E_abs_current": 0.14718597723537172,
+      "delta_E_abs_best": 0.14718597723537172,
+      "delta_E_step": -0.00032048047467087004,
+      "max_grad": 0.05567222481327612,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(beta:5->6)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 16,
+      "elapsed_s": 1490.5818098331802,
+      "E_current": 0.16384388359363083,
+      "delta_E_abs_current": 0.14718597723537172,
+      "delta_E_abs_best": 0.14718597723537172,
+      "max_grad": 0.05733125714073707
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1518.8055608328432,
+      "delta_E_abs_current": 0.1502867469460524,
+      "delta_E_abs_best": 0.14718597723537172,
+      "local_calls": 27
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1534.201428832952,
+      "delta_E_abs_current": 0.14721226123916212,
+      "delta_E_abs_best": 0.14718597723537172,
+      "local_calls": 53
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1549.5358615419827,
+      "delta_E_abs_current": 0.14719992440489088,
+      "delta_E_abs_best": 0.14718073884671248,
+      "local_calls": 79
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1564.7168030831963,
+      "delta_E_abs_current": 0.14696242488743402,
+      "delta_E_abs_best": 0.14694861873697612,
+      "local_calls": 105
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1580.2630131249316,
+      "delta_E_abs_current": 0.1468878291583467,
+      "delta_E_abs_best": 0.14688207826427777,
+      "local_calls": 131
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1595.446481499821,
+      "delta_E_abs_current": 0.14685968208109,
+      "delta_E_abs_best": 0.1468593825103,
+      "local_calls": 157
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1610.8277719579637,
+      "delta_E_abs_current": 0.14684841599415718,
+      "delta_E_abs_best": 0.14684841599415718,
+      "local_calls": 182
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1625.8375056250952,
+      "delta_E_abs_current": 0.14684571145062242,
+      "delta_E_abs_best": 0.146845416888661,
+      "local_calls": 206
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1641.3752020830289,
+      "delta_E_abs_current": 0.14684484110852788,
+      "delta_E_abs_best": 0.14684479032538186,
+      "local_calls": 231
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 16,
+      "elapsed_s": 1656.3856191672385,
+      "delta_E_abs_current": 0.1468443983484692,
+      "delta_E_abs_best": 0.14684422714174047,
+      "local_calls": 255
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_postopt",
+      "depth": 16,
+      "elapsed_s": 1667.0298198331147,
+      "E_after": 0.16350199362198015,
+      "delta_E_abs_current": 0.14684408726372103,
+      "delta_E_abs_best": 0.14684408726372103,
+      "delta_E_step": -0.00034188997165068846,
+      "max_grad": 0.05733125714073707,
+      "selected_label": "uccsd_ferm_lifted::uccsd_sing(alpha:1->2)"
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "depth_preopt",
+      "depth": 17,
+      "elapsed_s": 1667.0298227919266,
+      "E_current": 0.16350199362198015,
+      "delta_E_abs_current": 0.14684408726372103,
+      "delta_E_abs_best": 0.14684408726372103,
+      "max_grad": 0.05516153031811618
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1695.8261747499928,
+      "delta_E_abs_current": 0.28560554869014,
+      "delta_E_abs_best": 0.14684408726372103,
+      "local_calls": 25
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1711.3790958328173,
+      "delta_E_abs_current": 0.1460405197442108,
+      "delta_E_abs_best": 0.1458668664628988,
+      "local_calls": 49
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1726.9806415829808,
+      "delta_E_abs_current": 0.14578426908504716,
+      "delta_E_abs_best": 0.1457597325926586,
+      "local_calls": 73
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1742.2346907500178,
+      "delta_E_abs_current": 0.1456315741109343,
+      "delta_E_abs_best": 0.1456278641348304,
+      "local_calls": 96
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1757.6558697922155,
+      "delta_E_abs_current": 0.14555610914404613,
+      "delta_E_abs_best": 0.14555610914404613,
+      "local_calls": 120
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1772.6950517920777,
+      "delta_E_abs_current": 0.1454986631239887,
+      "delta_E_abs_best": 0.1454974040793363,
+      "local_calls": 143
+    },
+    {
+      "run_id": "B_medium",
+      "kind": "heartbeat",
+      "depth": 17,
+      "elapsed_s": 1787.92060341686,
+      "delta_E_abs_current": 0.14546595376042204,
+      "delta_E_abs_best": 0.14546418809238373,
+      "local_calls": 166
+    }
+  ],
+  "runtime_total_s": 41810.08201025007,
+  "comparisons": {
+    "probe_assessment": {
+      "A_probe": {
+        "assessable": true,
+        "probe_encouraging": true,
+        "delta_E_abs_initial": 0.21149705215977266,
+        "delta_E_abs_final": 0.14919159685749275,
+        "abs_drop": 0.062305455302279905,
+        "rel_drop": 0.2945925471113047,
+        "final_max_grad": 0.0627861621133821,
+        "min_required_drop": 0.02114970521597727
+      },
+      "B_probe": {
+        "assessable": true,
+        "probe_encouraging": true,
+        "delta_E_abs_initial": 0.21149705215977266,
+        "delta_E_abs_final": 0.15044075991300102,
+        "abs_drop": 0.06105629224677164,
+        "rel_drop": 0.28868625649045676,
+        "final_max_grad": 0.09248585393706331,
+        "min_required_drop": 0.02114970521597727
+      }
+    },
+    "A_vs_B_probe": {
+      "A_delta_E_abs": 0.14919159685749275,
+      "B_delta_E_abs": 0.15044075991300102,
+      "delta_diff_A_minus_B": -0.0012491630555082622
+    },
+    "A_vs_B_medium": {
+      "A_delta_E_abs": 0.14669182483946452,
+      "B_delta_E_abs": 0.14684408726372103,
+      "delta_diff_A_minus_B": -0.00015226242425650516
+    },
+    "medium_winner": {
+      "run_id": "A_medium",
+      "delta_E_abs": 0.14669182483946452
+    },
+    "medium_target_delta_abs": 0.001
+  },
+  "gates": {
+    "medium_target_delta_abs": 0.001,
+    "A_medium_pass": false,
+    "B_medium_pass": false
+  }
+}

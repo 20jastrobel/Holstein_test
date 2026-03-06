@@ -1,0 +1,79 @@
+{
+  "created_utc": "2026-03-02T02:02:32.133459+00:00",
+  "script": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/l3_hh_capacity_sweep.py",
+  "out_dir": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/l3_hh_capacity_sweep/L3_hh_capacity_full_20260302T020232Z",
+  "sector": [
+    2,
+    1
+  ],
+  "methods": [
+    "m1_hh_hva",
+    "m3_adapt_paop_std",
+    "m4_adapt_paop_lf_std"
+  ],
+  "scout_configs": [
+    "interleaved,periodic,binary",
+    "blocked,open,binary"
+  ],
+  "scout_seeds": [
+    101
+  ],
+  "ladder_seeds": [
+    101,
+    102
+  ],
+  "extra_ladder_seeds": [
+    103,
+    104,
+    105
+  ],
+  "physics": {
+    "L": 3,
+    "problem": "hh",
+    "t": 1.0,
+    "U": 2.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "n_ph_max": 1
+  },
+  "knobs": {
+    "vqe_restarts": 5,
+    "vqe_method": "COBYLA",
+    "hva_reps_ladder": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "hva_maxiter_ladder": [
+      3000,
+      4500,
+      6000,
+      6000
+    ],
+    "adapt_max_depth_ladder": [
+      80,
+      120,
+      160,
+      160
+    ],
+    "adapt_maxiter_ladder": [
+      3000,
+      3000,
+      3000,
+      4500
+    ],
+    "adapt_eps_grad": 1e-06,
+    "adapt_eps_energy": 1e-08,
+    "adapt_allow_repeats": true,
+    "paop_r": 1,
+    "paop_prune_eps": 0.0,
+    "paop_normalization": "none",
+    "vqe_cap_s": 900,
+    "adapt_cap_s": 1200,
+    "stall_improve_eps": 0.01,
+    "stall_time_gain_eps": 0.005,
+    "success_delta": 0.001
+  }
+}

@@ -1,0 +1,447 @@
+{
+  "schema": "cfqm_qproc_proxy_v1",
+  "generated_utc": "2026-03-03T03:26:51.866428+00:00",
+  "settings": {
+    "problem": "hubbard",
+    "L": 2,
+    "t": 1.0,
+    "u": 4.0,
+    "dv": 0.0,
+    "boundary": "periodic",
+    "ordering": "blocked",
+    "t_final": 1.0,
+    "num_times": 9,
+    "methods": [
+      "suzuki2",
+      "cfqm4",
+      "cfqm6"
+    ],
+    "steps_grid": [
+      16,
+      32
+    ],
+    "reference_steps": 64,
+    "active_coeff_tol": 1e-14,
+    "drive_enabled": false,
+    "drive": {
+      "A": 0.2,
+      "omega": 1.0,
+      "tbar": 1.0,
+      "phi": 0.0,
+      "t0": 0.0,
+      "pattern": "staggered",
+      "custom_s": null,
+      "include_identity": false,
+      "time_sampling": "midpoint"
+    },
+    "cfqm_stage_exp_profile": "pauli_suzuki2",
+    "note": "CFQM runs use pauli_suzuki2 stage exponentials for hardware-comparable termwise gate proxy accounting.",
+    "compare_policy": "cost_match",
+    "cost_match_metric": "term_exp_count_total",
+    "cost_match_tolerance": 0.0,
+    "output_pdf": "artifacts/cfqm_benchmark/quick_cost_match_term_plot.pdf",
+    "skip_pdf": false
+  },
+  "reference": {
+    "propagator": "piecewise_exact",
+    "trotter_steps": 64,
+    "final_energy_total_trotter": -1.0000000000000002
+  },
+  "runs": [
+    {
+      "method": "suzuki2",
+      "trotter_steps": 16,
+      "final_abs_energy_error": 5.385082101794225e-06,
+      "max_abs_energy_error": 5.385082101794225e-06,
+      "final_energy_total_trotter": -0.9999946149178984,
+      "reference_final_energy_total_trotter": -1.0000000000000002,
+      "term_exp_count_total": 352,
+      "cx_proxy_total": 384,
+      "sq_proxy_total": 864,
+      "run_runtime_s": 2.477773957885802,
+      "propagator": "suzuki2",
+      "drive_enabled": false
+    },
+    {
+      "method": "suzuki2",
+      "trotter_steps": 32,
+      "final_abs_energy_error": 3.373689614338815e-07,
+      "max_abs_energy_error": 3.373689614338815e-07,
+      "final_energy_total_trotter": -0.9999996626310388,
+      "reference_final_energy_total_trotter": -1.0000000000000002,
+      "term_exp_count_total": 704,
+      "cx_proxy_total": 768,
+      "sq_proxy_total": 1728,
+      "run_runtime_s": 2.4359802920371294,
+      "propagator": "suzuki2",
+      "drive_enabled": false
+    },
+    {
+      "method": "cfqm4",
+      "trotter_steps": 16,
+      "final_abs_energy_error": 3.3736900784120394e-07,
+      "max_abs_energy_error": 3.3736900784120394e-07,
+      "final_energy_total_trotter": -0.9999996626309924,
+      "reference_final_energy_total_trotter": -1.0000000000000002,
+      "term_exp_count_total": 704,
+      "cx_proxy_total": 768,
+      "sq_proxy_total": 1728,
+      "run_runtime_s": 2.5442800419405103,
+      "propagator": "cfqm4",
+      "drive_enabled": false
+    },
+    {
+      "method": "cfqm4",
+      "trotter_steps": 32,
+      "final_abs_energy_error": 2.109818986184564e-08,
+      "max_abs_energy_error": 2.109818986184564e-08,
+      "final_energy_total_trotter": -0.9999999789018104,
+      "reference_final_energy_total_trotter": -1.0000000000000002,
+      "term_exp_count_total": 1408,
+      "cx_proxy_total": 1536,
+      "sq_proxy_total": 3456,
+      "run_runtime_s": 2.828854124993086,
+      "propagator": "cfqm4",
+      "drive_enabled": false
+    },
+    {
+      "method": "cfqm6",
+      "trotter_steps": 16,
+      "final_abs_energy_error": 7.109786626102732e-08,
+      "max_abs_energy_error": 7.109786626102732e-08,
+      "final_energy_total_trotter": -0.999999928902134,
+      "reference_final_energy_total_trotter": -1.0000000000000002,
+      "term_exp_count_total": 1760,
+      "cx_proxy_total": 1920,
+      "sq_proxy_total": 4320,
+      "run_runtime_s": 2.7952946671284735,
+      "propagator": "cfqm6",
+      "drive_enabled": false
+    },
+    {
+      "method": "cfqm6",
+      "trotter_steps": 32,
+      "final_abs_energy_error": 4.44307346469941e-09,
+      "max_abs_energy_error": 4.44307346469941e-09,
+      "final_energy_total_trotter": -0.9999999955569268,
+      "reference_final_energy_total_trotter": -1.0000000000000002,
+      "term_exp_count_total": 3520,
+      "cx_proxy_total": 3840,
+      "sq_proxy_total": 8640,
+      "run_runtime_s": 3.1476235827431083,
+      "propagator": "cfqm6",
+      "drive_enabled": false
+    }
+  ],
+  "summary": {
+    "pareto_front": [
+      {
+        "method": "suzuki2",
+        "trotter_steps": 16,
+        "cx_proxy_total": 384,
+        "term_exp_count_total": 352,
+        "final_abs_energy_error": 5.385082101794225e-06
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 32,
+        "cx_proxy_total": 768,
+        "term_exp_count_total": 704,
+        "final_abs_energy_error": 3.373689614338815e-07
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 32,
+        "cx_proxy_total": 1536,
+        "term_exp_count_total": 1408,
+        "final_abs_energy_error": 2.109818986184564e-08
+      },
+      {
+        "method": "cfqm6",
+        "trotter_steps": 32,
+        "cx_proxy_total": 3840,
+        "term_exp_count_total": 3520,
+        "final_abs_energy_error": 4.44307346469941e-09
+      }
+    ],
+    "ranking_by_error_then_cx": [
+      {
+        "method": "cfqm6",
+        "trotter_steps": 32,
+        "cx_proxy_total": 3840,
+        "term_exp_count_total": 3520,
+        "final_abs_energy_error": 4.44307346469941e-09
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 32,
+        "cx_proxy_total": 1536,
+        "term_exp_count_total": 1408,
+        "final_abs_energy_error": 2.109818986184564e-08
+      },
+      {
+        "method": "cfqm6",
+        "trotter_steps": 16,
+        "cx_proxy_total": 1920,
+        "term_exp_count_total": 1760,
+        "final_abs_energy_error": 7.109786626102732e-08
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 32,
+        "cx_proxy_total": 768,
+        "term_exp_count_total": 704,
+        "final_abs_energy_error": 3.373689614338815e-07
+      },
+      {
+        "method": "cfqm4",
+        "trotter_steps": 16,
+        "cx_proxy_total": 768,
+        "term_exp_count_total": 704,
+        "final_abs_energy_error": 3.3736900784120394e-07
+      },
+      {
+        "method": "suzuki2",
+        "trotter_steps": 16,
+        "cx_proxy_total": 384,
+        "term_exp_count_total": 352,
+        "final_abs_energy_error": 5.385082101794225e-06
+      }
+    ],
+    "best_by_budget": [
+      {
+        "cx_budget": 384,
+        "best_method": "suzuki2",
+        "best_steps": 16,
+        "best_final_abs_energy_error": 5.385082101794225e-06,
+        "best_cx_proxy_total": 384
+      },
+      {
+        "cx_budget": 768,
+        "best_method": "suzuki2",
+        "best_steps": 32,
+        "best_final_abs_energy_error": 3.373689614338815e-07,
+        "best_cx_proxy_total": 768
+      },
+      {
+        "cx_budget": 1536,
+        "best_method": "cfqm4",
+        "best_steps": 32,
+        "best_final_abs_energy_error": 2.109818986184564e-08,
+        "best_cx_proxy_total": 1536
+      },
+      {
+        "cx_budget": 1920,
+        "best_method": "cfqm4",
+        "best_steps": 32,
+        "best_final_abs_energy_error": 2.109818986184564e-08,
+        "best_cx_proxy_total": 1536
+      },
+      {
+        "cx_budget": 3840,
+        "best_method": "cfqm6",
+        "best_steps": 32,
+        "best_final_abs_energy_error": 4.44307346469941e-09,
+        "best_cx_proxy_total": 3840
+      }
+    ],
+    "cost_match": {
+      "enabled": true,
+      "metric": "term_exp_count_total",
+      "tolerance": 0.0,
+      "pairs": [
+        {
+          "metric": "term_exp_count_total",
+          "target_metric": 352.0,
+          "tolerance": 0.0,
+          "matched_rows": [
+            {
+              "method": "cfqm4",
+              "target_metric": 352.0,
+              "metric_delta": 352.0,
+              "exact_match": false,
+              "matched_trotter_steps": 16,
+              "matched_metric": 704.0,
+              "final_abs_energy_error": 3.3736900784120394e-07,
+              "run_runtime_s": 2.5442800419405103
+            },
+            {
+              "method": "cfqm6",
+              "target_metric": 352.0,
+              "metric_delta": 1408.0,
+              "exact_match": false,
+              "matched_trotter_steps": 16,
+              "matched_metric": 1760.0,
+              "final_abs_energy_error": 7.109786626102732e-08,
+              "run_runtime_s": 2.7952946671284735
+            },
+            {
+              "method": "suzuki2",
+              "target_metric": 352.0,
+              "metric_delta": 0.0,
+              "exact_match": true,
+              "matched_trotter_steps": 16,
+              "matched_metric": 352.0,
+              "final_abs_energy_error": 5.385082101794225e-06,
+              "run_runtime_s": 2.477773957885802
+            }
+          ]
+        },
+        {
+          "metric": "term_exp_count_total",
+          "target_metric": 704.0,
+          "tolerance": 0.0,
+          "matched_rows": [
+            {
+              "method": "cfqm4",
+              "target_metric": 704.0,
+              "metric_delta": 0.0,
+              "exact_match": true,
+              "matched_trotter_steps": 16,
+              "matched_metric": 704.0,
+              "final_abs_energy_error": 3.3736900784120394e-07,
+              "run_runtime_s": 2.5442800419405103
+            },
+            {
+              "method": "cfqm6",
+              "target_metric": 704.0,
+              "metric_delta": 1056.0,
+              "exact_match": false,
+              "matched_trotter_steps": 16,
+              "matched_metric": 1760.0,
+              "final_abs_energy_error": 7.109786626102732e-08,
+              "run_runtime_s": 2.7952946671284735
+            },
+            {
+              "method": "suzuki2",
+              "target_metric": 704.0,
+              "metric_delta": 0.0,
+              "exact_match": true,
+              "matched_trotter_steps": 32,
+              "matched_metric": 704.0,
+              "final_abs_energy_error": 3.373689614338815e-07,
+              "run_runtime_s": 2.4359802920371294
+            }
+          ]
+        },
+        {
+          "metric": "term_exp_count_total",
+          "target_metric": 1408.0,
+          "tolerance": 0.0,
+          "matched_rows": [
+            {
+              "method": "cfqm4",
+              "target_metric": 1408.0,
+              "metric_delta": 0.0,
+              "exact_match": true,
+              "matched_trotter_steps": 32,
+              "matched_metric": 1408.0,
+              "final_abs_energy_error": 2.109818986184564e-08,
+              "run_runtime_s": 2.828854124993086
+            },
+            {
+              "method": "cfqm6",
+              "target_metric": 1408.0,
+              "metric_delta": 352.0,
+              "exact_match": false,
+              "matched_trotter_steps": 16,
+              "matched_metric": 1760.0,
+              "final_abs_energy_error": 7.109786626102732e-08,
+              "run_runtime_s": 2.7952946671284735
+            },
+            {
+              "method": "suzuki2",
+              "target_metric": 1408.0,
+              "metric_delta": 704.0,
+              "exact_match": false,
+              "matched_trotter_steps": 32,
+              "matched_metric": 704.0,
+              "final_abs_energy_error": 3.373689614338815e-07,
+              "run_runtime_s": 2.4359802920371294
+            }
+          ]
+        },
+        {
+          "metric": "term_exp_count_total",
+          "target_metric": 1760.0,
+          "tolerance": 0.0,
+          "matched_rows": [
+            {
+              "method": "cfqm4",
+              "target_metric": 1760.0,
+              "metric_delta": 352.0,
+              "exact_match": false,
+              "matched_trotter_steps": 32,
+              "matched_metric": 1408.0,
+              "final_abs_energy_error": 2.109818986184564e-08,
+              "run_runtime_s": 2.828854124993086
+            },
+            {
+              "method": "cfqm6",
+              "target_metric": 1760.0,
+              "metric_delta": 0.0,
+              "exact_match": true,
+              "matched_trotter_steps": 16,
+              "matched_metric": 1760.0,
+              "final_abs_energy_error": 7.109786626102732e-08,
+              "run_runtime_s": 2.7952946671284735
+            },
+            {
+              "method": "suzuki2",
+              "target_metric": 1760.0,
+              "metric_delta": 1056.0,
+              "exact_match": false,
+              "matched_trotter_steps": 32,
+              "matched_metric": 704.0,
+              "final_abs_energy_error": 3.373689614338815e-07,
+              "run_runtime_s": 2.4359802920371294
+            }
+          ]
+        },
+        {
+          "metric": "term_exp_count_total",
+          "target_metric": 3520.0,
+          "tolerance": 0.0,
+          "matched_rows": [
+            {
+              "method": "cfqm4",
+              "target_metric": 3520.0,
+              "metric_delta": 2112.0,
+              "exact_match": false,
+              "matched_trotter_steps": 32,
+              "matched_metric": 1408.0,
+              "final_abs_energy_error": 2.109818986184564e-08,
+              "run_runtime_s": 2.828854124993086
+            },
+            {
+              "method": "cfqm6",
+              "target_metric": 3520.0,
+              "metric_delta": 0.0,
+              "exact_match": true,
+              "matched_trotter_steps": 32,
+              "matched_metric": 3520.0,
+              "final_abs_energy_error": 4.44307346469941e-09,
+              "run_runtime_s": 3.1476235827431083
+            },
+            {
+              "method": "suzuki2",
+              "target_metric": 3520.0,
+              "metric_delta": 2816.0,
+              "exact_match": false,
+              "matched_trotter_steps": 32,
+              "matched_metric": 704.0,
+              "final_abs_energy_error": 3.373689614338815e-07,
+              "run_runtime_s": 2.4359802920371294
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "calibration": {
+    "enabled": false,
+    "status": "skipped",
+    "reason": "--calibrate-transpile not enabled",
+    "samples": []
+  }
+}

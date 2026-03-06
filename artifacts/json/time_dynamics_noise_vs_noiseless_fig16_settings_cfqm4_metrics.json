@@ -1,0 +1,18 @@
+{
+  "method": "cfqm4",
+  "shots": {
+    "max_abs_delta": 0.19994021738722523,
+    "max_abs_delta_over_stderr": 199940217387225.22,
+    "mean_abs_delta_over_stderr": 150174154113531.53,
+    "points": 121,
+    "elapsed_s": 103.45570800080895
+  },
+  "aer_noise": {
+    "max_abs_delta": 4.0299352946251865,
+    "max_abs_delta_over_stderr": 4029935294625186.0,
+    "mean_abs_delta_over_stderr": 3746638688894792.0,
+    "points": 121,
+    "elapsed_s": 9043.624644625
+  },
+  "generated_at_utc": "2026-03-05T22:41:57Z"
+}

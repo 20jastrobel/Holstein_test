@@ -2,11 +2,11 @@
 
 Document path: `docs/LLM_RESEARCH_CONTEXT.md`  
 Repository root: `/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test`  
-Snapshot generated: `2026-03-04T04:16:35Z` (UTC)  
-Git branch at snapshot: `backup/pre-delete-20260221_213720`  
-Git short commit at snapshot: `1be683c`
+Volatile snapshot metadata and dirty-tree notes are intentionally isolated in **Appendix C**.
 
 This dossier is designed as an LLM-first handoff artifact for deep research and implementation planning. It prioritizes implementation truth, invariants, and concrete code anchors over abstract summaries.
+
+Status: reference/research context document (non-runbook). Execute commands from `pipelines/run_guide.md`, not from this dossier.
 
 ## Purpose and How to Use This with an LLM
 ### Why this exists
@@ -38,10 +38,14 @@ When statements conflict, this dossier treats sources in this order:
 
 | Priority | Source class | Reason |
 |---|---|---|
-| 1 | Runtime code in [`src/quantum`](../src/quantum) and [`pipelines/`](../pipelines) | Actual behavior comes from executable code. |
-| 2 | Tests in [`test/`](../test) | Enforced behavior and guardrails are best reflected in tests. |
-| 3 | Active runbook docs ([`pipelines/run_guide.md`](../pipelines/run_guide.md), [`AGENTS.md`](../AGENTS.md)) | These encode operational policy and constraints. |
-| 4 | Broader docs in [`docs/`](.) and [`reports/`](../reports) | Valuable context, but can lag current path names or scripts. |
+| 1 | [`AGENTS.md`](../AGENTS.md) | Primary policy authority for agent behavior. |
+| 2 | Active runbook docs ([`pipelines/run_guide.md`](../pipelines/run_guide.md)) | Canonical executable workflow contracts. |
+| 3 | Runtime code in [`src/quantum`](../src/quantum) and [`pipelines/`](../pipelines) | Current executable behavior. |
+| 4 | Tests in [`test/`](../test) | Enforced behavior and guardrails. |
+| 5 | Broader docs in [`docs/`](.) and [`reports/`](../reports) | Valuable context, but may lag current path names/scripts. |
+
+Conflict rule for this dossier:
+- If AGENTS policy and current code behavior diverge, stop and ask the user before proposing execution.
 
 ### Recommended workflow for deep-research LLM use
 
@@ -101,6 +105,7 @@ Primary onboarding index:
 - [`README.md`](../README.md)
 - [`AGENTS.md`](../AGENTS.md)
 - [`pipelines/run_guide.md`](../pipelines/run_guide.md)
+- [`docs/AGENT_CONTRACT_CHANGELOG.md`](../docs/AGENT_CONTRACT_CHANGELOG.md)
 - [`docs/repo_implementation_guide.md`](../docs/repo_implementation_guide.md)
 - [`docs/HH_IMPLEMENTATION_STATUS.md`](../docs/HH_IMPLEMENTATION_STATUS.md)
 
@@ -127,12 +132,7 @@ Based on current repository text and active docs:
 
 ### Reality note on script naming
 
-There is currently path-name drift between some policy docs and current filesystem script names.
-
-- AGENTS/run-guide references include older names like `run_L_drive_accurate.sh` and `run_scaling_preset_L2_L6.sh`.
-- Current scripts in [`pipelines/shell/`](../pipelines/shell) are `run_drive_accurate.sh` and `run_scaling_L2_L6.sh`.
-
-This dossier uses current on-disk names and captures aliases in staleness notes below.
+This dossier uses current on-disk script names by default. Legacy aliases are documented in **Appendix A** for back-compat references only.
 
 ## Non-Negotiable Conventions and Invariants
 
@@ -254,9 +254,9 @@ flowchart TB
 | Sequential HH robustness tooling | [`pipelines/exact_bench/hh_noise_robustness_seq_report.py`](../pipelines/exact_bench/hh_noise_robustness_seq_report.py), [`pipelines/exact_bench/hh_seq_transition_utils.py`](../pipelines/exact_bench/hh_seq_transition_utils.py), [`pipelines/shell/build_hh_noise_robustness_report.sh`](../pipelines/shell/build_hh_noise_robustness_report.sh) | Stage-transition diagnostics, Pool-B strict-union provenance, manifest-gated JSON/PDF outputs. |
 | Report rendering | [`reports/pdf_utils.py`](../reports/pdf_utils.py) | Shared PDF page and manifest rendering helpers. |
 
-### Staleness and alias notes (important)
+### Appendix A. Legacy alias map (non-canonical; back-compat only)
 
-The repo includes older references in some docs that point to paths not present in the current tree. Keep this mapping handy when consuming docs with an LLM.
+The repo includes older references in some docs that point to paths not present in the current tree. Use this map only to normalize legacy text; do not emit these legacy paths in new commands or plans.
 
 | Legacy reference observed | Current active path |
 |---|---|
@@ -748,7 +748,11 @@ Even with broad test coverage, several practical gaps remain for research-grade 
 - standardized artifact schema validation across all producer pipelines,
 - regularized acceptance thresholds for HH compare-like workflows if/when enabled.
 
-## WIP Snapshot from Current Dirty Tree
+## Appendix C. Volatile WIP Snapshot (time-bound, non-canonical)
+
+Snapshot generated: `2026-03-04T04:16:35Z` (UTC)  
+Git branch at snapshot: `backup/pre-delete-20260221_213720`  
+Git short commit at snapshot: `1be683c`
 
 Status basis for this section: current uncommitted and untracked files in working tree.
 

@@ -1,0 +1,74 @@
+[
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hh_L3_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  }
+]

@@ -1,0 +1,47 @@
+{
+  "schema": "hh_bench_metrics_v1",
+  "generated_utc": "2026-03-03T03:00:13.883238+00:00",
+  "row_count": 4,
+  "ok_row_count": 4,
+  "status_counts": {},
+  "runtime_s": {
+    "sum": 62.809779583942145,
+    "median": 15.76319364598021,
+    "max": 17.213392124976963
+  },
+  "depth_proxy": {
+    "min": 1,
+    "median": 1.0,
+    "max": 1
+  },
+  "delta_E_abs": {
+    "best": 4.496303659560811,
+    "median": 4.680577918611554
+  },
+  "method_best_delta": {
+    "A_probe": 4.864852177662299,
+    "A_medium": 4.864852177662299,
+    "B_probe": 4.496303659560811,
+    "B_medium": 4.496303659560811
+  },
+  "operator_family_counts": {
+    "adapt+uccsd+paop": 2,
+    "adapt+uccsd+paop+hva": 2
+  },
+  "pool_family_counts": {
+    "uccsd+paop": 2,
+    "uccsd+paop+hva": 2
+  },
+  "source_composition_proxy": {
+    "A_uccsd_plus_paop": {
+      "uccsd": 26,
+      "paop": 10,
+      "hva": 0
+    },
+    "B_uccsd_plus_paop_plus_hva": {
+      "uccsd": 26,
+      "paop": 10,
+      "hva": 18
+    }
+  }
+}

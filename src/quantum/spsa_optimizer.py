@@ -166,8 +166,16 @@ def spsa_minimize(
     iterates: list[np.ndarray] = []
 
     x_current = _clip_if_needed(x, lo, hi, project)
-    best_x_observed: Optional[np.ndarray] = None
-    best_y_observed = float("inf")
+
+    # Seed best-tracking with f(x0) so we never return worse than entry.
+    best_x_observed = np.array(x_current, copy=True)
+    best_y_observed = _aggregate_eval(
+        fun,
+        x_current,
+        eval_repeats=int(eval_repeats),
+        eval_agg=str(eval_agg),
+        nfev_counter=nfev_counter,
+    )
     nit = 0
 
     try:
@@ -236,15 +244,7 @@ def spsa_minimize(
                 nfev_counter=nfev_counter,
             )
         else:
-            if best_x_observed is None:
-                best_x_observed = np.array(x_current, copy=True)
-                best_y_observed = _aggregate_eval(
-                    fun,
-                    best_x_observed,
-                    eval_repeats=int(eval_repeats),
-                    eval_agg=str(eval_agg),
-                    nfev_counter=nfev_counter,
-                )
+            # best_x_observed is always seeded with f(x0), so never None here.
             x_out = np.array(best_x_observed, copy=True)
             fun_out = float(best_y_observed)
 

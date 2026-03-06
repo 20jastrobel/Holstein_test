@@ -1,0 +1,2 @@
+run_id,fix_id,rung_id,status,E_exact_sector,E_best,E_last,delta_E_abs,relative_error_abs,adapt_depth_reached,adapt_stop_reason,num_parameters,nfev_total,nit_total,runtime_total_s,N_sector_abs_err_sum,error
+fix1_warm_start_B,fix1_warm_start,B,ok,0.1586679041257264,0.16009705705530564,0.1601105752009453,0.001429152929579236,0.009007196114765553,69,wallclock_cap,69,28453,0,970.6014355421066,0.0,

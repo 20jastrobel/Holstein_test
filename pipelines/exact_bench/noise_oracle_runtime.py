@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -37,15 +37,84 @@ class OracleConfig:
     allow_aer_fallback: bool = True
     aer_fallback_mode: str = "sampler_shots"
     omp_shm_workaround: bool = True
+    mitigation: dict[str, Any] | str = "none"
+
+
+@dataclass(frozen=True)
+class MitigationConfig:
+    mode: str = "none"  # none | readout | zne | dd
+    zne_scales: tuple[float, ...] = ()
+    dd_sequence: str | None = None
 
 
 @dataclass(frozen=True)
 class OracleEstimate:
     mean: float
     std: float
+    stdev: float
+    stderr: float
     n_samples: int
     raw_values: list[float]
     aggregate: str
+
+
+_MITIGATION_MODES = {"none", "readout", "zne", "dd"}
+
+
+def _parse_zne_scales(raw: Any) -> list[float]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        tokens = [tok.strip() for tok in str(raw).split(",")]
+        vals = [tok for tok in tokens if tok]
+    elif isinstance(raw, Sequence):
+        vals = [str(v).strip() for v in list(raw)]
+        vals = [tok for tok in vals if tok]
+    else:
+        vals = [str(raw).strip()]
+    out: list[float] = []
+    for tok in vals:
+        value = float(tok)
+        if (not np.isfinite(value)) or (value <= 0.0):
+            raise ValueError(f"Invalid mitigation zne scale {tok!r}; expected finite > 0.")
+        out.append(float(value))
+    return out
+
+
+def normalize_mitigation_config(mitigation: Any) -> dict[str, Any]:
+    mode = "none"
+    zne_scales: list[float] = []
+    dd_sequence: str | None = None
+
+    if mitigation is None:
+        pass
+    elif isinstance(mitigation, MitigationConfig):
+        mode = str(mitigation.mode).strip().lower() or "none"
+        zne_scales = _parse_zne_scales(list(mitigation.zne_scales))
+        dd_sequence = None if mitigation.dd_sequence is None else str(mitigation.dd_sequence)
+    elif isinstance(mitigation, str):
+        mode = str(mitigation).strip().lower() or "none"
+    elif isinstance(mitigation, Mapping):
+        mode = str(mitigation.get("mode", mitigation.get("mitigation", "none"))).strip().lower() or "none"
+        zne_raw = mitigation.get("zne_scales", mitigation.get("zneScales", []))
+        zne_scales = _parse_zne_scales(zne_raw)
+        dd_raw = mitigation.get("dd_sequence", mitigation.get("ddSequence", None))
+        dd_sequence = None if dd_raw is None else str(dd_raw)
+    else:
+        raise ValueError(
+            "Unsupported mitigation config type; expected str, dict, MitigationConfig, or None."
+        )
+
+    if mode not in _MITIGATION_MODES:
+        raise ValueError(
+            f"Unsupported mitigation mode {mode!r}; expected one of {sorted(_MITIGATION_MODES)}."
+        )
+
+    return {
+        "mode": str(mode),
+        "zne_scales": [float(x) for x in zne_scales],
+        "dd_sequence": dd_sequence,
+    }
 
 
 @dataclass(frozen=True)
@@ -350,6 +419,7 @@ def _build_estimator(
     cfg: OracleConfig,
 ) -> tuple[Any, Any | None, NoiseBackendInfo]:
     mode = str(cfg.noise_mode).strip().lower()
+    mitigation_cfg = normalize_mitigation_config(getattr(cfg, "mitigation", "none"))
     if mode not in {"ideal", "shots", "aer_noise", "runtime"}:
         raise ValueError(f"Unsupported noise_mode: {mode}")
 
@@ -366,7 +436,7 @@ def _build_estimator(
             estimator_kind="qiskit.primitives.StatevectorEstimator",
             backend_name="statevector_simulator",
             using_fake_backend=False,
-            details={"shots": None},
+            details={"shots": None, "mitigation": dict(mitigation_cfg)},
         )
         return estimator, None, info
 
@@ -394,6 +464,7 @@ def _build_estimator(
             "fallback_mode": str(cfg.aer_fallback_mode),
             "fallback_reason": "",
             "env_workaround_applied": bool(cfg.omp_shm_workaround or env_workaround_applied),
+            "mitigation": dict(mitigation_cfg),
         }
 
         if mode == "aer_noise":
@@ -454,7 +525,7 @@ def _build_estimator(
             estimator_kind="qiskit_ibm_runtime.EstimatorV2",
             backend_name=str(cfg.backend_name),
             using_fake_backend=False,
-            details={"shots": int(cfg.shots)},
+            details={"shots": int(cfg.shots), "mitigation": dict(mitigation_cfg)},
         )
         return estimator, session, info
     except Exception as exc:
@@ -607,6 +678,7 @@ class ExpectationOracle:
             allow_aer_fallback=bool(config.allow_aer_fallback),
             aer_fallback_mode=str(config.aer_fallback_mode).strip().lower(),
             omp_shm_workaround=bool(config.omp_shm_workaround),
+            mitigation=normalize_mitigation_config(getattr(config, "mitigation", "none")),
         )
         if self.config.oracle_aggregate not in {"mean", "median"}:
             raise ValueError(
@@ -686,6 +758,7 @@ class ExpectationOracle:
         details["fallback_mode"] = str(self.config.aer_fallback_mode)
         details["fallback_reason"] = str(reason)
         details["env_workaround_applied"] = bool(self.config.omp_shm_workaround)
+        details["mitigation"] = normalize_mitigation_config(getattr(self.config, "mitigation", "none"))
         self.backend_info = NoiseBackendInfo(
             noise_mode=str(self.config.noise_mode),
             estimator_kind="qiskit.primitives.StatevectorSampler(fallback)",
@@ -718,7 +791,8 @@ class ExpectationOracle:
                     raise
 
         arr = np.asarray(vals, dtype=float)
-        std = float(np.std(arr, ddof=1)) if arr.size > 1 else 0.0
+        stdev = float(np.std(arr, ddof=1)) if arr.size > 1 else 0.0
+        stderr = float(stdev / np.sqrt(float(arr.size))) if arr.size > 0 else float("nan")
         if self.config.oracle_aggregate == "median":
             agg = float(np.median(arr))
         else:
@@ -726,7 +800,9 @@ class ExpectationOracle:
 
         return OracleEstimate(
             mean=agg,
-            std=std,
+            std=stdev,
+            stdev=stdev,
+            stderr=stderr,
             n_samples=int(arr.size),
             raw_values=[float(x) for x in arr.tolist()],
             aggregate=self.config.oracle_aggregate,

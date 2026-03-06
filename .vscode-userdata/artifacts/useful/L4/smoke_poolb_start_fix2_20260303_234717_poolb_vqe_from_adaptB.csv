@@ -1,0 +1,2 @@
+attempt_id,stage,delta_E_abs_best,relative_error_best,gate_pass,runtime_s,stop_reason,artifact_json,artifact_log
+smoke_poolb_start_fix2_20260303_234717,vqe_pool_b_from_adapt,6.702989596543002,402.3908798850708,False,9.69181508384645,Maximum number of function evaluations has been exceeded.,artifacts/useful/L4/smoke_poolb_start_fix2_20260303_234717_poolb_vqe_from_adaptB_state.json,artifacts/useful/L4/smoke_poolb_start_fix2_20260303_234717_poolb_vqe_from_adaptB.log

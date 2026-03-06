@@ -1,0 +1,4 @@
+[2026-03-04T05:46:31Z] Loading seed state from artifacts/useful/L4/l4_hh_seq_20260302_215706_resume_adaptB_20260303_111311_adapt_B_B_probe_checkpoint_state.json
+[2026-03-04T05:46:40Z] Pool-B fixed ansatz built: dedup=54 terms, npar=54
+[2026-03-04T05:46:40Z] Starting pool-B conventional VQE
+[2026-03-04T05:46:40Z] FATAL: vqe_minimize() got an unexpected keyword argument 'initial_point'

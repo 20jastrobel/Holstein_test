@@ -1,0 +1,191 @@
+{
+  "generated_utc": "2026-02-27T19:55:09.542747+00:00",
+  "description": "Hardcoded-first (HVA/UCCSD layer-wise) vs Qiskit Hubbard pipeline comparison.",
+  "l_values": [
+    2
+  ],
+  "thresholds": {
+    "ground_state_energy_abs_delta": 1e-08,
+    "fidelity_max_abs_delta": 0.0001,
+    "energy_static_trotter_max_abs_delta": 0.001,
+    "energy_total_trotter_max_abs_delta": 0.001,
+    "n_up_site0_trotter_max_abs_delta": 0.005,
+    "n_dn_site0_trotter_max_abs_delta": 0.005,
+    "doublon_trotter_max_abs_delta": 0.001
+  },
+  "requested_run_settings": {
+    "t": 1.0,
+    "u": 4.0,
+    "dv": 0.0,
+    "boundary": "periodic",
+    "ordering": "blocked",
+    "t_final": 20.0,
+    "num_times": 201,
+    "suzuki_order": 2,
+    "trotter_steps": 128,
+    "hardcoded_vqe_ansatzes": [
+      "uccsd"
+    ],
+    "primary_hardcoded_ansatz": "uccsd",
+    "initial_state_source": "vqe",
+    "skip_qpe": false,
+    "skip_pdf": false
+  },
+  "hardcoded_qiskit_import_isolation": {
+    "pass": true,
+    "qpe_adapter_range": {
+      "start_line": 636,
+      "end_line": 772
+    },
+    "qiskit_imports": [
+      {
+        "line": 670,
+        "module": "qiskit"
+      },
+      {
+        "line": 671,
+        "module": "qiskit.circuit.library"
+      },
+      {
+        "line": 672,
+        "module": "qiskit.primitives"
+      },
+      {
+        "line": 673,
+        "module": "qiskit.quantum_info"
+      },
+      {
+        "line": 674,
+        "module": "qiskit.synthesis"
+      },
+      {
+        "line": 675,
+        "module": "qiskit_algorithms"
+      },
+      {
+        "line": 676,
+        "module": "qiskit_algorithms.minimum_eigensolvers"
+      }
+    ],
+    "offending_imports": []
+  },
+  "results": [
+    {
+      "L": 2,
+      "pass": true,
+      "pass_by_ansatz": {
+        "uccsd": true
+      },
+      "primary_hardcoded_ansatz": "uccsd",
+      "metrics_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/artifacts/hva_uccsd_heavy/json/HvQ_L2_static_t1.0_U4.0_S128_metrics.json",
+      "comparison_pdf_by_ansatz": {
+        "uccsd": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/artifacts/hva_uccsd_heavy/pdf/HvQ_L2_static_t1.0_U4.0_S128.pdf"
+      },
+      "hardcoded_settings_by_ansatz": {
+        "uccsd": {
+          "L": 2,
+          "t": 1.0,
+          "u": 4.0,
+          "dv": 0.0,
+          "boundary": "periodic",
+          "ordering": "blocked",
+          "t_final": 20.0,
+          "num_times": 401,
+          "suzuki_order": 2,
+          "trotter_steps": 128,
+          "term_order": "sorted",
+          "vqe_ansatz": "uccsd",
+          "initial_state_source": "vqe",
+          "skip_qpe": true,
+          "fidelity_definition_short": "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
+          "fidelity_definition": "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector ground manifold selected by E <= E0 + tol.",
+          "fidelity_subspace_energy_tol": 1e-08,
+          "fidelity_reference_subspace": {
+            "sector": {
+              "n_up": 1,
+              "n_dn": 1
+            },
+            "ground_subspace_dimension": 1,
+            "selection_rule": "E <= E0 + tol"
+          },
+          "fidelity_reference_initial_state": "exact_static_ground_manifold_filtered_sector",
+          "fidelity_reference_sector": {
+            "n_up": 1,
+            "n_dn": 1
+          },
+          "fidelity_ansatz_initial_state": "vqe",
+          "trajectory_branches_definition": "exact_gs: exact/reference propagation from filtered-sector ground-state init; exact_ansatz: exact/reference propagation from ansatz initial state; trotter: Suzuki-Trotter propagation from ansatz initial state.",
+          "energy_observable_definition": "energy_static_exact is <psi_exact_gs_ref(t)|H_static|psi_exact_gs_ref(t)>. energy_static_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static|psi_exact_ansatz_ref(t)>. energy_static_trotter is <psi_ansatz_trot(t)|H_static|psi_ansatz_trot(t)>. energy_total_exact is <psi_exact_gs_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_gs_ref(t)>. energy_total_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_ansatz_ref(t)>. energy_total_trotter is <psi_ansatz_trot(t)|H_static + H_drive(drive_t0 + t)|psi_ansatz_trot(t)>. When drive is disabled, energy_total_* == energy_static_*. Drive sampling uses the same drive_t0 convention as propagation."
+        }
+      },
+      "qiskit_settings": {
+        "L": 2,
+        "t": 1.0,
+        "u": 4.0,
+        "dv": 0.0,
+        "boundary": "periodic",
+        "ordering": "blocked",
+        "t_final": 20.0,
+        "num_times": 401,
+        "suzuki_order": 2,
+        "trotter_steps": 128,
+        "term_order": "sorted",
+        "initial_state_source": "vqe",
+        "skip_qpe": true,
+        "fidelity_definition_short": "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
+        "fidelity_definition": "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector ground manifold selected by E <= E0 + tol.",
+        "fidelity_subspace_energy_tol": 1e-08,
+        "fidelity_reference_subspace": {
+          "sector": {
+            "n_up": 1,
+            "n_dn": 1
+          },
+          "ground_subspace_dimension": 1,
+          "selection_rule": "E <= E0 + tol"
+        },
+        "fidelity_reference_initial_state": "exact_static_ground_manifold_filtered_sector",
+        "fidelity_reference_sector": {
+          "n_up": 1,
+          "n_dn": 1
+        },
+        "fidelity_ansatz_initial_state": "vqe",
+        "energy_observable_definition": "energy_static_* measures <psi|H_static|psi>. energy_total_* measures <psi|H_static + H_drive(drive_t0 + t)|psi>. When drive is disabled, energy_total_* == energy_static_*. Drive sampling uses the same drive_t0 convention as propagation."
+      },
+      "ground_state_energy_abs_delta_by_ansatz": {
+        "uccsd": 0.0
+      },
+      "trajectory_max_abs_deltas_by_ansatz": {
+        "uccsd": {
+          "fidelity": 2.8422500056857203e-06,
+          "energy_static_trotter": 1.082351393510983e-05,
+          "n_up_site0_trotter": 0.00010255355056743021,
+          "n_dn_site0_trotter": 0.00010119637518690716,
+          "doublon_trotter": 3.213413730951409e-05
+        }
+      },
+      "vqe_sanity_by_ansatz": {
+        "uccsd": {
+          "hardcoded": {
+            "method_label": "hardcoded",
+            "energy": -0.8284271216811532,
+            "exact_filtered_energy": -0.8284271247461902,
+            "delta_energy_minus_exact_filtered": 3.065037001981352e-09,
+            "threshold": 1e-08,
+            "passes_lower_bound": true,
+            "reason": "ok"
+          },
+          "qiskit": {
+            "method_label": "qiskit",
+            "energy": -0.8284270941365909,
+            "exact_filtered_energy": -0.8284271247461897,
+            "delta_energy_minus_exact_filtered": 3.0609598855591e-08,
+            "threshold": 1e-08,
+            "passes_lower_bound": true,
+            "reason": "ok"
+          }
+        }
+      }
+    }
+  ],
+  "all_pass": true
+}

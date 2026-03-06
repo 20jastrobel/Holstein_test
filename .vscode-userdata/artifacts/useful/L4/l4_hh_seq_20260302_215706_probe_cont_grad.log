@@ -1,0 +1,19 @@
+[2026-03-03T04:29:48Z] CONT_CONFIG checkpoint=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_A_probe_checkpoint_state.json start_depth=9 E0=0.757500386835 |DeltaE0|=7.408425e-01 rel0=4.447393e+01
+[2026-03-03T04:29:48Z] GRAD_STOP_POLICY grad_floor=2.000000e-01 patience=3 abs_depth_min=12 max_additional_depth=80 maxiter=1778 eps_energy=1.0e-09
+[2026-03-03T04:29:57Z] A_probe_cont: depth 010 pre-opt |DeltaE|=7.408425e-01 best|DeltaE|=7.408425e-01 max|g|=2.586205e-01
+[2026-03-03T04:30:10Z] A_probe_cont: depth 010 post-opt |DeltaE|=7.366643e-01 best|DeltaE|=7.366643e-01 stepDeltaE=-4.178195e-03 max|g|=2.586205e-01
+[2026-03-03T04:30:20Z] A_probe_cont: depth 011 pre-opt |DeltaE|=7.366643e-01 best|DeltaE|=7.366643e-01 max|g|=2.098147e-01
+[2026-03-03T04:30:47Z] A_probe_cont: depth 011 post-opt |DeltaE|=7.148713e-01 best|DeltaE|=7.148713e-01 stepDeltaE=-2.179301e-02 max|g|=2.098147e-01
+[2026-03-03T04:30:56Z] A_probe_cont: depth 012 pre-opt |DeltaE|=7.148713e-01 best|DeltaE|=7.148713e-01 max|g|=2.925639e-01
+[2026-03-03T04:32:59Z] A_probe_cont: depth 012 post-opt |DeltaE|=7.135711e-01 best|DeltaE|=7.135711e-01 stepDeltaE=-1.300169e-03 max|g|=2.925639e-01
+[2026-03-03T04:33:08Z] A_probe_cont: depth 013 pre-opt |DeltaE|=7.135711e-01 best|DeltaE|=7.135711e-01 max|g|=2.023827e-01
+[2026-03-03T04:36:38Z] A_probe_cont: depth 013 post-opt |DeltaE|=7.131861e-01 best|DeltaE|=7.131861e-01 stepDeltaE=-3.850475e-04 max|g|=2.023827e-01
+[2026-03-03T04:36:47Z] A_probe_cont: depth 014 pre-opt |DeltaE|=7.131861e-01 best|DeltaE|=7.131861e-01 max|g|=1.226046e-01
+[2026-03-03T04:39:55Z] A_probe_cont: depth 014 post-opt |DeltaE|=7.129461e-01 best|DeltaE|=7.129461e-01 stepDeltaE=-2.400000e-04 max|g|=1.226046e-01
+[2026-03-03T04:40:04Z] A_probe_cont: depth 015 pre-opt |DeltaE|=7.129461e-01 best|DeltaE|=7.129461e-01 max|g|=1.209984e-01
+[2026-03-03T04:46:18Z] A_probe_cont: depth 015 post-opt |DeltaE|=7.115062e-01 best|DeltaE|=7.115062e-01 stepDeltaE=-1.439825e-03 max|g|=1.209984e-01
+[2026-03-03T04:46:28Z] A_probe_cont: depth 016 pre-opt |DeltaE|=7.115062e-01 best|DeltaE|=7.115062e-01 max|g|=9.884016e-02
+[2026-03-03T04:46:28Z] A_probe_cont: stop trigger grad_floor_patience(abs_depth>=12,floor=0.2,patience=3) tail_grad=[0.12260458758140239, 0.12099837420703224, 0.0988401643571559]
+[2026-03-03T04:46:28Z] CONT_DONE stop=grad_floor_patience(abs_depth>=12,floor=0.2,patience=3) depth_added=6 depth_final_abs=15 E_best=0.728164143084 |DeltaE|=7.115062e-01 rel=4.271282e+01 runtime_s=999.46
+[2026-03-03T04:46:28Z] WROTE JSON /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_cont_grad.json
+[2026-03-03T04:46:28Z] WROTE STATE FINAL /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_cont_grad_A_probe_state.json

@@ -8,7 +8,7 @@
 
 | File | Purpose |
 |------|---------|
-| `qiskit_baseline.py` | Qiskit-based Hubbard(-Holstein) VQE + Trotter baseline |
+| `qiskit_baseline.py` | Qiskit-based Hubbard VQE + Trotter baseline (HH is guard-rejected) |
 | `l2_dual_method.py` | L=2 VQE + exact dynamics, dual-method comparison |
 | `compare_hc_vs_qk.py` | Orchestrates hardcoded vs Qiskit side-by-side comparison |
 | `hf_circuit.py` | Qiskit `QuantumCircuit` builder for Hartree–Fock reference (dead code, preserved for reference) |

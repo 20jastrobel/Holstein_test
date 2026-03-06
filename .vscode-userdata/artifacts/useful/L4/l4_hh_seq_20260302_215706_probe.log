@@ -1,0 +1,101 @@
+[2026-03-03T03:57:07Z] CONFIG L=4 sector=(2,2) encoding=binary ordering=blocked boundary=open poolA=UCCSD+PAOP poolB=UCCSD+PAOP+HVA warm=hh_hva_ptw
+[2026-03-03T03:57:17Z] EXACT sector energy: 0.016657906358
+[2026-03-03T03:57:17Z] WARM restart 1/4 start elapsed_s=0.0 nfev_so_far=0
+[2026-03-03T03:58:18Z] WARM heartbeat restart 1/4 elapsed_s=60.4 nfev_so_far=62 |DeltaE|=5.758716e+00 best|DeltaE|=4.834927e+00
+[2026-03-03T03:58:18Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=4.851584839802 |DeltaE|=4.834927e+00
+[2026-03-03T03:59:18Z] WARM heartbeat restart 1/4 elapsed_s=120.8 nfev_so_far=123 |DeltaE|=4.433708e+00 best|DeltaE|=4.349057e+00
+[2026-03-03T03:59:19Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=4.365715177257 |DeltaE|=4.349057e+00
+[2026-03-03T04:00:19Z] WARM heartbeat restart 1/4 elapsed_s=181.7 nfev_so_far=181 |DeltaE|=4.050899e+00 best|DeltaE|=4.050899e+00
+[2026-03-03T04:00:20Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=4.067557279804 |DeltaE|=4.050899e+00
+[2026-03-03T04:01:20Z] WARM heartbeat restart 1/4 elapsed_s=242.4 nfev_so_far=241 |DeltaE|=3.637345e+00 best|DeltaE|=3.627386e+00
+[2026-03-03T04:01:20Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=3.644043533634 |DeltaE|=3.627386e+00
+[2026-03-03T04:02:20Z] WARM heartbeat restart 1/4 elapsed_s=302.8 nfev_so_far=301 |DeltaE|=3.202130e+00 best|DeltaE|=3.196090e+00
+[2026-03-03T04:02:21Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=3.212748113246 |DeltaE|=3.196090e+00
+[2026-03-03T04:03:21Z] WARM heartbeat restart 1/4 elapsed_s=363.5 nfev_so_far=360 |DeltaE|=2.630597e+00 best|DeltaE|=2.544116e+00
+[2026-03-03T04:03:21Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=2.560773882368 |DeltaE|=2.544116e+00
+[2026-03-03T04:04:21Z] WARM heartbeat restart 1/4 elapsed_s=423.9 nfev_so_far=418 |DeltaE|=2.532636e+00 best|DeltaE|=2.373629e+00
+[2026-03-03T04:04:22Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=2.390287166485 |DeltaE|=2.373629e+00
+[2026-03-03T04:05:21Z] WARM heartbeat restart 1/4 elapsed_s=484.2 nfev_so_far=477 |DeltaE|=2.226424e+00 best|DeltaE|=2.220513e+00
+[2026-03-03T04:05:22Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=2.237170523827 |DeltaE|=2.220513e+00
+[2026-03-03T04:06:22Z] WARM heartbeat restart 1/4 elapsed_s=544.5 nfev_so_far=534 |DeltaE|=1.786491e+00 best|DeltaE|=1.745860e+00
+[2026-03-03T04:06:22Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=1.762518243683 |DeltaE|=1.745860e+00
+[2026-03-03T04:07:22Z] WARM heartbeat restart 1/4 elapsed_s=605.1 nfev_so_far=592 |DeltaE|=1.450745e+00 best|DeltaE|=1.437522e+00
+[2026-03-03T04:07:23Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=1.454180037394 |DeltaE|=1.437522e+00
+[2026-03-03T04:08:23Z] WARM heartbeat restart 1/4 elapsed_s=665.7 nfev_so_far=651 |DeltaE|=1.251016e+00 best|DeltaE|=1.231923e+00
+[2026-03-03T04:08:24Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=1.248580867924 |DeltaE|=1.231923e+00
+[2026-03-03T04:09:23Z] WARM heartbeat restart 1/4 elapsed_s=726.0 nfev_so_far=710 |DeltaE|=1.027454e+00 best|DeltaE|=1.027454e+00
+[2026-03-03T04:09:24Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=1.044111489755 |DeltaE|=1.027454e+00
+[2026-03-03T04:10:24Z] WARM heartbeat restart 1/4 elapsed_s=786.4 nfev_so_far=769 |DeltaE|=1.047918e+00 best|DeltaE|=9.757688e-01
+[2026-03-03T04:10:25Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=0.992426736120 |DeltaE|=9.757688e-01
+[2026-03-03T04:11:24Z] WARM heartbeat restart 1/4 elapsed_s=846.4 nfev_so_far=828 |DeltaE|=9.387743e-01 best|DeltaE|=9.233874e-01
+[2026-03-03T04:11:24Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=0.940045306129 |DeltaE|=9.233874e-01
+[2026-03-03T04:12:24Z] WARM heartbeat restart 1/4 elapsed_s=906.6 nfev_so_far=886 |DeltaE|=8.911690e-01 best|DeltaE|=8.872090e-01
+[2026-03-03T04:12:25Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=0.903866947413 |DeltaE|=8.872090e-01
+[2026-03-03T04:13:24Z] WARM heartbeat restart 1/4 elapsed_s=967.2 nfev_so_far=946 |DeltaE|=8.770973e-01 best|DeltaE|=8.698590e-01
+[2026-03-03T04:13:24Z] WARM auto-cutoff trigger: slope=-4.433426e-04/s threshold=-5.000000e-04/s window=3 elapsed=967.2s ; stopping warm and continuing with best-so-far state.
+[2026-03-03T04:13:25Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=0.886516937204 |DeltaE|=8.698590e-01
+[2026-03-03T04:13:26Z] WARM restart 1/4 end elapsed_s=968.9 nfev_restart=947 best|DeltaE|=8.689374e-01
+[2026-03-03T04:13:27Z] STATE_EXPORT warm_checkpoint: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_checkpoint_state.json E=0.885595350855 |DeltaE|=8.689374e-01
+[2026-03-03T04:13:27Z] WARM run end elapsed_s=969.7 best_restart=1 nfev_total=947
+[2026-03-03T04:13:28Z] WARM done: E=0.885595350855 |DeltaE|=8.689374e-01 rel=5.216366e+01 reps=4 restarts=4 maxiter=1778 nfev=947 nit=0 runtime_s=970.55 heartbeat_events=22
+[2026-03-03T04:13:28Z] WARM stopped by automatic cutoff; continuing with best-so-far warm state.
+[2026-03-03T04:13:28Z] STATE_EXPORT warm: /Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_warm_state.json
+[2026-03-03T04:13:28Z] POOLS raw_sizes: uccsd=26 paop=10 hva=18 | A_dedup=36 B_dedup=54
+[2026-03-03T04:13:28Z] RUN_START A_probe
+[2026-03-03T04:13:28Z] A_probe: start | E0=0.885595350855 |DeltaE0|=8.689374e-01 depth_cap=54 maxiter=1778 wallclock_cap_s=1800
+[2026-03-03T04:13:36Z] A_probe: depth 001 pre-opt |DeltaE|=8.689374e-01 best|DeltaE|=8.689374e-01 max|g|=1.212580e+00
+[2026-03-03T04:13:41Z] A_probe: depth 001 post-opt |DeltaE|=8.585439e-01 best|DeltaE|=8.585439e-01 stepDeltaE=-1.039357e-02 max|g|=1.212580e+00
+[2026-03-03T04:13:50Z] A_probe: depth 002 pre-opt |DeltaE|=8.585439e-01 best|DeltaE|=8.585439e-01 max|g|=7.524052e-01
+[2026-03-03T04:13:58Z] A_probe: depth 002 post-opt |DeltaE|=8.503947e-01 best|DeltaE|=8.503947e-01 stepDeltaE=-8.149143e-03 max|g|=7.524052e-01
+[2026-03-03T04:14:07Z] A_probe: depth 003 pre-opt |DeltaE|=8.503947e-01 best|DeltaE|=8.503947e-01 max|g|=7.055182e-01
+[2026-03-03T04:14:20Z] A_probe: depth 003 post-opt |DeltaE|=8.404503e-01 best|DeltaE|=8.404503e-01 stepDeltaE=-9.944457e-03 max|g|=7.055182e-01
+[2026-03-03T04:14:29Z] A_probe: depth 004 pre-opt |DeltaE|=8.404503e-01 best|DeltaE|=8.404503e-01 max|g|=4.582323e-01
+[2026-03-03T04:14:45Z] A_probe: depth 004 heartbeat calls=43 |DeltaE|=8.223887e-01 best|DeltaE|=8.223887e-01
+[2026-03-03T04:15:00Z] A_probe: depth 004 heartbeat calls=85 |DeltaE|=8.214696e-01 best|DeltaE|=8.214696e-01
+[2026-03-03T04:15:09Z] A_probe: depth 004 post-opt |DeltaE|=8.214580e-01 best|DeltaE|=8.214580e-01 stepDeltaE=-1.899223e-02 max|g|=4.582323e-01
+[2026-03-03T04:15:18Z] A_probe: depth 005 pre-opt |DeltaE|=8.214580e-01 best|DeltaE|=8.214580e-01 max|g|=4.649921e-01
+[2026-03-03T04:15:34Z] A_probe: depth 005 heartbeat calls=40 |DeltaE|=8.053734e-01 best|DeltaE|=8.053734e-01
+[2026-03-03T04:15:49Z] A_probe: depth 005 heartbeat calls=79 |DeltaE|=8.003069e-01 best|DeltaE|=8.002722e-01
+[2026-03-03T04:16:04Z] A_probe: depth 005 heartbeat calls=120 |DeltaE|=8.001969e-01 best|DeltaE|=8.001966e-01
+[2026-03-03T04:16:10Z] A_probe: depth 005 post-opt |DeltaE|=8.001945e-01 best|DeltaE|=8.001945e-01 stepDeltaE=-2.126352e-02 max|g|=4.649921e-01
+[2026-03-03T04:16:19Z] A_probe: depth 006 pre-opt |DeltaE|=8.001945e-01 best|DeltaE|=8.001945e-01 max|g|=2.707896e-01
+[2026-03-03T04:16:35Z] A_probe: depth 006 heartbeat calls=40 |DeltaE|=7.957890e-01 best|DeltaE|=7.957890e-01
+[2026-03-03T04:16:50Z] A_probe: depth 006 heartbeat calls=78 |DeltaE|=7.932407e-01 best|DeltaE|=7.932033e-01
+[2026-03-03T04:17:05Z] A_probe: depth 006 heartbeat calls=117 |DeltaE|=7.929628e-01 best|DeltaE|=7.929607e-01
+[2026-03-03T04:17:21Z] A_probe: depth 006 heartbeat calls=157 |DeltaE|=7.929513e-01 best|DeltaE|=7.929512e-01
+[2026-03-03T04:17:21Z] A_probe: depth 006 post-opt |DeltaE|=7.929512e-01 best|DeltaE|=7.929512e-01 stepDeltaE=-7.243339e-03 max|g|=2.707896e-01
+[2026-03-03T04:17:30Z] A_probe: depth 007 pre-opt |DeltaE|=7.929512e-01 best|DeltaE|=7.929512e-01 max|g|=3.686286e-01
+[2026-03-03T04:17:46Z] A_probe: depth 007 heartbeat calls=38 |DeltaE|=7.808562e-01 best|DeltaE|=7.808562e-01
+[2026-03-03T04:18:01Z] A_probe: depth 007 heartbeat calls=76 |DeltaE|=7.685854e-01 best|DeltaE|=7.685854e-01
+[2026-03-03T04:18:16Z] A_probe: depth 007 heartbeat calls=115 |DeltaE|=7.647734e-01 best|DeltaE|=7.647734e-01
+[2026-03-03T04:18:31Z] A_probe: depth 007 heartbeat calls=153 |DeltaE|=7.638301e-01 best|DeltaE|=7.638257e-01
+[2026-03-03T04:18:47Z] A_probe: depth 007 heartbeat calls=190 |DeltaE|=7.633900e-01 best|DeltaE|=7.633737e-01
+[2026-03-03T04:19:02Z] A_probe: depth 007 heartbeat calls=228 |DeltaE|=7.631723e-01 best|DeltaE|=7.631718e-01
+[2026-03-03T04:19:17Z] A_probe: depth 007 heartbeat calls=267 |DeltaE|=7.630944e-01 best|DeltaE|=7.630944e-01
+[2026-03-03T04:19:32Z] A_probe: depth 007 heartbeat calls=305 |DeltaE|=7.630809e-01 best|DeltaE|=7.630809e-01
+[2026-03-03T04:19:48Z] A_probe: depth 007 heartbeat calls=342 |DeltaE|=7.630737e-01 best|DeltaE|=7.630737e-01
+[2026-03-03T04:19:55Z] A_probe: depth 007 post-opt |DeltaE|=7.630718e-01 best|DeltaE|=7.630718e-01 stepDeltaE=-2.987943e-02 max|g|=3.686286e-01
+[2026-03-03T04:20:04Z] A_probe: depth 008 pre-opt |DeltaE|=7.630718e-01 best|DeltaE|=7.630718e-01 max|g|=2.191884e-01
+[2026-03-03T04:20:19Z] A_probe: depth 008 heartbeat calls=39 |DeltaE|=7.613289e-01 best|DeltaE|=7.613177e-01
+[2026-03-03T04:20:35Z] A_probe: depth 008 heartbeat calls=78 |DeltaE|=7.546679e-01 best|DeltaE|=7.546679e-01
+[2026-03-03T04:20:50Z] A_probe: depth 008 heartbeat calls=115 |DeltaE|=7.530655e-01 best|DeltaE|=7.530655e-01
+[2026-03-03T04:21:05Z] A_probe: depth 008 heartbeat calls=154 |DeltaE|=7.525322e-01 best|DeltaE|=7.525322e-01
+[2026-03-03T04:21:20Z] A_probe: depth 008 heartbeat calls=192 |DeltaE|=7.524031e-01 best|DeltaE|=7.524031e-01
+[2026-03-03T04:21:35Z] A_probe: depth 008 heartbeat calls=229 |DeltaE|=7.523624e-01 best|DeltaE|=7.523577e-01
+[2026-03-03T04:21:51Z] A_probe: depth 008 heartbeat calls=265 |DeltaE|=7.523443e-01 best|DeltaE|=7.523441e-01
+[2026-03-03T04:22:05Z] A_probe: depth 008 post-opt |DeltaE|=7.523424e-01 best|DeltaE|=7.523424e-01 stepDeltaE=-1.072932e-02 max|g|=2.191884e-01
+[2026-03-03T04:22:13Z] A_probe: depth 009 pre-opt |DeltaE|=7.523424e-01 best|DeltaE|=7.523424e-01 max|g|=2.156491e-01
+[2026-03-03T04:22:29Z] A_probe: depth 009 heartbeat calls=37 |DeltaE|=7.538667e-01 best|DeltaE|=7.494253e-01
+[2026-03-03T04:22:44Z] A_probe: depth 009 heartbeat calls=73 |DeltaE|=7.425270e-01 best|DeltaE|=7.423462e-01
+[2026-03-03T04:22:59Z] A_probe: depth 009 heartbeat calls=109 |DeltaE|=7.414229e-01 best|DeltaE|=7.414130e-01
+[2026-03-03T04:23:15Z] A_probe: depth 009 heartbeat calls=145 |DeltaE|=7.410813e-01 best|DeltaE|=7.410813e-01
+[2026-03-03T04:23:30Z] A_probe: depth 009 heartbeat calls=181 |DeltaE|=7.409113e-01 best|DeltaE|=7.409113e-01
+[2026-03-03T04:23:45Z] A_probe: depth 009 heartbeat calls=216 |DeltaE|=7.408593e-01 best|DeltaE|=7.408593e-01
+[2026-03-03T04:24:00Z] A_probe: depth 009 heartbeat calls=250 |DeltaE|=7.408469e-01 best|DeltaE|=7.408468e-01
+[2026-03-03T04:24:15Z] A_probe: depth 009 heartbeat calls=286 |DeltaE|=7.408425e-01 best|DeltaE|=7.408425e-01
+[2026-03-03T04:24:18Z] A_probe: depth 009 post-opt |DeltaE|=7.408425e-01 best|DeltaE|=7.408425e-01 stepDeltaE=-1.149995e-02 max|g|=2.156491e-01
+[2026-03-03T04:24:27Z] A_probe: depth 010 pre-opt |DeltaE|=7.408425e-01 best|DeltaE|=7.408425e-01 max|g|=2.586205e-01
+[2026-03-03T04:24:43Z] A_probe: depth 010 heartbeat calls=33 |DeltaE|=7.409077e-01 best|DeltaE|=7.408425e-01
+[2026-03-03T04:24:58Z] A_probe: depth 010 heartbeat calls=65 |DeltaE|=7.369613e-01 best|DeltaE|=7.369548e-01
+[2026-03-03T04:25:14Z] A_probe: depth 010 heartbeat calls=98 |DeltaE|=7.366304e-01 best|DeltaE|=7.366248e-01
+[2026-03-03T04:25:29Z] A_probe: depth 010 heartbeat calls=131 |DeltaE|=7.365643e-01 best|DeltaE|=7.365631e-01

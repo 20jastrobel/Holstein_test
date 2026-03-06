@@ -1,0 +1,98 @@
+[
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0105182660521477
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 4.011244440424893
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": -0.7879895971906707
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": -0.6495027529158726
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0105185429490966
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 4.006884307696914
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 0.0
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.878543176386835
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.449199198964963
+  }
+]

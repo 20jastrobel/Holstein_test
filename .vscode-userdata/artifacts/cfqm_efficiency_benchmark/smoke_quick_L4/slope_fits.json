@@ -1,0 +1,146 @@
+[
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "final_infidelity",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_doublon_abs_err",
+    "slope": null
+  },
+  {
+    "scenario_id": "hubbard_L4",
+    "drive_case_id": "gauss_om2.0_tb0.50",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_energy_abs_err",
+    "slope": null
+  }
+]

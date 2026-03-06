@@ -1,0 +1,59 @@
+{
+  "created_utc": "2026-03-01T12:50:17.314895+00:00",
+  "script": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/overnight_l3_hh_four_method_benchmark.py",
+  "mode": "smoke",
+  "methods": [
+    "m1_hh_hva",
+    "m2_hh_hva_tw",
+    "m3_adapt_paop_std",
+    "m4_adapt_paop_lf_std"
+  ],
+  "sectors": [
+    [
+      2,
+      1
+    ],
+    [
+      1,
+      1
+    ]
+  ],
+  "ordering_boundary": [
+    [
+      "interleaved",
+      "periodic"
+    ]
+  ],
+  "boson_encodings": [
+    "unary"
+  ],
+  "seeds": [
+    101,
+    102,
+    103,
+    104,
+    105
+  ],
+  "physics": {
+    "L": 3,
+    "problem": "hh",
+    "t": 1.0,
+    "U": 2.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "n_ph_max": 1
+  },
+  "knobs": {
+    "vqe_reps": 2,
+    "vqe_restarts": 5,
+    "vqe_maxiter": 3000,
+    "vqe_method": "COBYLA",
+    "adapt_max_depth": 80,
+    "adapt_eps_grad": 1e-06,
+    "adapt_eps_energy": 1e-08,
+    "adapt_maxiter": 3000,
+    "vqe_cap_s": 300,
+    "adapt_cap_s": 420
+  }
+}

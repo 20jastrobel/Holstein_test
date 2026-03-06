@@ -1,0 +1,38 @@
+[2026-03-03T02:58:21Z] CONFIG L=4 sector=(2,2) encoding=binary ordering=blocked boundary=open poolA=UCCSD+PAOP poolB=UCCSD+PAOP+HVA warm=hh_hva_ptw
+[2026-03-03T02:58:29Z] EXACT sector energy: 0.016657906358
+[2026-03-03T02:58:29Z] WARM restart 1/1 start elapsed_s=0.0 nfev_so_far=0
+[2026-03-03T02:59:00Z] WARM heartbeat restart 1/1 elapsed_s=30.1 nfev_so_far=30 |DeltaE|=5.090355e+00 best|DeltaE|=5.090355e+00
+[2026-03-03T02:59:10Z] WARM restart 1/1 end elapsed_s=40.1 nfev_restart=40 best|DeltaE|=4.890815e+00
+[2026-03-03T02:59:10Z] WARM run end elapsed_s=40.1 best_restart=1 nfev_total=40
+[2026-03-03T02:59:10Z] WARM done: E=4.907472573819 |DeltaE|=4.890815e+00 rel=2.936032e+02 reps=4 restarts=1 maxiter=40 nfev=40 nit=0 runtime_s=40.85 heartbeat_events=5
+[2026-03-03T02:59:10Z] STATE_EXPORT warm: artifacts/useful/L4/smoke_state_export_warm_state.json
+[2026-03-03T02:59:10Z] POOLS raw_sizes: uccsd=26 paop=10 hva=18 | A_dedup=36 B_dedup=54
+[2026-03-03T02:59:10Z] RUN_START A_probe
+[2026-03-03T02:59:11Z] A_probe: start | E0=4.907472573819 |DeltaE0|=4.890815e+00 depth_cap=1 maxiter=40 wallclock_cap_s=60
+[2026-03-03T02:59:19Z] A_probe: depth 001 pre-opt |DeltaE|=4.890815e+00 best|DeltaE|=4.890815e+00 max|g|=1.062353e+00
+[2026-03-03T02:59:24Z] A_probe: depth 001 post-opt |DeltaE|=4.864852e+00 best|DeltaE|=4.864852e+00 stepDeltaE=-2.596249e-02 max|g|=1.062353e+00
+[2026-03-03T02:59:24Z] STATE_EXPORT A_probe: artifacts/useful/L4/smoke_state_export_A_probe_state.json
+[2026-03-03T02:59:24Z] RUN_DONE A_probe: E_best=4.881510084021 |DeltaE|=4.864852e+00 rel=2.920446e+02 depth=1 stop=max_depth nfev=21 runtime_s=14.07
+[2026-03-03T02:59:24Z] RUN_START A_medium
+[2026-03-03T02:59:25Z] A_medium: start | E0=4.907472573819 |DeltaE0|=4.890815e+00 depth_cap=1 maxiter=40 wallclock_cap_s=60
+[2026-03-03T02:59:34Z] A_medium: depth 001 pre-opt |DeltaE|=4.890815e+00 best|DeltaE|=4.890815e+00 max|g|=1.062353e+00
+[2026-03-03T02:59:39Z] A_medium: depth 001 post-opt |DeltaE|=4.864852e+00 best|DeltaE|=4.864852e+00 stepDeltaE=-2.596249e-02 max|g|=1.062353e+00
+[2026-03-03T02:59:39Z] STATE_EXPORT A_medium: artifacts/useful/L4/smoke_state_export_A_medium_state.json
+[2026-03-03T02:59:39Z] RUN_DONE A_medium: E_best=4.881510084021 |DeltaE|=4.864852e+00 rel=2.920446e+02 depth=1 stop=max_depth nfev=21 runtime_s=14.41
+[2026-03-03T02:59:39Z] RUN_START B_probe
+[2026-03-03T02:59:39Z] B_probe: start | E0=4.907472573819 |DeltaE0|=4.890815e+00 depth_cap=1 maxiter=40 wallclock_cap_s=60
+[2026-03-03T02:59:52Z] B_probe: depth 001 pre-opt |DeltaE|=4.890815e+00 best|DeltaE|=4.890815e+00 max|g|=3.380484e+00
+[2026-03-03T02:59:56Z] B_probe: depth 001 post-opt |DeltaE|=4.496304e+00 best|DeltaE|=4.496304e+00 stepDeltaE=-3.945110e-01 max|g|=3.380484e+00
+[2026-03-03T02:59:56Z] STATE_EXPORT B_probe: artifacts/useful/L4/smoke_state_export_B_probe_state.json
+[2026-03-03T02:59:56Z] RUN_DONE B_probe: E_best=4.512961565919 |DeltaE|=4.496304e+00 rel=2.699201e+02 depth=1 stop=max_depth nfev=20 runtime_s=17.21
+[2026-03-03T02:59:56Z] RUN_START B_medium
+[2026-03-03T02:59:56Z] B_medium: start | E0=4.907472573819 |DeltaE0|=4.890815e+00 depth_cap=1 maxiter=40 wallclock_cap_s=60
+[2026-03-03T03:00:09Z] B_medium: depth 001 pre-opt |DeltaE|=4.890815e+00 best|DeltaE|=4.890815e+00 max|g|=3.380484e+00
+[2026-03-03T03:00:13Z] B_medium: depth 001 post-opt |DeltaE|=4.496304e+00 best|DeltaE|=4.496304e+00 stepDeltaE=-3.945110e-01 max|g|=3.380484e+00
+[2026-03-03T03:00:13Z] STATE_EXPORT B_medium: artifacts/useful/L4/smoke_state_export_B_medium_state.json
+[2026-03-03T03:00:13Z] RUN_DONE B_medium: E_best=4.512961565919 |DeltaE|=4.496304e+00 rel=2.699201e+02 depth=1 stop=max_depth nfev=20 runtime_s=17.11
+[2026-03-03T03:00:13Z] WROTE JSON artifacts/useful/L4/smoke_state_export.json
+[2026-03-03T03:00:13Z] WROTE CSV  artifacts/useful/L4/smoke_state_export.csv
+[2026-03-03T03:00:13Z] WROTE MD   artifacts/useful/L4/smoke_state_export.md
+[2026-03-03T03:00:13Z] WROTE METRICS JSON artifacts/useful/L4/smoke_state_export_metrics_proxy.json
+[2026-03-03T03:00:13Z] WROTE METRICS CSV  artifacts/useful/L4/smoke_state_export_metrics_proxy.csv

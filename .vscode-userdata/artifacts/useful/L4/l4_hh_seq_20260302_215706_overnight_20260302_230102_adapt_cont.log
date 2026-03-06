@@ -1,0 +1,2 @@
+[2026-03-03T05:01:11Z] ADAPT_CONT_START state=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_cont_grad_A_probe_state.json start_depth=15 E0=0.728164143084 |DeltaE0|=7.115062e-01
+[2026-03-03T05:01:11Z] ADAPT_GRAD_STOP floor=2.000000e-02 patience=3 min_abs_depth=12 max_additional_depth=225

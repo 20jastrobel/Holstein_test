@@ -1,0 +1,218 @@
+[
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": -0.00036093884707190084
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9997372608252981
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.002179821749017
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 4.43406447488626e-09
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9992417674484357
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0003023657349503
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "final_infidelity",
+    "slope": 4.6180716103963766e-09
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9999640570348207
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0000149439940946
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": -0.002214850346315434
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9975395429836134
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0032339857367423
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 3.18770526233366e-06
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9986257253194044
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.9996793840595555
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "final_infidelity",
+    "slope": 3.1899556284624532e-06
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.000015539150537
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0001481188417944
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.0001759236417837389
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9991850583740252
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.001796237189239
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 3.3611008903622106e-15
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": -0.8134039667304116
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": -0.9870026594711263
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "final_infidelity",
+    "slope": 2.4274617541504852e-14
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_doublon_abs_err",
+    "slope": -1.439066559193538
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "gauss_om2.0_tb0.25",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm6",
+    "error_metric": "max_energy_abs_err",
+    "slope": -0.9835118772114356
+  }
+]

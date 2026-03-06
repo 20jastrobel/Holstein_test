@@ -1,0 +1,104 @@
+[2026-03-03T02:14:44Z] CONFIG L=4 sector=(2,2) encoding=binary ordering=blocked boundary=open poolA=UCCSD+PAOP poolB=UCCSD+PAOP+HVA warm=hh_hva_ptw
+[2026-03-03T02:14:53Z] EXACT sector energy: 0.016657906358
+[2026-03-03T02:14:53Z] WARM restart 1/1 start elapsed_s=0.0 nfev_so_far=0
+[2026-03-03T02:15:53Z] WARM heartbeat restart 1/1 elapsed_s=60.7 nfev_so_far=59 |DeltaE|=6.508417e+00 best|DeltaE|=4.834927e+00
+[2026-03-03T02:16:53Z] WARM heartbeat restart 1/1 elapsed_s=120.7 nfev_so_far=121 |DeltaE|=4.353063e+00 best|DeltaE|=4.349057e+00
+[2026-03-03T02:17:54Z] WARM heartbeat restart 1/1 elapsed_s=181.6 nfev_so_far=183 |DeltaE|=4.377347e+00 best|DeltaE|=3.948519e+00
+[2026-03-03T02:18:55Z] WARM heartbeat restart 1/1 elapsed_s=242.3 nfev_so_far=244 |DeltaE|=3.794919e+00 best|DeltaE|=3.605906e+00
+[2026-03-03T02:19:55Z] WARM heartbeat restart 1/1 elapsed_s=302.9 nfev_so_far=305 |DeltaE|=3.229999e+00 best|DeltaE|=3.179634e+00
+[2026-03-03T02:20:56Z] WARM heartbeat restart 1/1 elapsed_s=363.4 nfev_so_far=367 |DeltaE|=2.559378e+00 best|DeltaE|=2.536807e+00
+[2026-03-03T02:21:30Z] WARM restart 1/1 end elapsed_s=397.9 nfev_restart=400 best|DeltaE|=2.406755e+00
+[2026-03-03T02:21:30Z] WARM run end elapsed_s=397.9 best_restart=1 nfev_total=400
+[2026-03-03T02:21:31Z] WARM done: E=2.423412937618 |DeltaE|=2.406755e+00 rel=1.444812e+02 reps=4 restarts=1 maxiter=400 nfev=400 nit=0 runtime_s=398.71 heartbeat_events=10
+[2026-03-03T02:21:31Z] POOLS raw_sizes: uccsd=26 paop=10 hva=18 | A_dedup=36 B_dedup=54
+[2026-03-03T02:21:31Z] RUN_START A_probe
+[2026-03-03T02:21:32Z] A_probe: start | E0=2.423412937618 |DeltaE0|=2.406755e+00 depth_cap=68 maxiter=3556 wallclock_cap_s=1800
+[2026-03-03T02:21:40Z] A_probe: depth 001 pre-opt |DeltaE|=2.406755e+00 best|DeltaE|=2.406755e+00 max|g|=9.053348e-01
+[2026-03-03T02:21:44Z] A_probe: depth 001 post-opt |DeltaE|=2.277786e+00 best|DeltaE|=2.277786e+00 stepDeltaE=-1.289693e-01 max|g|=9.053348e-01
+[2026-03-03T02:21:53Z] A_probe: depth 002 pre-opt |DeltaE|=2.277786e+00 best|DeltaE|=2.277786e+00 max|g|=9.203754e-01
+[2026-03-03T02:22:01Z] A_probe: depth 002 post-opt |DeltaE|=2.247343e+00 best|DeltaE|=2.247343e+00 stepDeltaE=-3.044274e-02 max|g|=9.203754e-01
+[2026-03-03T02:22:10Z] A_probe: depth 003 pre-opt |DeltaE|=2.247343e+00 best|DeltaE|=2.247343e+00 max|g|=8.177772e-01
+[2026-03-03T02:22:26Z] A_probe: depth 003 heartbeat calls=50 |DeltaE|=2.118200e+00 best|DeltaE|=2.118200e+00
+[2026-03-03T02:22:29Z] A_probe: depth 003 post-opt |DeltaE|=2.118199e+00 best|DeltaE|=2.118199e+00 stepDeltaE=-1.291438e-01 max|g|=8.177772e-01
+[2026-03-03T02:22:38Z] A_probe: depth 004 pre-opt |DeltaE|=2.118199e+00 best|DeltaE|=2.118199e+00 max|g|=8.248988e-01
+[2026-03-03T02:22:53Z] A_probe: depth 004 heartbeat calls=46 |DeltaE|=2.002884e+00 best|DeltaE|=2.002884e+00
+[2026-03-03T02:22:57Z] A_probe: depth 004 post-opt |DeltaE|=2.002884e+00 best|DeltaE|=2.002884e+00 stepDeltaE=-1.153150e-01 max|g|=8.248988e-01
+[2026-03-03T02:23:05Z] A_probe: depth 005 pre-opt |DeltaE|=2.002884e+00 best|DeltaE|=2.002884e+00 max|g|=8.692511e-01
+[2026-03-03T02:23:21Z] A_probe: depth 005 heartbeat calls=41 |DeltaE|=1.988598e+00 best|DeltaE|=1.988597e+00
+[2026-03-03T02:23:35Z] A_probe: depth 005 post-opt |DeltaE|=1.988557e+00 best|DeltaE|=1.988557e+00 stepDeltaE=-1.432747e-02 max|g|=8.692511e-01
+[2026-03-03T02:23:43Z] A_probe: depth 006 pre-opt |DeltaE|=1.988557e+00 best|DeltaE|=1.988557e+00 max|g|=6.922924e-01
+[2026-03-03T02:23:59Z] A_probe: depth 006 heartbeat calls=40 |DeltaE|=1.912458e+00 best|DeltaE|=1.912458e+00
+[2026-03-03T02:24:14Z] A_probe: depth 006 heartbeat calls=77 |DeltaE|=1.910549e+00 best|DeltaE|=1.910549e+00
+[2026-03-03T02:24:29Z] A_probe: depth 006 heartbeat calls=110 |DeltaE|=1.910500e+00 best|DeltaE|=1.910500e+00
+[2026-03-03T02:24:44Z] A_probe: depth 006 heartbeat calls=150 |DeltaE|=1.910492e+00 best|DeltaE|=1.910492e+00
+[2026-03-03T02:24:48Z] A_probe: depth 006 post-opt |DeltaE|=1.910492e+00 best|DeltaE|=1.910492e+00 stepDeltaE=-7.806469e-02 max|g|=6.922924e-01
+[2026-03-03T02:24:57Z] A_probe: depth 007 pre-opt |DeltaE|=1.910492e+00 best|DeltaE|=1.910492e+00 max|g|=7.542970e-01
+[2026-03-03T02:25:13Z] A_probe: depth 007 heartbeat calls=37 |DeltaE|=1.905567e+00 best|DeltaE|=1.905567e+00
+[2026-03-03T02:25:28Z] A_probe: depth 007 heartbeat calls=73 |DeltaE|=1.903395e+00 best|DeltaE|=1.903378e+00
+[2026-03-03T02:25:43Z] A_probe: depth 007 heartbeat calls=109 |DeltaE|=1.903211e+00 best|DeltaE|=1.903211e+00
+[2026-03-03T02:25:58Z] A_probe: depth 007 heartbeat calls=145 |DeltaE|=1.903177e+00 best|DeltaE|=1.903176e+00
+[2026-03-03T02:26:14Z] A_probe: depth 007 heartbeat calls=178 |DeltaE|=1.903172e+00 best|DeltaE|=1.903172e+00
+[2026-03-03T02:26:29Z] A_probe: depth 007 heartbeat calls=213 |DeltaE|=1.903170e+00 best|DeltaE|=1.903170e+00
+[2026-03-03T02:26:35Z] A_probe: depth 007 post-opt |DeltaE|=1.903170e+00 best|DeltaE|=1.903170e+00 stepDeltaE=-7.322012e-03 max|g|=7.542970e-01
+[2026-03-03T02:26:44Z] A_probe: depth 008 pre-opt |DeltaE|=1.903170e+00 best|DeltaE|=1.903170e+00 max|g|=5.933421e-01
+[2026-03-03T02:27:00Z] A_probe: depth 008 heartbeat calls=33 |DeltaE|=1.892570e+00 best|DeltaE|=1.892570e+00
+[2026-03-03T02:27:15Z] A_probe: depth 008 heartbeat calls=64 |DeltaE|=1.891885e+00 best|DeltaE|=1.891885e+00
+[2026-03-03T02:27:30Z] A_probe: depth 008 heartbeat calls=95 |DeltaE|=1.891844e+00 best|DeltaE|=1.891843e+00
+[2026-03-03T02:27:46Z] A_probe: depth 008 heartbeat calls=127 |DeltaE|=1.891832e+00 best|DeltaE|=1.891832e+00
+[2026-03-03T02:28:01Z] A_probe: depth 008 heartbeat calls=158 |DeltaE|=1.891829e+00 best|DeltaE|=1.891829e+00
+[2026-03-03T02:28:03Z] A_probe: depth 008 post-opt |DeltaE|=1.891829e+00 best|DeltaE|=1.891829e+00 stepDeltaE=-1.134077e-02 max|g|=5.933421e-01
+[2026-03-03T02:28:12Z] A_probe: depth 009 pre-opt |DeltaE|=1.891829e+00 best|DeltaE|=1.891829e+00 max|g|=4.985822e-01
+[2026-03-03T02:28:28Z] A_probe: depth 009 heartbeat calls=31 |DeltaE|=1.876681e+00 best|DeltaE|=1.876681e+00
+[2026-03-03T02:28:43Z] A_probe: depth 009 heartbeat calls=61 |DeltaE|=1.844093e+00 best|DeltaE|=1.843813e+00
+[2026-03-03T02:28:58Z] A_probe: depth 009 heartbeat calls=91 |DeltaE|=1.815476e+00 best|DeltaE|=1.815476e+00
+[2026-03-03T02:29:14Z] A_probe: depth 009 heartbeat calls=122 |DeltaE|=1.792138e+00 best|DeltaE|=1.792138e+00
+[2026-03-03T02:29:29Z] A_probe: depth 009 heartbeat calls=151 |DeltaE|=1.776069e+00 best|DeltaE|=1.775951e+00
+[2026-03-03T02:29:44Z] A_probe: depth 009 heartbeat calls=182 |DeltaE|=1.761409e+00 best|DeltaE|=1.760357e+00
+[2026-03-03T02:30:00Z] A_probe: depth 009 heartbeat calls=213 |DeltaE|=1.747703e+00 best|DeltaE|=1.747699e+00
+[2026-03-03T02:30:15Z] A_probe: depth 009 heartbeat calls=240 |DeltaE|=1.738746e+00 best|DeltaE|=1.738746e+00
+[2026-03-03T02:30:30Z] A_probe: depth 009 heartbeat calls=271 |DeltaE|=1.728839e+00 best|DeltaE|=1.728336e+00
+[2026-03-03T02:30:45Z] A_probe: depth 009 heartbeat calls=302 |DeltaE|=1.721420e+00 best|DeltaE|=1.721420e+00
+[2026-03-03T02:31:01Z] A_probe: depth 009 heartbeat calls=332 |DeltaE|=1.715023e+00 best|DeltaE|=1.714889e+00
+[2026-03-03T02:31:16Z] A_probe: depth 009 heartbeat calls=362 |DeltaE|=1.710616e+00 best|DeltaE|=1.710616e+00
+[2026-03-03T02:31:31Z] A_probe: depth 009 heartbeat calls=392 |DeltaE|=1.707260e+00 best|DeltaE|=1.707260e+00
+[2026-03-03T02:31:46Z] A_probe: depth 009 heartbeat calls=422 |DeltaE|=1.703812e+00 best|DeltaE|=1.703812e+00
+[2026-03-03T02:32:02Z] A_probe: depth 009 heartbeat calls=453 |DeltaE|=1.701227e+00 best|DeltaE|=1.701057e+00
+[2026-03-03T02:32:17Z] A_probe: depth 009 heartbeat calls=482 |DeltaE|=1.698935e+00 best|DeltaE|=1.698891e+00
+[2026-03-03T02:32:32Z] A_probe: depth 009 heartbeat calls=513 |DeltaE|=1.697323e+00 best|DeltaE|=1.697323e+00
+[2026-03-03T02:32:47Z] A_probe: depth 009 heartbeat calls=544 |DeltaE|=1.695981e+00 best|DeltaE|=1.695981e+00
+[2026-03-03T02:33:03Z] A_probe: depth 009 heartbeat calls=574 |DeltaE|=1.694951e+00 best|DeltaE|=1.694951e+00
+[2026-03-03T02:33:18Z] A_probe: depth 009 heartbeat calls=604 |DeltaE|=1.694217e+00 best|DeltaE|=1.694217e+00
+[2026-03-03T02:33:34Z] A_probe: depth 009 heartbeat calls=635 |DeltaE|=1.693472e+00 best|DeltaE|=1.693472e+00
+[2026-03-03T02:33:49Z] A_probe: depth 009 heartbeat calls=666 |DeltaE|=1.692735e+00 best|DeltaE|=1.692735e+00
+[2026-03-03T02:34:04Z] A_probe: depth 009 heartbeat calls=693 |DeltaE|=1.692131e+00 best|DeltaE|=1.692112e+00
+[2026-03-03T02:34:20Z] A_probe: depth 009 heartbeat calls=723 |DeltaE|=1.691592e+00 best|DeltaE|=1.691592e+00
+[2026-03-03T02:34:35Z] A_probe: depth 009 heartbeat calls=754 |DeltaE|=1.691025e+00 best|DeltaE|=1.691025e+00
+[2026-03-03T02:34:50Z] A_probe: depth 009 heartbeat calls=784 |DeltaE|=1.690728e+00 best|DeltaE|=1.690728e+00
+[2026-03-03T02:35:05Z] A_probe: depth 009 heartbeat calls=815 |DeltaE|=1.690340e+00 best|DeltaE|=1.690340e+00
+[2026-03-03T02:35:21Z] A_probe: depth 009 heartbeat calls=845 |DeltaE|=1.690005e+00 best|DeltaE|=1.690005e+00
+[2026-03-03T02:35:36Z] A_probe: depth 009 heartbeat calls=876 |DeltaE|=1.689698e+00 best|DeltaE|=1.689698e+00
+[2026-03-03T02:35:51Z] A_probe: depth 009 heartbeat calls=906 |DeltaE|=1.689535e+00 best|DeltaE|=1.689531e+00
+[2026-03-03T02:38:40Z] A_probe: depth 009 heartbeat calls=926 |DeltaE|=1.689419e+00 best|DeltaE|=1.689416e+00
+[2026-03-03T02:38:55Z] A_probe: depth 009 heartbeat calls=954 |DeltaE|=1.689265e+00 best|DeltaE|=1.689265e+00
+[2026-03-03T02:39:10Z] A_probe: depth 009 heartbeat calls=984 |DeltaE|=1.689096e+00 best|DeltaE|=1.689096e+00
+[2026-03-03T02:39:26Z] A_probe: depth 009 heartbeat calls=1015 |DeltaE|=1.688980e+00 best|DeltaE|=1.688979e+00
+[2026-03-03T02:39:41Z] A_probe: depth 009 heartbeat calls=1045 |DeltaE|=1.688847e+00 best|DeltaE|=1.688847e+00
+[2026-03-03T02:39:56Z] A_probe: depth 009 heartbeat calls=1075 |DeltaE|=1.688728e+00 best|DeltaE|=1.688725e+00
+[2026-03-03T02:40:12Z] A_probe: depth 009 heartbeat calls=1106 |DeltaE|=1.688647e+00 best|DeltaE|=1.688645e+00
+[2026-03-03T02:40:27Z] A_probe: depth 009 heartbeat calls=1137 |DeltaE|=1.688598e+00 best|DeltaE|=1.688597e+00
+[2026-03-03T02:40:43Z] A_probe: depth 009 heartbeat calls=1167 |DeltaE|=1.688534e+00 best|DeltaE|=1.688534e+00
+[2026-03-03T02:40:58Z] A_probe: depth 009 heartbeat calls=1196 |DeltaE|=1.688487e+00 best|DeltaE|=1.688487e+00
+[2026-03-03T02:41:13Z] A_probe: depth 009 heartbeat calls=1226 |DeltaE|=1.688440e+00 best|DeltaE|=1.688440e+00
+[2026-03-03T02:41:29Z] A_probe: depth 009 heartbeat calls=1256 |DeltaE|=1.688407e+00 best|DeltaE|=1.688404e+00
+[2026-03-03T02:41:44Z] A_probe: depth 009 heartbeat calls=1285 |DeltaE|=1.688372e+00 best|DeltaE|=1.688372e+00
+[2026-03-03T02:41:59Z] A_probe: depth 009 heartbeat calls=1314 |DeltaE|=1.688342e+00 best|DeltaE|=1.688342e+00
+[2026-03-03T02:42:14Z] A_probe: depth 009 heartbeat calls=1343 |DeltaE|=1.688319e+00 best|DeltaE|=1.688319e+00
+[2026-03-03T02:42:29Z] A_probe: depth 009 heartbeat calls=1371 |DeltaE|=1.688298e+00 best|DeltaE|=1.688298e+00
+[2026-03-03T02:42:45Z] A_probe: depth 009 heartbeat calls=1401 |DeltaE|=1.688281e+00 best|DeltaE|=1.688279e+00
+[2026-03-03T02:43:00Z] A_probe: depth 009 heartbeat calls=1430 |DeltaE|=1.688268e+00 best|DeltaE|=1.688268e+00
+[2026-03-03T02:43:15Z] A_probe: depth 009 heartbeat calls=1459 |DeltaE|=1.688255e+00 best|DeltaE|=1.688255e+00
+[2026-03-03T02:43:30Z] A_probe: depth 009 heartbeat calls=1488 |DeltaE|=1.688246e+00 best|DeltaE|=1.688246e+00
+[2026-03-03T02:43:46Z] A_probe: depth 009 heartbeat calls=1517 |DeltaE|=1.688237e+00 best|DeltaE|=1.688237e+00
+[2026-03-03T02:44:01Z] A_probe: depth 009 heartbeat calls=1546 |DeltaE|=1.688229e+00 best|DeltaE|=1.688229e+00
+[2026-03-03T02:44:16Z] A_probe: depth 009 heartbeat calls=1576 |DeltaE|=1.688222e+00 best|DeltaE|=1.688222e+00
+[2026-03-03T02:44:32Z] A_probe: depth 009 heartbeat calls=1606 |DeltaE|=1.688216e+00 best|DeltaE|=1.688216e+00

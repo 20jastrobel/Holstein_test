@@ -1,0 +1,18 @@
+{
+  "method": "suzuki2",
+  "shots": {
+    "max_abs_delta": 0.22756063196277018,
+    "max_abs_delta_over_stderr": 227560631962770.16,
+    "mean_abs_delta_over_stderr": 129434624690203.86,
+    "points": 201,
+    "elapsed_s": 74.4408971676603
+  },
+  "aer_noise": {
+    "max_abs_delta": 3.680575378126437,
+    "max_abs_delta_over_stderr": 3680575378126436.5,
+    "mean_abs_delta_over_stderr": 3339796798942004.0,
+    "points": 121,
+    "elapsed_s": 1881.7762164995074
+  },
+  "generated_at_utc": "2026-03-05T22:41:57Z"
+}

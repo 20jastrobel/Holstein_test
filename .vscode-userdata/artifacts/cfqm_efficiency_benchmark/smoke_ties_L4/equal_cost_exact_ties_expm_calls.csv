@@ -1,0 +1,5 @@
+scenario_id,drive_case_id,track,axis,target_cost,method,stage_mode,trotter_steps,max_energy_abs_err,max_doublon_abs_err,final_infidelity
+hubbard_L4,gauss_om2.0_tb0.25,integrator_exact_sparse,expm_calls,256.0,cfqm4,exact_sparse,64,9.059419880941277e-14,2.0816681711721685e-15,1.0
+hubbard_L4,gauss_om2.0_tb0.25,integrator_exact_sparse,expm_calls,256.0,suzuki2,exact_sparse,128,5.006047628430821e-06,0.00022660911336393197,1.0
+hubbard_L4,gauss_om2.0_tb0.50,integrator_exact_sparse,expm_calls,256.0,cfqm4,exact_sparse,64,1.1386447340555605e-12,1.115496583992126e-13,1.0
+hubbard_L4,gauss_om2.0_tb0.50,integrator_exact_sparse,expm_calls,256.0,suzuki2,exact_sparse,128,5.0262325057559565e-06,0.00022660706084895454,1.0

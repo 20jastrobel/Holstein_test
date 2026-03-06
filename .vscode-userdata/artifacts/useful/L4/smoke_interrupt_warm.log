@@ -1,0 +1,29 @@
+[2026-03-03T03:30:11Z] CONFIG L=4 sector=(2,2) encoding=binary ordering=blocked boundary=open poolA=UCCSD+PAOP poolB=UCCSD+PAOP+HVA warm=hh_hva_ptw
+[2026-03-03T03:30:18Z] EXACT sector energy: 0.016657906358
+[2026-03-03T03:30:18Z] WARM restart 1/1 start elapsed_s=0.0 nfev_so_far=0
+[2026-03-03T03:30:24Z] WARM heartbeat restart 1/1 elapsed_s=6.0 nfev_so_far=6 |DeltaE|=8.420315e+00 best|DeltaE|=8.378170e+00
+[2026-03-03T03:30:25Z] STATE_EXPORT warm_checkpoint: artifacts/useful/L4/smoke_interrupt_warm_warm_checkpoint_state.json E=8.394827544797 |DeltaE|=8.378170e+00
+[2026-03-03T03:30:30Z] WARM heartbeat restart 1/1 elapsed_s=11.6 nfev_so_far=11 |DeltaE|=7.389860e+00 best|DeltaE|=7.389860e+00
+[2026-03-03T03:30:31Z] STATE_EXPORT warm_checkpoint: artifacts/useful/L4/smoke_interrupt_warm_warm_checkpoint_state.json E=7.406517747785 |DeltaE|=7.389860e+00
+[2026-03-03T03:30:36Z] WARM heartbeat restart 1/1 elapsed_s=17.2 nfev_so_far=16 |DeltaE|=7.375565e+00 best|DeltaE|=7.375565e+00
+[2026-03-03T03:30:37Z] STATE_EXPORT warm_checkpoint: artifacts/useful/L4/smoke_interrupt_warm_warm_checkpoint_state.json E=7.392223311626 |DeltaE|=7.375565e+00
+[2026-03-03T03:30:39Z] WARM restart 1/1 end elapsed_s=20.5 nfev_restart=17 best|DeltaE|=7.375565e+00
+[2026-03-03T03:30:39Z] WARM run end elapsed_s=20.5 best_restart=1 nfev_total=17
+[2026-03-03T03:30:40Z] WARM done: E=7.392223311626 |DeltaE|=7.375565e+00 rel=4.427667e+02 reps=4 restarts=1 maxiter=800 nfev=17 nit=0 runtime_s=21.31 heartbeat_events=8
+[2026-03-03T03:30:40Z] WARM interrupted by user; continuing with best-so-far warm state.
+[2026-03-03T03:30:40Z] STATE_EXPORT warm: artifacts/useful/L4/smoke_interrupt_warm_warm_state.json
+[2026-03-03T03:30:40Z] POOLS raw_sizes: uccsd=26 paop=10 hva=18 | A_dedup=36 B_dedup=54
+[2026-03-03T03:30:40Z] RUN_START A_probe
+[2026-03-03T03:30:40Z] A_probe: start | E0=7.392223311626 |DeltaE0|=7.375565e+00 depth_cap=1 maxiter=20 wallclock_cap_s=120
+[2026-03-03T03:30:49Z] A_probe: depth 001 pre-opt |DeltaE|=7.375565e+00 best|DeltaE|=7.375565e+00 max|g|=2.482686e+00
+[2026-03-03T03:30:53Z] A_probe: depth 001 post-opt |DeltaE|=6.808898e+00 best|DeltaE|=6.808898e+00 stepDeltaE=-5.666674e-01 max|g|=2.482686e+00
+[2026-03-03T03:30:53Z] STATE_EXPORT A_probe: artifacts/useful/L4/smoke_interrupt_warm_A_probe_state.json
+[2026-03-03T03:30:53Z] RUN_DONE A_probe: E_best=6.825555912355 |DeltaE|=6.808898e+00 rel=4.087487e+02 depth=1 stop=max_depth nfev=21 runtime_s=13.16
+[2026-03-03T03:30:53Z] RUN_START A_medium
+[2026-03-03T03:30:53Z] A_medium: start | E0=7.392223311626 |DeltaE0|=7.375565e+00 depth_cap=1 maxiter=20 wallclock_cap_s=120
+[2026-03-03T03:31:02Z] A_medium: depth 001 pre-opt |DeltaE|=7.375565e+00 best|DeltaE|=7.375565e+00 max|g|=2.482686e+00
+[2026-03-03T03:31:06Z] A_medium: depth 001 post-opt |DeltaE|=6.808898e+00 best|DeltaE|=6.808898e+00 stepDeltaE=-5.666674e-01 max|g|=2.482686e+00
+[2026-03-03T03:31:06Z] STATE_EXPORT A_medium: artifacts/useful/L4/smoke_interrupt_warm_A_medium_state.json
+[2026-03-03T03:31:06Z] RUN_DONE A_medium: E_best=6.825555912355 |DeltaE|=6.808898e+00 rel=4.087487e+02 depth=1 stop=max_depth nfev=21 runtime_s=13.17
+[2026-03-03T03:31:06Z] RUN_START B_probe
+[2026-03-03T03:31:06Z] B_probe: start | E0=7.392223311626 |DeltaE0|=7.375565e+00 depth_cap=1 maxiter=20 wallclock_cap_s=120

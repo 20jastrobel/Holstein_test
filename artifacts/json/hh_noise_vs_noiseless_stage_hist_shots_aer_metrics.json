@@ -1,0 +1,114 @@
+{
+  "source": "artifacts/json/hh_noise_robustness_L2_L2_hh_u2_g1_S64_N101.json",
+  "settings": {
+    "L": 2,
+    "disable_time_dynamics": true,
+    "shots": 2048,
+    "oracle_repeats": 4,
+    "oracle_aggregate": "mean",
+    "backend_name": "FakeManilaV2",
+    "use_fake_backend": true,
+    "mitigation": {
+      "mode": "none",
+      "zne_scales": [],
+      "dd_sequence": null
+    }
+  },
+  "inferred_reps": {
+    "warm_reps": 2,
+    "final_reps": 2
+  },
+  "stages": [
+    "HVA",
+    "ADAPT",
+    "VQE"
+  ],
+  "noiseless_energy": [
+    -0.23754237498715014,
+    -0.3788066499107535,
+    -0.37443057008639474
+  ],
+  "shots_energy_mean": [
+    -0.2021484375,
+    -0.34375,
+    -0.3603515625
+  ],
+  "shots_energy_stderr": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "aer_noise_energy_mean": [
+    0.44775390625,
+    1.681640625,
+    0.140625
+  ],
+  "aer_noise_energy_stderr": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "shots_delta_noisy_minus_noiseless": [
+    0.03539393748715014,
+    0.03505664991075352,
+    0.014079007586394743
+  ],
+  "aer_noise_delta_noisy_minus_noiseless": [
+    0.6852962812371501,
+    2.0604472749107536,
+    0.5150555700863948
+  ],
+  "backend_info": {
+    "shots": {
+      "noise_mode": "shots",
+      "backend_name": "aer_simulator",
+      "estimator_kind": "qiskit_aer.primitives.Estimator",
+      "details": {
+        "shots": 2048,
+        "aer_failed": false,
+        "fallback_used": false,
+        "fallback_mode": "sampler_shots",
+        "fallback_reason": "",
+        "env_workaround_applied": true,
+        "mitigation": {
+          "mode": "none",
+          "zne_scales": [],
+          "dd_sequence": null
+        }
+      }
+    },
+    "aer_noise": {
+      "noise_mode": "aer_noise",
+      "backend_name": "FakeManilaV2",
+      "estimator_kind": "qiskit_aer.primitives.Estimator",
+      "details": {
+        "shots": 2048,
+        "aer_failed": false,
+        "fallback_used": false,
+        "fallback_mode": "sampler_shots",
+        "fallback_reason": "",
+        "env_workaround_applied": true,
+        "mitigation": {
+          "mode": "none",
+          "zne_scales": [],
+          "dd_sequence": null
+        },
+        "noise_model_basis_gates": [
+          "cx",
+          "delay",
+          "for_loop",
+          "id",
+          "if_else",
+          "measure",
+          "reset",
+          "rz",
+          "switch_case",
+          "sx",
+          "x"
+        ]
+      }
+    }
+  },
+  "plot_png": "docs/hh_noise_vs_noiseless_stage_hist_shots_aer.png",
+  "plot_pdf": "docs/hh_noise_vs_noiseless_stage_hist_shots_aer.pdf"
+}

@@ -1,0 +1,146 @@
+[
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.00015230794750088018
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0003073045611686
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0004398112685986
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": -9.099229607552162e-08
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.9995262505090545
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om0.5_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0000021058743935
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 7.279683521714986e-05
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0002761726374176
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.000565895174506
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": 2.6750563162240436e-06
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 1.999687280712159
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om2.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 1.9995703764083876
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "final_infidelity",
+    "slope": 0.00020179032654817699
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0004186686474514
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "suzuki2",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.0006356138174786
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "final_infidelity",
+    "slope": -3.0435174461626516e-06
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_doublon_abs_err",
+    "slope": 2.0017506373813205
+  },
+  {
+    "scenario_id": "hh_L2_nb1",
+    "drive_case_id": "sin_om8.0_tb5.0",
+    "track": "integrator_exact_sparse",
+    "method": "cfqm4",
+    "error_metric": "max_energy_abs_err",
+    "slope": 2.005338200277778
+  }
+]

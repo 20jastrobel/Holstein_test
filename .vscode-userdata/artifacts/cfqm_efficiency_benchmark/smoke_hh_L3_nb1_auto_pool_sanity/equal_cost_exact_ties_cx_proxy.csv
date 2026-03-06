@@ -1,0 +1,4 @@
+scenario_id,drive_case_id,track,axis,target_cost,method,stage_mode,trotter_steps,max_energy_abs_err,max_doublon_abs_err,final_infidelity
+hh_L3_nb1,sin_om0.5_tb5.0,integrator_exact_sparse,cx_proxy,6400.0,suzuki2,exact_sparse,64,1.847113573205661e-10,1.1363601309377636e-06,1.0
+hh_L3_nb1,sin_om2.0_tb5.0,integrator_exact_sparse,cx_proxy,6400.0,suzuki2,exact_sparse,64,1.1214371653522903e-09,1.1400921005877418e-06,1.0
+hh_L3_nb1,sin_om8.0_tb5.0,integrator_exact_sparse,cx_proxy,6400.0,suzuki2,exact_sparse,64,3.9053832168178815e-08,1.1524828203990367e-06,1.0

@@ -1,0 +1,18 @@
+{
+  "method": "cfqm4",
+  "profile": "drive",
+  "trotter_steps": 72,
+  "num_times": 41,
+  "t_final": 10.0,
+  "shots": 512,
+  "oracle_repeats": 1,
+  "oracle_aggregate": "mean",
+  "max_abs_delta_shots": 0.6105013918371807,
+  "mean_abs_delta_shots": 0.21422909490929745,
+  "max_abs_delta_over_stderr_shots": 610501391837.1807,
+  "mean_abs_delta_over_stderr_shots": 214229094909.2975,
+  "max_abs_delta_aer_noise": 3.2006152425175145,
+  "mean_abs_delta_aer_noise": 2.9707920592326214,
+  "max_abs_delta_over_stderr_aer_noise": 3200615242517.5146,
+  "mean_abs_delta_over_stderr_aer_noise": 2970792059232.622
+}

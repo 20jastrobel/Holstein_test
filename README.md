@@ -20,7 +20,7 @@ Warm-start runs use a two-stage sequence:
 
 1. Run HH-HVA VQE warm start with always default `hh_hva_ptw`.
 2. Use that warm-start state as the ADAPT reference state.
-3. Run ADAPT from that warm-start state with the agent max meta-pool: `UCCSD + HVA/PTW + (PAOP_full union PAOP_lf_full)`. This is a custom merged pool, not a single `--adapt-pool` value; `curdrag` is already included via PAOP-LF pools.
+3. Run ADAPT from that warm-start state with the agent max meta-pool preset: `--adapt-pool full_meta`, which expands to `uccsd_lifted + hva + paop_full + paop_lf_full` (deduplicated); `curdrag` is included via PAOP-LF pools.
 
 
 
@@ -42,7 +42,7 @@ graph TB
   subgraph DOCS
     D1["docs/repo_implementation_guide.md"]
     D2["docs/HH_IMPLEMENTATION_STATUS.md"]
-    D3["docs/FERMI_HAMIL_README.md"]
+    D3["docs/FERMI_HAMIL_README.md (legacy pointer)"]
   end
 
   subgraph RULES
@@ -165,7 +165,7 @@ graph TB
 - `hubbard` pools: `uccsd`, `cse`, `full_hamiltonian`.
 - `hh` pools: `hva`, `full_hamiltonian`, `paop_min`, `paop_std`, `paop_full`, `paop_lf` (`paop_lf_std` alias), `paop_lf2_std`, `paop_lf_full`.
 - HH built-in combined preset: `uccsd_paop_lf_full` = `uccsd_lifted + paop_lf_full` (deduplicated) via one CLI value.
-- Agent max custom meta-pool (not a single CLI value): `uccsd_lifted + hva + paop_full + paop_lf_full`.
+- HH full-meta preset: `full_meta` = `uccsd_lifted + hva + paop_full + paop_lf_full` (deduplicated) via one CLI value.
 - `paop_min`: displacement-focused PAOP operators.
 - `paop_std`: displacement plus dressed-hopping (`hopdrag`) operators.
 - `paop_full`: `paop_std` plus doublon dressing and extended cloud operators.
@@ -230,6 +230,14 @@ Use this order when onboarding:
 3. `docs/repo_implementation_guide.md` - implementation-deep walkthrough
 4. `docs/HH_IMPLEMENTATION_STATUS.md` - current HH status and remaining work
 
+Canonical authority chain: `AGENTS.md` -> `pipelines/run_guide.md` -> deep docs.
+Agent contract changelog: `docs/AGENT_CONTRACT_CHANGELOG.md`.
+
+Task-type doc split:
+- `AGENTS.md`: hard policy and escalation rules.
+- `pipelines/run_guide.md`: executable commands and run contracts.
+- `docs/LLM_RESEARCH_CONTEXT.md`: architecture/research context (non-runbook).
+
 ## Important note on README files
 
 Subdirectory README files are component-scoped documentation, not repo-canonical
@@ -237,6 +245,10 @@ onboarding docs. Use this root `README.md` first, then drill into local READMEs
 for module-specific details.
 
 ## Quick run examples
+
+Default hard gate policy for agent execution:
+- Final conventional VQE hard gate: `ΔE_abs < 1e-4`.
+- Script strict mode (`1e-7`) is optional and should be treated as strict mode only.
 
 ADAPT-VQE (HH, PAOP pool):
 
@@ -275,7 +287,7 @@ python pipelines/hardcoded/hubbard_pipeline.py \
 ```
 
 CFQM propagation status (hardcoded pipeline):
-- `--propagator` defaults to `suzuki2`; existing run behavior is unchanged unless `cfqm4`/`cfqm6` is selected.
+- `--propagator` defaults to `cfqm4`; use `suzuki2` explicitly for baseline comparison.
 - CFQM uses fixed scheme nodes (`c_j`) and ignores legacy midpoint/left/right `--drive-time-sampling`.
 - `--exact-steps-multiplier` remains a reference-only control and does not change CFQM macro-step count.
 - `--cfqm-stage-exp` default is `expm_multiply_sparse`; `--cfqm-coeff-drop-abs-tol` default is `0.0`; `--cfqm-normalize` default is off.
@@ -414,7 +426,8 @@ For compare/orchestration workflows, use `pipelines/run_guide.md`.
 - `docs/LLM_RESEARCH_CONTEXT.md`
 - `docs/repo_implementation_guide.md`
 - `docs/HH_IMPLEMENTATION_STATUS.md`
-- `docs/FERMI_HAMIL_README.md`
+- `docs/AGENT_CONTRACT_CHANGELOG.md`
+- `docs/FERMI_HAMIL_README.md` (legacy pointer; archived content)
 - `reports/README.md`
 - `pipelines/exact_bench/README.md`
 - `pipelines/qiskit_archive/README.md`

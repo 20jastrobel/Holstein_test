@@ -1,0 +1,5 @@
+run_id,status,method_id,method_kind,ansatz_name,pool_name,problem,L,runtime_s,started_utc,finished_utc,wallclock_cap_s,nfev,nit,num_parameters,vqe_reps,vqe_restarts,vqe_maxiter,depth_proxy,operator_family_proxy,pool_family_proxy,fidelity_kernel_proxy,delta_E_abs,sector_leak_flag,adapt_stop_reason,adapt_depth_reached
+A_probe,,A_probe,adapt,,uccsd+paop,hh,4,13.517399667296559,,,120,,,1,,,20,1,adapt+uccsd+paop,uccsd+paop,,6.8088980059969115,,max_depth,1
+A_medium,,A_medium,adapt,,uccsd+paop,hh,4,15.192568417172879,,,120,,,1,,,20,1,adapt+uccsd+paop,uccsd+paop,,6.8088980059969115,,max_depth,1
+B_probe,,B_probe,adapt,,uccsd+paop+hva,hh,4,16.926426333840936,,,120,,,1,,,20,1,adapt+uccsd+paop+hva,uccsd+paop+hva,,6.8088980059969115,,max_depth,1
+B_medium,,B_medium,adapt,,uccsd+paop+hva,hh,4,19.879970957990736,,,120,,,1,,,20,1,adapt+uccsd+paop+hva,uccsd+paop+hva,,6.8088980059969115,,max_depth,1

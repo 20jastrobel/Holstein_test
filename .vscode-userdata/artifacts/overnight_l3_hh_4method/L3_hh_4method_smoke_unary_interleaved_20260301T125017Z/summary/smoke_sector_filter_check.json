@@ -1,0 +1,18 @@
+{
+  "checked_at_utc": "2026-03-01T12:50:32.898485+00:00",
+  "config": {
+    "L": 3,
+    "t": 1.0,
+    "U": 2.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "n_ph_max": 1,
+    "ordering": "interleaved",
+    "boundary": "periodic",
+    "boson_encoding": "unary"
+  },
+  "E_exact_sector_(2,1)": -0.6988083850995425,
+  "E_exact_sector_(1,1)": -2.4491143424518547,
+  "different": true
+}

@@ -47,6 +47,21 @@ class TestParseArgsAdaptRefSource:
         assert str(args.adapt_pool) == "uccsd_paop_lf_full"
         assert str(args.adapt_ref_source) == "vqe"
 
+    def test_parse_accepts_full_meta_pool(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "hubbard_pipeline.py",
+                "--L", "2",
+                "--adapt-pool", "full_meta",
+                "--adapt-ref-source", "vqe",
+            ],
+        )
+        args = hp.parse_args()
+        assert str(args.adapt_pool) == "full_meta"
+        assert str(args.adapt_ref_source) == "vqe"
+
     def test_adapt_ref_source_default_is_hf(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(sys, "argv", ["hubbard_pipeline.py", "--L", "2"])
         args = hp.parse_args()

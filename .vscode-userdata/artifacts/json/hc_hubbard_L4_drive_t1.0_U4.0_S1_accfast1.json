@@ -1,0 +1,617 @@
+{
+  "generated_utc": "2026-02-23T17:28:43.931493+00:00",
+  "pipeline": "hardcoded",
+  "settings": {
+    "L": 4,
+    "t": 1.0,
+    "u": 4.0,
+    "dv": 0.0,
+    "boundary": "periodic",
+    "ordering": "blocked",
+    "t_final": 0.0,
+    "num_times": 1,
+    "suzuki_order": 2,
+    "trotter_steps": 1,
+    "term_order": "sorted",
+    "initial_state_source": "vqe",
+    "skip_qpe": true,
+    "fidelity_definition_short": "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
+    "fidelity_definition": "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector ground manifold selected by E <= E0 + tol.",
+    "fidelity_subspace_energy_tol": 1e-08,
+    "fidelity_reference_subspace": {
+      "sector": {
+        "n_up": 2,
+        "n_dn": 2
+      },
+      "ground_subspace_dimension": 1,
+      "selection_rule": "E <= E0 + tol"
+    },
+    "fidelity_reference_initial_state": "exact_static_ground_manifold_filtered_sector",
+    "fidelity_reference_sector": {
+      "n_up": 2,
+      "n_dn": 2
+    },
+    "fidelity_ansatz_initial_state": "vqe",
+    "trajectory_branches_definition": "exact_gs: exact/reference propagation from filtered-sector ground-state init; exact_ansatz: exact/reference propagation from ansatz initial state; trotter: Suzuki-Trotter propagation from ansatz initial state.",
+    "energy_observable_definition": "energy_static_exact is <psi_exact_gs_ref(t)|H_static|psi_exact_gs_ref(t)>. energy_static_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static|psi_exact_ansatz_ref(t)>. energy_static_trotter is <psi_ansatz_trot(t)|H_static|psi_ansatz_trot(t)>. energy_total_exact is <psi_exact_gs_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_gs_ref(t)>. energy_total_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_ansatz_ref(t)>. energy_total_trotter is <psi_ansatz_trot(t)|H_static + H_drive(drive_t0 + t)|psi_ansatz_trot(t)>. When drive is disabled, energy_total_* == energy_static_*. Drive sampling uses the same drive_t0 convention as propagation.",
+    "drive": {
+      "enabled": true,
+      "A": 0.5,
+      "omega": 2.0,
+      "tbar": 3.0,
+      "phi": 0.0,
+      "pattern": "staggered",
+      "custom_s": null,
+      "include_identity": false,
+      "time_sampling": "midpoint",
+      "t0": 0.0,
+      "reference_steps_multiplier": 1,
+      "reference_steps": 1,
+      "reference_method": "exponential_midpoint_magnus2_order2",
+      "propagator_backend": "scipy_sparse_expm_multiply"
+    }
+  },
+  "hamiltonian": {
+    "num_qubits": 8,
+    "num_terms": 29,
+    "coefficients_exyz": [
+      {
+        "label_exyz": "eeeeeeee",
+        "coeff": {
+          "re": 4.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeeez",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeexx",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeeyy",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeeze",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeexxe",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeyye",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeezee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeexxee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeexzzx",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeyyee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeyzzy",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeezeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeezeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeezeeez",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eexxeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeyyeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eezeeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eezeeeze",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "exxeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eyyeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "ezeeeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "ezeeezee",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "xxeeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "xzzxeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "yyeeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "yzzyeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "zeeeeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "zeeezeee",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      }
+    ]
+  },
+  "ground_state": {
+    "exact_energy": -3.418550718873847,
+    "exact_energy_filtered": -2.1027484834620753,
+    "filtered_sector": {
+      "n_up": 2,
+      "n_dn": 2
+    },
+    "ground_subspace_dimension": 1,
+    "method": "matrix_diagonalization"
+  },
+  "vqe": {
+    "success": true,
+    "method": "hardcoded_uccsd_notebook_statevector",
+    "energy": -1.9355235410188083,
+    "best_restart": 0,
+    "nfev": 1200,
+    "nit": 0,
+    "message": "Maximum number of function evaluations has been exceeded.",
+    "num_particles": {
+      "n_up": 2,
+      "n_dn": 2
+    },
+    "num_parameters": 78,
+    "reps": 3,
+    "optimizer_method": "COBYLA",
+    "optimal_point": [
+      0.028988654865809524,
+      1.3625325772281667,
+      0.5634387304002826,
+      -0.4937041513197603,
+      -0.11269222292502133,
+      -0.14287277174903512,
+      0.8360843114860912,
+      0.29238597404234995,
+      -0.38012025264938226,
+      -0.06102976314583134,
+      -0.015360188207352243,
+      0.054053881203348655,
+      0.09111521148553219,
+      -0.14068394137933551,
+      -0.45358925969647423,
+      -0.12206460723873294,
+      -0.35006250170866193,
+      -0.1740944491345769,
+      -0.5208163350206707,
+      -0.7153365018415536,
+      -0.1561672576861649,
+      -0.30747147323742574,
+      -0.6393912165475725,
+      0.9481486615964367,
+      -0.191868045246727,
+      -0.33254349510893044,
+      0.24700927631020236,
+      0.014077529457730378,
+      -0.006387111467496891,
+      0.11338908868048633,
+      0.8031611613322025,
+      0.2652792134799181,
+      -0.2690229777535872,
+      -0.15818976013345068,
+      0.8055834210835663,
+      -0.03629955615563935,
+      0.0314463679662111,
+      0.002427516985126949,
+      -0.1884057585804876,
+      0.3794384318786645,
+      0.3052146037401969,
+      0.28322773528190065,
+      -0.3382164115354462,
+      -0.06710824584945149,
+      0.20597205522143217,
+      0.9282956316688306,
+      0.9642987558163297,
+      0.09717878200891683,
+      0.05327329155870486,
+      0.7048053574906138,
+      0.2770118789803886,
+      -0.5754286784476206,
+      -0.12767986135942078,
+      0.1360778501628151,
+      -0.0001981904582881931,
+      0.2816141413504495,
+      0.04795133842239989,
+      -0.031622140906953713,
+      0.5661024296279697,
+      -0.40938177334013426,
+      0.6318860483497523,
+      -0.25937498991850405,
+      -0.09538311590982769,
+      -0.39342725384800975,
+      -0.38140439065532694,
+      0.29682609898622614,
+      0.22805004683717858,
+      0.22898484294726676,
+      0.7339853727156713,
+      -0.241719312984003,
+      0.4680023323863741,
+      -0.8445727767437347,
+      0.030992054815749598,
+      0.019751990402797404,
+      0.1395312192362018,
+      -0.10979553948099247,
+      0.360398709888937,
+      0.9612611287060736
+    ],
+    "hf_bitstring_qn_to_q0": "00110011"
+  },
+  "qpe": {
+    "success": false,
+    "method": "qpe_skipped",
+    "energy_estimate": null,
+    "phase": null,
+    "skipped": true,
+    "reason": "--skip-qpe enabled",
+    "num_evaluation_qubits": 6,
+    "shots": 1024
+  },
+  "initial_state": {
+    "source": "vqe",
+    "amplitudes_qn_to_q0": {
+      "00110011": {
+        "re": 0.04722482648970367,
+        "im": 0.0
+      },
+      "00110101": {
+        "re": 0.03333478353265831,
+        "im": 0.0
+      },
+      "00110110": {
+        "re": -0.07270743233510334,
+        "im": 0.0
+      },
+      "00111001": {
+        "re": -0.04772000369844309,
+        "im": 0.0
+      },
+      "00111010": {
+        "re": -0.19418457862478597,
+        "im": 0.0
+      },
+      "00111100": {
+        "re": -0.24299878004791298,
+        "im": 0.0
+      },
+      "01010011": {
+        "re": 0.20733098578121062,
+        "im": 0.0
+      },
+      "01010101": {
+        "re": 0.0006822852681658894,
+        "im": 0.0
+      },
+      "01010110": {
+        "re": -0.16329382000738546,
+        "im": 0.0
+      },
+      "01011001": {
+        "re": -0.16654249807404028,
+        "im": 0.0
+      },
+      "01011010": {
+        "re": -0.7317167695432251,
+        "im": 0.0
+      },
+      "01011100": {
+        "re": -0.18911901379470716,
+        "im": 0.0
+      },
+      "01100011": {
+        "re": 0.07579305496420415,
+        "im": 0.0
+      },
+      "01100101": {
+        "re": -0.01079940620524878,
+        "im": 0.0
+      },
+      "01100110": {
+        "re": -0.03172271272179843,
+        "im": 0.0
+      },
+      "01101001": {
+        "re": -0.18521210748120925,
+        "im": 0.0
+      },
+      "01101010": {
+        "re": -0.17825061491390917,
+        "im": 0.0
+      },
+      "01101100": {
+        "re": -0.04905125272711221,
+        "im": 0.0
+      },
+      "10010011": {
+        "re": 0.047684560960126056,
+        "im": 0.0
+      },
+      "10010101": {
+        "re": -0.010864861116759265,
+        "im": 0.0
+      },
+      "10010110": {
+        "re": -0.1287560773588753,
+        "im": 0.0
+      },
+      "10011001": {
+        "re": -0.040753013994371264,
+        "im": 0.0
+      },
+      "10011010": {
+        "re": -0.1715965421228892,
+        "im": 0.0
+      },
+      "10011100": {
+        "re": -0.06196804699658116,
+        "im": 0.0
+      },
+      "10100011": {
+        "re": -0.02792224100955244,
+        "im": 0.0
+      },
+      "10100101": {
+        "re": 0.05186576632307496,
+        "im": 0.0
+      },
+      "10100110": {
+        "re": 0.007488494858083011,
+        "im": 0.0
+      },
+      "10101001": {
+        "re": -0.034127320630654566,
+        "im": 0.0
+      },
+      "10101010": {
+        "re": 0.014790577044452125,
+        "im": 0.0
+      },
+      "10101100": {
+        "re": 0.013871488964544931,
+        "im": 0.0
+      },
+      "11000011": {
+        "re": -0.21118811834136855,
+        "im": 0.0
+      },
+      "11000101": {
+        "re": 0.0025734843637044043,
+        "im": 0.0
+      },
+      "11000110": {
+        "re": 0.0579999726602282,
+        "im": 0.0
+      },
+      "11001001": {
+        "re": 0.05866382583794562,
+        "im": 0.0
+      },
+      "11001010": {
+        "re": 0.19060054840766674,
+        "im": 0.0
+      },
+      "11001100": {
+        "re": 0.040821420920540696,
+        "im": 0.0
+      }
+    }
+  },
+  "trajectory": [
+    {
+      "time": 0.0,
+      "fidelity": 0.5397327347535682,
+      "energy_static_exact": -2.102748483462075,
+      "energy_static_exact_ansatz": -1.9355235410188123,
+      "energy_static_trotter": -1.9355235410188123,
+      "energy_total_exact": -2.102748483462075,
+      "energy_total_exact_ansatz": -1.9355235410188123,
+      "energy_total_trotter": -1.9355235410188123,
+      "n_up_site0_exact": 0.4999999999999999,
+      "n_up_site0_exact_ansatz": 0.17324187933455015,
+      "n_up_site0_trotter": 0.17324187933455015,
+      "n_dn_site0_exact": 0.5000000000000004,
+      "n_dn_site0_exact_ansatz": 0.8301405401699717,
+      "n_dn_site0_trotter": 0.8301405401699717,
+      "n_site_exact": [
+        1.0000000000000004,
+        1.0000000000000004,
+        1.0,
+        1.0
+      ],
+      "n_site_exact_ansatz": [
+        1.003382419504522,
+        1.0105666767458175,
+        0.9932392106082222,
+        0.9928116931414396
+      ],
+      "n_site_trotter": [
+        1.003382419504522,
+        1.0105666767458175,
+        0.9932392106082222,
+        0.9928116931414396
+      ],
+      "staggered_exact": 0.0,
+      "staggered_exact_ansatz": -0.0016891849436282136,
+      "staggered_trotter": -0.0016891849436282136,
+      "doublon_exact": 0.28732537269005387,
+      "doublon_exact_ansatz": 0.31415296878263443,
+      "doublon_trotter": 0.31415296878263443,
+      "doublon_avg_exact": 0.07183134317251347,
+      "doublon_avg_exact_ansatz": 0.07853824219565861,
+      "doublon_avg_trotter": 0.07853824219565861,
+      "n_up_site_exact": [
+        0.4999999999999999,
+        0.5000000000000004,
+        0.4999999999999998,
+        0.5000000000000003
+      ],
+      "n_up_site_exact_ansatz": [
+        0.17324187933455015,
+        0.8224536406355798,
+        0.15991808027653961,
+        0.8443863997533309
+      ],
+      "n_up_site_trotter": [
+        0.17324187933455015,
+        0.8224536406355798,
+        0.15991808027653961,
+        0.8443863997533309
+      ],
+      "n_dn_site_exact": [
+        0.5000000000000004,
+        0.5,
+        0.5000000000000002,
+        0.4999999999999998
+      ],
+      "n_dn_site_exact_ansatz": [
+        0.8301405401699717,
+        0.1881130361102377,
+        0.8333211303316825,
+        0.1484252933881087
+      ],
+      "n_dn_site_trotter": [
+        0.8301405401699717,
+        0.1881130361102377,
+        0.8333211303316825,
+        0.1484252933881087
+      ],
+      "norm_before_renorm": 1.0
+    }
+  ],
+  "sanity": {
+    "jw_reference": {
+      "checked": false,
+      "reason": "no matching bundled reference for these settings"
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "created_utc": "2026-03-02T03:05:19.205617+00:00",
+  "script": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/l3_hh_exp_fidelity_wrapper.py",
+  "physics": {
+    "L": 3,
+    "problem": "hh",
+    "t": 1.0,
+    "U": 2.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "n_ph_max": 1
+  },
+  "sector": [
+    2,
+    1
+  ],
+  "methods": [
+    "m1_hh_hva",
+    "m3_adapt_paop_std",
+    "m4_adapt_paop_lf_std"
+  ],
+  "configs": [
+    "interleaved,periodic,binary",
+    "blocked,open,binary"
+  ],
+  "base_seeds": [
+    101,
+    102
+  ],
+  "extra_seeds": [
+    103
+  ],
+  "fidelity_rungs": [
+    1,
+    2,
+    4
+  ],
+  "fidelity_grouping_mode": "qubitwise_commute",
+  "fidelity_coeff_tolerance": 1e-12,
+  "knobs": {
+    "vqe_reps": 2,
+    "vqe_restarts": 5,
+    "vqe_maxiter": 3000,
+    "adapt_max_depth": 80,
+    "adapt_maxiter": 3000,
+    "adapt_allow_repeats": true,
+    "paop_r": 1,
+    "paop_prune_eps": 0.0,
+    "paop_normalization": "none",
+    "vqe_cap_s": 600,
+    "adapt_cap_s": 720,
+    "max_total_wallclock_s": 3600,
+    "stall_improve_eps": 0.01,
+    "stall_time_gain_eps": 0.005,
+    "success_delta": 0.001,
+    "seed_escalation_gain_threshold": 0.005
+  }
+}

@@ -1,0 +1,86 @@
+[
+  {
+    "tag": "piecewise_exact_ref",
+    "propagator": "piecewise_exact",
+    "steps": 2048,
+    "runtime_s": 95.79778125043958,
+    "stderr_tail": "",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 0.0,
+    "final_abs_energy_total_vs_ref": 0.0,
+    "max_abs_nup0_vs_ref": 0.0,
+    "final_abs_nup0_vs_ref": 0.0
+  },
+  {
+    "tag": "cfqm4_s16",
+    "propagator": "cfqm4",
+    "steps": 16,
+    "runtime_s": 4.282409667037427,
+    "stderr_tail": "Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 1.7045487399336423e-07,
+    "final_abs_energy_total_vs_ref": 1.7045487399336423e-07,
+    "max_abs_nup0_vs_ref": 0.0001503562976028494,
+    "final_abs_nup0_vs_ref": 0.0001503562976028494
+  },
+  {
+    "tag": "cfqm4_s32",
+    "propagator": "cfqm4",
+    "steps": 32,
+    "runtime_s": 6.486025040969253,
+    "stderr_tail": "Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 3.3980755986817712e-09,
+    "final_abs_energy_total_vs_ref": 3.3980755986817712e-09,
+    "max_abs_nup0_vs_ref": 0.000152675255783552,
+    "final_abs_nup0_vs_ref": 0.000152675255783552
+  },
+  {
+    "tag": "cfqm4_s64",
+    "propagator": "cfqm4",
+    "steps": 64,
+    "runtime_s": 11.404959250241518,
+    "stderr_tail": "Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 7.606934637749418e-09,
+    "final_abs_energy_total_vs_ref": 7.606934637749418e-09,
+    "max_abs_nup0_vs_ref": 0.00015281674449008076,
+    "final_abs_nup0_vs_ref": 0.00015281674449008076
+  },
+  {
+    "tag": "cfqm6_s16",
+    "propagator": "cfqm6",
+    "steps": 16,
+    "runtime_s": 7.63501316588372,
+    "stderr_tail": "Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 8.485139924019336e-09,
+    "final_abs_energy_total_vs_ref": 8.485139924019336e-09,
+    "max_abs_nup0_vs_ref": 0.00015282631243129785,
+    "final_abs_nup0_vs_ref": 0.00015282631243129785
+  },
+  {
+    "tag": "cfqm6_s32",
+    "propagator": "cfqm6",
+    "steps": 32,
+    "runtime_s": 13.109846875071526,
+    "stderr_tail": "Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 8.3519935412113e-09,
+    "final_abs_energy_total_vs_ref": 8.3519935412113e-09,
+    "max_abs_nup0_vs_ref": 0.00015282612379519112,
+    "final_abs_nup0_vs_ref": 0.00015282612379519112
+  },
+  {
+    "tag": "cfqm6_s64",
+    "propagator": "cfqm6",
+    "steps": 64,
+    "runtime_s": 24.764245875179768,
+    "stderr_tail": "Holstein_test/pipelines/hardcoded/hubbard_pipeline.py:2961: RuntimeWarning: CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.\n  trajectory, _exact_states = _simulate_trajectory(\n",
+    "nan_inf_found": false,
+    "max_abs_energy_total_vs_ref": 8.349911317928616e-09,
+    "final_abs_energy_total_vs_ref": 8.349911317928616e-09,
+    "max_abs_nup0_vs_ref": 0.00015282612068945323,
+    "final_abs_nup0_vs_ref": 0.00015282612068945323
+  }
+]

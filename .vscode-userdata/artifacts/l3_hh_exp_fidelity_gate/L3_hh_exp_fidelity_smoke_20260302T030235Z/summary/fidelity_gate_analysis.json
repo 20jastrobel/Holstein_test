@@ -1,0 +1,99 @@
+{
+  "analyzed_at_utc": "2026-03-02T03:05:11.291197+00:00",
+  "run_dir": "artifacts/l3_hh_exp_fidelity_gate/L3_hh_exp_fidelity_smoke_20260302T030235Z",
+  "total_rows": 3,
+  "ok_rows": 3,
+  "best_per_method": [
+    {
+      "method": "m1_hh_hva",
+      "best_delta": 1.6591660679030367,
+      "config": "blocked,open,binary",
+      "seed": 101,
+      "trotter": 1,
+      "E_best": 1.1322283481373903,
+      "E_exact_sector": -0.5269377197656464,
+      "runtime_s": 128.4054300421849,
+      "sector_leak_flag": true
+    },
+    {
+      "method": "m3_adapt_paop_std",
+      "best_delta": 2.7908697572625414,
+      "config": "blocked,open,binary",
+      "seed": 101,
+      "trotter": 1,
+      "E_best": 2.263932037496895,
+      "E_exact_sector": -0.5269377197656464,
+      "runtime_s": 6.423135875258595,
+      "sector_leak_flag": false
+    },
+    {
+      "method": "m4_adapt_paop_lf_std",
+      "best_delta": 2.7908697572625414,
+      "config": "blocked,open,binary",
+      "seed": 101,
+      "trotter": 1,
+      "E_best": 2.263932037496895,
+      "E_exact_sector": -0.5269377197656464,
+      "runtime_s": 6.5267546670511365,
+      "sector_leak_flag": false
+    }
+  ],
+  "best_per_method_config": [
+    {
+      "method": "m1_hh_hva",
+      "config": "blocked,open,binary",
+      "best_delta": 1.6591660679030367,
+      "seed": 101,
+      "trotter": 1,
+      "status": "ok"
+    },
+    {
+      "method": "m3_adapt_paop_std",
+      "config": "blocked,open,binary",
+      "best_delta": 2.7908697572625414,
+      "seed": 101,
+      "trotter": 1,
+      "status": "ok"
+    },
+    {
+      "method": "m4_adapt_paop_lf_std",
+      "config": "blocked,open,binary",
+      "best_delta": 2.7908697572625414,
+      "seed": 101,
+      "trotter": 1,
+      "status": "ok"
+    }
+  ],
+  "ranked_ok_runs": [
+    {
+      "run_id": "m1_hh_hva|trotter_1|S2_1|blocked_open|binary|seed101",
+      "method_id": "m1_hh_hva",
+      "config": "blocked,open,binary",
+      "seed": 101,
+      "fidelity_residual_trotter_steps": 1,
+      "delta_E_abs": 1.6591660679030367,
+      "runtime_s": 128.4054300421849,
+      "status": "ok"
+    },
+    {
+      "run_id": "m3_adapt_paop_std|trotter_1|S2_1|blocked_open|binary|seed101",
+      "method_id": "m3_adapt_paop_std",
+      "config": "blocked,open,binary",
+      "seed": 101,
+      "fidelity_residual_trotter_steps": 1,
+      "delta_E_abs": 2.7908697572625414,
+      "runtime_s": 6.423135875258595,
+      "status": "ok"
+    },
+    {
+      "run_id": "m4_adapt_paop_lf_std|trotter_1|S2_1|blocked_open|binary|seed101",
+      "method_id": "m4_adapt_paop_lf_std",
+      "config": "blocked,open,binary",
+      "seed": 101,
+      "fidelity_residual_trotter_steps": 1,
+      "delta_E_abs": 2.7908697572625414,
+      "runtime_s": 6.5267546670511365,
+      "status": "ok"
+    }
+  ]
+}

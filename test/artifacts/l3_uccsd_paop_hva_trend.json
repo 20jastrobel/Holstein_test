@@ -1,0 +1,129 @@
+{
+  "config": {
+    "L": 3,
+    "sector": [
+      2,
+      1
+    ],
+    "t": 1.0,
+    "U": 4.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 0.5,
+    "n_ph_max": 1,
+    "boson_encoding": "binary",
+    "ordering": "blocked",
+    "boundary": "open",
+    "eps_grad": 1e-06,
+    "eps_energy": 1e-08,
+    "allow_repeats": true,
+    "seed": 7,
+    "medium_depth": 20,
+    "medium_maxiter": 1200,
+    "heavy_depth": 36,
+    "heavy_maxiter": 2400,
+    "paop_key": "paop_lf_std",
+    "paop_r": 1,
+    "paop_split_paulis": false,
+    "paop_prune_eps": 0.0,
+    "paop_normalization": "none"
+  },
+  "exact": {
+    "E_exact_sector": 0.2449407001279198,
+    "nq_total": 9,
+    "fermion_qubits": 6,
+    "boson_qubits": 3
+  },
+  "pool_components_raw": {
+    "uccsd_ferm_only_lifted": 8,
+    "paop": 7,
+    "hva": 13
+  },
+  "pool_A_uccsd_plus_paop": {
+    "raw_sizes": {
+      "uccsd": 8,
+      "paop": 7
+    },
+    "dedup_total": 15,
+    "dedup_source_presence_counts": {
+      "uccsd": 8,
+      "paop": 7,
+      "hva": 0
+    },
+    "overlap_count": 0
+  },
+  "pool_B_uccsd_plus_paop_plus_hva": {
+    "raw_sizes": {
+      "uccsd": 8,
+      "paop": 7,
+      "hva": 13
+    },
+    "dedup_total": 28,
+    "dedup_source_presence_counts": {
+      "uccsd": 8,
+      "paop": 7,
+      "hva": 13
+    },
+    "overlap_count": 0
+  },
+  "runs": {
+    "A_medium": {
+      "ok": false,
+      "label": "A_uccsd_plus_paop_medium",
+      "budget": {
+        "name": "medium",
+        "max_depth": 20,
+        "maxiter": 1200
+      },
+      "runtime_s": 624.1622649999335,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 485, in _safe_run_stage\n    \"sector_diag\": _sector_diagnostics(psi_best, cfg),\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 405, in _sector_diagnostics\n    mode_index(0, SPIN_UP, n_sites, str(cfg.ordering)),\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 137, in mode_index\n    log.error(\"indexing must be either 'interleaved' or 'blocked'\")\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 47, in error\n    raise RuntimeError(msg)\nRuntimeError: indexing must be either 'interleaved' or 'blocked'\n"
+    },
+    "A_heavy": {
+      "ok": false,
+      "label": "A_uccsd_plus_paop_heavy",
+      "budget": {
+        "name": "heavy",
+        "max_depth": 36,
+        "maxiter": 2400
+      },
+      "runtime_s": 1706.2916874997318,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 485, in _safe_run_stage\n    cfg: ProbeConfig,\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 405, in _sector_diagnostics\n    n_up_e = 0.0\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 137, in mode_index\n    log.error(\"indexing must be either 'interleaved' or 'blocked'\")\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 47, in error\n    raise RuntimeError(msg)\nRuntimeError: indexing must be either 'interleaved' or 'blocked'\n"
+    },
+    "B_medium": {
+      "ok": false,
+      "label": "B_uccsd_plus_paop_plus_hva_medium",
+      "budget": {
+        "name": "medium",
+        "max_depth": 20,
+        "maxiter": 1200
+      },
+      "runtime_s": 630.8769032498822,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 485, in _safe_run_stage\n    cfg: ProbeConfig,\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 405, in _sector_diagnostics\n    n_up_e = 0.0\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 137, in mode_index\n    log.error(\"indexing must be either 'interleaved' or 'blocked'\")\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 47, in error\n    raise RuntimeError(msg)\nRuntimeError: indexing must be either 'interleaved' or 'blocked'\n"
+    },
+    "B_heavy": {
+      "ok": false,
+      "label": "B_uccsd_plus_paop_plus_hva_heavy",
+      "budget": {
+        "name": "heavy",
+        "max_depth": 36,
+        "maxiter": 2400
+      },
+      "runtime_s": 1782.3809200408868,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 485, in _safe_run_stage\n    cfg: ProbeConfig,\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/test/l3_hh_uccsd_paop_hva_trend_probe.py\", line 405, in _sector_diagnostics\n    n_up_e = 0.0\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 137, in mode_index\n    log.error(\"indexing must be either 'interleaved' or 'blocked'\")\n  File \"/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/hubbard_latex_python_pairs.py\", line 47, in error\n    raise RuntimeError(msg)\nRuntimeError: indexing must be either 'interleaved' or 'blocked'\n"
+    }
+  },
+  "trend": {
+    "A_uccsd_plus_paop": {
+      "assessable": false,
+      "likely_convergent_with_more_budget": false,
+      "reason": "missing_successful_run"
+    },
+    "B_uccsd_plus_paop_plus_hva": {
+      "assessable": false,
+      "likely_convergent_with_more_budget": false,
+      "reason": "missing_successful_run"
+    },
+    "likely_convergent_with_more_budget": false
+  },
+  "runtime_total_s": 4743.829803208355
+}

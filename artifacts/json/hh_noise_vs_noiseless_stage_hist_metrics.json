@@ -1,0 +1,38 @@
+{
+  "source": "artifacts/json/hh_noise_robustness_L2_L2_hh_u2_g1_S64_N101.json",
+  "noise_mode": "shots",
+  "shots": 2048,
+  "oracle_repeats": 4,
+  "oracle_aggregate": "mean",
+  "mitigation": {
+    "mode": "none",
+    "zne_scales": [],
+    "dd_sequence": null
+  },
+  "stages": [
+    "HVA",
+    "ADAPT",
+    "VQE"
+  ],
+  "noiseless_energy": [
+    -0.23754237498715014,
+    -0.3788066499107535,
+    -0.37443057008639474
+  ],
+  "noisy_energy_mean": [
+    -0.22900390625,
+    -0.3759765625,
+    -0.38232421875
+  ],
+  "noisy_energy_stderr": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "delta_noisy_minus_noiseless": [
+    0.00853846873715014,
+    0.0028300874107535234,
+    -0.007893648663605257
+  ],
+  "plot_png": "docs/hh_noise_vs_noiseless_stage_hist.png"
+}

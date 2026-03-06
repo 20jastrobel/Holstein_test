@@ -1,0 +1,31 @@
+{
+  "created_utc": "2026-03-02T03:04:57.357012+00:00",
+  "out_dir": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/l3_hh_exp_fidelity_gate/L3_hh_exp_fidelity_smoke_20260302T030235Z",
+  "total_rows": 3,
+  "branch_summary": [
+    {
+      "branch": "m1_hh_hva|blocked,open,binary",
+      "method_id": "m1_hh_hva",
+      "config": "blocked,open,binary",
+      "stop_reason": "max_rungs_reached",
+      "best_delta_seen": 1.6591660679030367,
+      "rungs_completed": 1
+    },
+    {
+      "branch": "m3_adapt_paop_std|blocked,open,binary",
+      "method_id": "m3_adapt_paop_std",
+      "config": "blocked,open,binary",
+      "stop_reason": "max_rungs_reached",
+      "best_delta_seen": 2.7908697572625414,
+      "rungs_completed": 1
+    },
+    {
+      "branch": "m4_adapt_paop_lf_std|blocked,open,binary",
+      "method_id": "m4_adapt_paop_lf_std",
+      "config": "blocked,open,binary",
+      "stop_reason": "max_rungs_reached",
+      "best_delta_seen": 2.7908697572625414,
+      "rungs_completed": 1
+    }
+  ]
+}

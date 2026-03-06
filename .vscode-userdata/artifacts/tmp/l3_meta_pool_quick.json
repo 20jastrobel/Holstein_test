@@ -1,0 +1,327 @@
+{
+  "config": {
+    "L": 3,
+    "sector": [
+      2,
+      1
+    ],
+    "t": 1.0,
+    "U": 4.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 0.5,
+    "n_ph_max": 1,
+    "boson_encoding": "binary",
+    "ordering": "blocked",
+    "boundary": "open",
+    "adapt_max_depth": 20,
+    "adapt_maxiter": 800,
+    "adapt_eps_grad": 1e-06,
+    "adapt_eps_energy": 1e-08,
+    "allow_repeats": true,
+    "paop_r": 1,
+    "paop_split_paulis": false,
+    "paop_prune_eps": 0.0,
+    "paop_normalization": "none",
+    "improve_threshold": 0.01
+  },
+  "E_exact_sector": 0.2449407001279198,
+  "pool_sizes": {
+    "hva": 13,
+    "paop_lf_std": 7,
+    "meta_dedup": 20,
+    "overlap_count": 0
+  },
+  "step0_gradients": {
+    "paop_topk": [
+      {
+        "idx": 0,
+        "label": "paop_lf_std:paop_disp(site=0)",
+        "source": "paop",
+        "gradient": 1.0,
+        "abs_gradient": 1.0
+      },
+      {
+        "idx": 2,
+        "label": "paop_lf_std:paop_disp(site=2)",
+        "source": "paop",
+        "gradient": 1.0,
+        "abs_gradient": 1.0
+      },
+      {
+        "idx": 1,
+        "label": "paop_lf_std:paop_disp(site=1)",
+        "source": "paop",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 3,
+        "label": "paop_lf_std:paop_hopdrag(0,1)",
+        "source": "paop",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 4,
+        "label": "paop_lf_std:paop_hopdrag(1,2)",
+        "source": "paop",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 5,
+        "label": "paop_lf_std:paop_curdrag(0,1)",
+        "source": "paop",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 6,
+        "label": "paop_lf_std:paop_curdrag(1,2)",
+        "source": "paop",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      }
+    ],
+    "meta_topk": [
+      {
+        "idx": 13,
+        "label": "paop_lf_std:paop_disp(site=0)",
+        "source": "paop",
+        "gradient": 1.0,
+        "abs_gradient": 1.0
+      },
+      {
+        "idx": 15,
+        "label": "paop_lf_std:paop_disp(site=2)",
+        "source": "paop",
+        "gradient": 1.0,
+        "abs_gradient": 1.0
+      },
+      {
+        "idx": 0,
+        "label": "hh_hop(i=0,j=1,spin=0)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 1,
+        "label": "hh_hop(i=0,j=1,spin=1)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 2,
+        "label": "hh_hop(i=1,j=2,spin=0)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 3,
+        "label": "hh_hop(i=1,j=2,spin=1)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 4,
+        "label": "hh_onsite(i=0)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 5,
+        "label": "hh_onsite(i=1)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 6,
+        "label": "hh_onsite(i=2)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 7,
+        "label": "hh_phonon(i=0)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 8,
+        "label": "hh_phonon(i=1)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 9,
+        "label": "hh_phonon(i=2)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 10,
+        "label": "hh_eph(i=0)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 11,
+        "label": "hh_eph(i=1)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      },
+      {
+        "idx": 12,
+        "label": "hh_eph(i=2)",
+        "source": "hva",
+        "gradient": 0.0,
+        "abs_gradient": 0.0
+      }
+    ]
+  },
+  "runs": {
+    "paop_only": {
+      "E_best": 5.085786444653543,
+      "E_last": 5.085786444653543,
+      "delta_E_abs": 4.840845744525623,
+      "runtime_s": 2.503619125112891,
+      "adapt_depth_reached": 4,
+      "adapt_stop_reason": "eps_energy",
+      "num_parameters": 4,
+      "nfev_total": 113,
+      "nit_total": 0,
+      "selected_trace": [
+        {
+          "depth": 1,
+          "selected_idx": 0,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "max_grad": 1.0,
+          "E_before": 5.5,
+          "E_after": 5.2928932276492375,
+          "delta_E_step": -0.20710677235076247
+        },
+        {
+          "depth": 2,
+          "selected_idx": 2,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "max_grad": 1.0000000000000002,
+          "E_before": 5.2928932276492375,
+          "E_after": 5.085786469160993,
+          "delta_E_step": -0.20710675848824422
+        },
+        {
+          "depth": 3,
+          "selected_idx": 0,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "max_grad": 0.00035154031412722663,
+          "E_before": 5.085786469160993,
+          "E_after": 5.085786451056995,
+          "delta_E_step": -1.8103998300489366e-08
+        },
+        {
+          "depth": 4,
+          "selected_idx": 2,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "max_grad": 0.00026601011942067496,
+          "E_before": 5.085786451056995,
+          "E_after": 5.085786444653543,
+          "delta_E_step": -6.403451990877329e-09
+        }
+      ],
+      "sector_diag": {
+        "N_up_target": 2.0,
+        "N_dn_target": 1.0,
+        "N_up_expect": 2.0,
+        "N_dn_expect": 1.0,
+        "N_up_abs_err": 0.0,
+        "N_dn_abs_err": 0.0,
+        "N_sector_abs_err_sum": 0.0
+      }
+    },
+    "meta_hva_plus_paop": {
+      "E_best": 5.085786444653543,
+      "E_last": 5.085786444653543,
+      "delta_E_abs": 4.840845744525623,
+      "runtime_s": 3.2898397077806294,
+      "adapt_depth_reached": 4,
+      "adapt_stop_reason": "eps_energy",
+      "num_parameters": 4,
+      "nfev_total": 113,
+      "nit_total": 0,
+      "selected_trace": [
+        {
+          "depth": 1,
+          "selected_idx": 13,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "max_grad": 1.0,
+          "E_before": 5.5,
+          "E_after": 5.2928932276492375,
+          "delta_E_step": -0.20710677235076247
+        },
+        {
+          "depth": 2,
+          "selected_idx": 15,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "max_grad": 1.0000000000000002,
+          "E_before": 5.2928932276492375,
+          "E_after": 5.085786469160993,
+          "delta_E_step": -0.20710675848824422
+        },
+        {
+          "depth": 3,
+          "selected_idx": 13,
+          "selected_label": "paop_lf_std:paop_disp(site=0)",
+          "source": "paop",
+          "max_grad": 0.00035154031412722663,
+          "E_before": 5.085786469160993,
+          "E_after": 5.085786451056995,
+          "delta_E_step": -1.8103998300489366e-08
+        },
+        {
+          "depth": 4,
+          "selected_idx": 15,
+          "selected_label": "paop_lf_std:paop_disp(site=2)",
+          "source": "paop",
+          "max_grad": 0.00026601011942067496,
+          "E_before": 5.085786451056995,
+          "E_after": 5.085786444653543,
+          "delta_E_step": -6.403451990877329e-09
+        }
+      ],
+      "sector_diag": {
+        "N_up_target": 2.0,
+        "N_dn_target": 1.0,
+        "N_up_expect": 2.0,
+        "N_dn_expect": 1.0,
+        "N_up_abs_err": 0.0,
+        "N_dn_abs_err": 0.0,
+        "N_sector_abs_err_sum": 0.0
+      }
+    }
+  },
+  "decision": {
+    "label": "no_clear_meta_gain",
+    "delta_E_improvement": 0.0,
+    "criterion": "meta better if \u0394E improves by >= 0.01"
+  },
+  "runtime_total_s": 6.351172707974911
+}

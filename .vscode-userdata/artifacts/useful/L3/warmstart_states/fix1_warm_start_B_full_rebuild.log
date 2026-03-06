@@ -1,0 +1,18 @@
+[1/5] build hamiltonian/reference...
+  exact sector energy = 0.244940700128
+[2/5] build pool + step0 gradients...
+  pool size = 7
+  top step0 gradient labels:
+    - paop_lf_std:paop_disp(site=0) | |g|=1.000000e+00
+    - paop_lf_std:paop_disp(site=2) | |g|=1.000000e+00
+    - paop_lf_std:paop_disp(site=1) | |g|=0.000000e+00
+    - paop_lf_std:paop_hopdrag(0,1) | |g|=0.000000e+00
+    - paop_lf_std:paop_hopdrag(1,2) | |g|=0.000000e+00
+[3/5] warm-start optimize (FULL B)...
+  warm done in 1220.6s | E_warm=0.264627254921
+[4/5] ADAPT rung B (FULL) ...
+  adapt done in 1201.4s | depth=42 stop=wallclock_cap
+[5/5] wrote state json
+  path=artifacts/useful/L3/warmstart_states/fix1_warm_start_B_full_state.json
+  FINAL: E_best=0.251448233530  delta=6.507533e-03  rel=2.656779e-02
+  runtime_total_s=2422.3

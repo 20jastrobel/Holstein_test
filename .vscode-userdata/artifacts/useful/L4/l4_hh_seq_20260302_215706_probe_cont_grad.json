@@ -1,0 +1,122 @@
+{
+  "config": {
+    "L": 4,
+    "U": 4.0,
+    "boson_encoding": "binary",
+    "boundary": "open",
+    "dv": 0.0,
+    "g_ep": 0.5,
+    "n_ph_max": 1,
+    "omega0": 1.0,
+    "ordering": "blocked",
+    "paop_key": "paop_lf_std",
+    "pool_A_meta": {
+      "dedup_source_presence_counts": {
+        "hva": 0,
+        "paop": 10,
+        "uccsd": 26
+      },
+      "dedup_total": 36,
+      "overlap_count": 0,
+      "raw_sizes": {
+        "paop": 10,
+        "uccsd": 26
+      }
+    },
+    "sector": [
+      2,
+      2
+    ],
+    "t": 1.0
+  },
+  "depth_rows": [
+    {
+      "delta_best": 0.7366642858572092,
+      "delta_post": 0.7366642858572092,
+      "depth_abs": 10,
+      "max_grad": 0.2586204929945907,
+      "nfev_total": 46
+    },
+    {
+      "delta_best": 0.7148712784099379,
+      "delta_post": 0.7148712784099379,
+      "depth_abs": 11,
+      "max_grad": 0.2098147033126654,
+      "nfev_total": 148
+    },
+    {
+      "delta_best": 0.7135711094721937,
+      "delta_post": 0.7135711094721937,
+      "depth_abs": 12,
+      "max_grad": 0.29256385727234446,
+      "nfev_total": 537
+    },
+    {
+      "delta_best": 0.713186061943711,
+      "delta_post": 0.713186061943711,
+      "depth_abs": 13,
+      "max_grad": 0.20238265475787426,
+      "nfev_total": 1111
+    },
+    {
+      "delta_best": 0.7129460619460081,
+      "delta_post": 0.7129460619460081,
+      "depth_abs": 14,
+      "max_grad": 0.12260458758140239,
+      "nfev_total": 1558
+    },
+    {
+      "delta_best": 0.7115062367254819,
+      "delta_post": 0.7115062367254819,
+      "depth_abs": 15,
+      "max_grad": 0.12099837420703224,
+      "nfev_total": 2430
+    }
+  ],
+  "exact": {
+    "E_exact_sector": 0.01665790635825912
+  },
+  "generated_utc": "2026-03-03T04:46:28Z",
+  "grad_history": [
+    0.2586204929945907,
+    0.2098147033126654,
+    0.29256385727234446,
+    0.20238265475787426,
+    0.12260458758140239,
+    0.12099837420703224,
+    0.0988401643571559
+  ],
+  "policy": {
+    "abs_depth_min": 12,
+    "allow_repeats": true,
+    "eps_energy": 1e-09,
+    "grad_floor": 0.2,
+    "grad_patience": 3,
+    "max_additional_depth": 80,
+    "maxiter": 1778,
+    "type": "gradient_sequence"
+  },
+  "result": {
+    "aspirational_pass": false,
+    "best_energy": 0.728164143083741,
+    "delta_E_abs_best": 0.7115062367254819,
+    "depth_added": 6,
+    "depth_final_abs": 15,
+    "nfev_total": 2430,
+    "nit_total": 0,
+    "probe_gate_pass": false,
+    "production_gate_pass": false,
+    "relative_error_abs_best": 42.712824854649966,
+    "runtime_s": 999.4558129999787,
+    "state_checkpoint_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_cont_grad_A_probe_checkpoint_state.json",
+    "state_export_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_cont_grad_A_probe_state.json",
+    "stop_reason": "grad_floor_patience(abs_depth>=12,floor=0.2,patience=3)"
+  },
+  "source_checkpoint": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_A_probe_checkpoint_state.json",
+  "start": {
+    "checkpoint_depth": 9,
+    "delta_E_abs": 0.7408424804770019,
+    "energy": 0.757500386835261,
+    "relative_error_abs": 44.473925146642834
+  }
+}

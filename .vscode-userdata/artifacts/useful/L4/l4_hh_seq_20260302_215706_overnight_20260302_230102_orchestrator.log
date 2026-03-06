@@ -1,0 +1,3 @@
+[2026-03-03T05:01:02Z] RUN_TAG=l4_hh_seq_20260302_215706_overnight_20260302_230102
+[2026-03-03T05:01:02Z] BASE_TAG=l4_hh_seq_20260302_215706
+[2026-03-03T05:01:02Z] START_STATE=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_probe_cont_grad_A_probe_state.json

@@ -1,0 +1,643 @@
+{
+  "generated_utc": "2026-02-23T19:13:57.810613+00:00",
+  "pipeline": "hardcoded",
+  "settings": {
+    "L": 4,
+    "t": 1.0,
+    "u": 4.0,
+    "dv": 0.0,
+    "boundary": "periodic",
+    "ordering": "blocked",
+    "t_final": 0.0,
+    "num_times": 1,
+    "suzuki_order": 2,
+    "trotter_steps": 1,
+    "term_order": "sorted",
+    "initial_state_source": "vqe",
+    "skip_qpe": true,
+    "fidelity_definition_short": "Subspace Fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>",
+    "fidelity_definition": "fidelity(t) = <psi_ansatz_trot(t)|P_exact_gs_subspace(t)|psi_ansatz_trot(t)>, where P_exact_gs_subspace(t) projects onto the time-evolved filtered-sector ground manifold selected by E <= E0 + tol.",
+    "fidelity_subspace_energy_tol": 1e-08,
+    "fidelity_reference_subspace": {
+      "sector": {
+        "n_up": 2,
+        "n_dn": 2
+      },
+      "ground_subspace_dimension": 1,
+      "selection_rule": "E <= E0 + tol"
+    },
+    "fidelity_reference_initial_state": "exact_static_ground_manifold_filtered_sector",
+    "fidelity_reference_sector": {
+      "n_up": 2,
+      "n_dn": 2
+    },
+    "fidelity_ansatz_initial_state": "vqe",
+    "trajectory_branches_definition": "exact_gs: exact/reference propagation from filtered-sector ground-state init; exact_ansatz: exact/reference propagation from ansatz initial state; trotter: Suzuki-Trotter propagation from ansatz initial state.",
+    "energy_observable_definition": "energy_static_exact is <psi_exact_gs_ref(t)|H_static|psi_exact_gs_ref(t)>. energy_static_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static|psi_exact_ansatz_ref(t)>. energy_static_trotter is <psi_ansatz_trot(t)|H_static|psi_ansatz_trot(t)>. energy_total_exact is <psi_exact_gs_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_gs_ref(t)>. energy_total_exact_ansatz is <psi_exact_ansatz_ref(t)|H_static + H_drive(drive_t0 + t)|psi_exact_ansatz_ref(t)>. energy_total_trotter is <psi_ansatz_trot(t)|H_static + H_drive(drive_t0 + t)|psi_ansatz_trot(t)>. When drive is disabled, energy_total_* == energy_static_*. Drive sampling uses the same drive_t0 convention as propagation.",
+    "drive": {
+      "enabled": true,
+      "A": 0.5,
+      "omega": 2.0,
+      "tbar": 3.0,
+      "phi": 0.0,
+      "pattern": "staggered",
+      "custom_s": null,
+      "include_identity": false,
+      "time_sampling": "midpoint",
+      "t0": 0.0,
+      "reference_steps_multiplier": 1,
+      "reference_steps": 1,
+      "reference_method": "exponential_midpoint_magnus2_order2",
+      "propagator_backend": "scipy_sparse_expm_multiply"
+    }
+  },
+  "hamiltonian": {
+    "num_qubits": 8,
+    "num_terms": 29,
+    "coefficients_exyz": [
+      {
+        "label_exyz": "eeeeeeee",
+        "coeff": {
+          "re": 4.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeeez",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeexx",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeeyy",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeeze",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeexxe",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeeyye",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeezee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeexxee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeexzzx",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeyyee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeeyzzy",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeeezeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeezeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeezeeez",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eexxeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eeyyeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eezeeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eezeeeze",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "exxeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "eyyeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "ezeeeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "ezeeezee",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "xxeeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "xzzxeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "yyeeeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "yzzyeeee",
+        "coeff": {
+          "re": -0.5,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "zeeeeeee",
+        "coeff": {
+          "re": -1.0,
+          "im": 0.0
+        }
+      },
+      {
+        "label_exyz": "zeeezeee",
+        "coeff": {
+          "re": 1.0,
+          "im": 0.0
+        }
+      }
+    ]
+  },
+  "ground_state": {
+    "exact_energy": -3.418550718873847,
+    "exact_energy_filtered": -2.1027484834620753,
+    "filtered_sector": {
+      "n_up": 2,
+      "n_dn": 2
+    },
+    "ground_subspace_dimension": 1,
+    "method": "matrix_diagonalization"
+  },
+  "vqe": {
+    "success": true,
+    "method": "hardcoded_uccsd_notebook_statevector",
+    "energy": -2.1026450003175046,
+    "best_restart": 2,
+    "nfev": 4000,
+    "nit": 0,
+    "message": "Maximum number of function evaluations has been exceeded.",
+    "num_particles": {
+      "n_up": 2,
+      "n_dn": 2
+    },
+    "num_parameters": 104,
+    "reps": 4,
+    "optimizer_method": "COBYLA",
+    "optimal_point": [
+      0.3976710608701159,
+      -0.3949882095059588,
+      -0.01815037068393256,
+      0.272543399164006,
+      -0.489469051408495,
+      -0.6803684978218804,
+      0.8339752557725155,
+      0.13616725310852357,
+      -0.15099687143171972,
+      0.7800475851708663,
+      0.3865575567012516,
+      -0.4685372498394781,
+      0.023124868583583588,
+      -0.5248244470606723,
+      -0.9992228255206912,
+      0.46777065283628483,
+      1.284482539215706,
+      0.004435677067179135,
+      -0.2661835056310505,
+      -0.14818870881592972,
+      -0.29341792412200013,
+      0.7982833081038673,
+      0.050492907712581664,
+      -0.2672668170169277,
+      0.04681273684423648,
+      1.1437502842006178,
+      0.7527239000202892,
+      -0.37251022736461553,
+      0.5075411182000732,
+      -0.24683960426487567,
+      0.15606980928902456,
+      0.6177165543709062,
+      -0.1205923236409975,
+      0.13791927013939442,
+      0.15960226922931495,
+      -0.08777900961798177,
+      0.1806512842739149,
+      0.4252740643174324,
+      -0.0757046928404245,
+      -0.6056394488431783,
+      -0.5855810990115354,
+      -0.374667196971143,
+      -0.273554727500782,
+      0.589520566102458,
+      0.32886999192894584,
+      0.9014537720365804,
+      -0.09827169735274328,
+      0.5452993894006471,
+      0.29678120437401795,
+      -0.34996193365494604,
+      0.04543623773480729,
+      -0.010454598199829737,
+      0.15365587150452337,
+      0.20183557968435753,
+      0.04949887575795442,
+      0.10869385874407379,
+      0.3078594798477799,
+      0.4113517011423695,
+      -0.17352092875828193,
+      1.4277438108231897,
+      0.027037647682619636,
+      0.1504267295048168,
+      -0.20884758323662211,
+      -0.48789927361988183,
+      0.5235023428721102,
+      0.3334999714387916,
+      -0.12522758546439616,
+      0.21309079081503757,
+      0.28751016900520016,
+      -0.8436740840363185,
+      -0.19185841242851,
+      -0.12969372359727796,
+      -0.08395152719598721,
+      -0.42416601504461654,
+      -0.6566627796041883,
+      -0.36167266840865636,
+      0.4253032593300933,
+      0.5101840424777633,
+      -0.08469444507618833,
+      0.5219228411613646,
+      -0.05563523739399428,
+      -0.253629977382308,
+      -0.4196686121778503,
+      0.28319452893551367,
+      0.2790410610977043,
+      0.2524031220248887,
+      0.2797182216858929,
+      -0.17199839416586898,
+      -0.3052797376541888,
+      0.2324719153291974,
+      -0.05655625808984965,
+      -0.052554914708454234,
+      0.8199154755136301,
+      0.08473714292388514,
+      -0.4326139895865485,
+      0.9198499369213382,
+      0.7525917475738707,
+      0.7065703209798495,
+      0.3327462196527756,
+      -0.210023592461775,
+      -0.22127210227354713,
+      -0.44457019270029163,
+      -0.42789057958136456,
+      1.0275373197096034
+    ],
+    "hf_bitstring_qn_to_q0": "00110011"
+  },
+  "qpe": {
+    "success": false,
+    "method": "qpe_skipped",
+    "energy_estimate": null,
+    "phase": null,
+    "skipped": true,
+    "reason": "--skip-qpe enabled",
+    "num_evaluation_qubits": 6,
+    "shots": 1024
+  },
+  "initial_state": {
+    "source": "vqe",
+    "amplitudes_qn_to_q0": {
+      "00110011": {
+        "re": 0.05041986138260985,
+        "im": 0.0
+      },
+      "00110101": {
+        "re": 0.12651630596726454,
+        "im": 0.0
+      },
+      "00110110": {
+        "re": -0.0011199133702734976,
+        "im": 0.0
+      },
+      "00111001": {
+        "re": -0.0004911790817183628,
+        "im": 0.0
+      },
+      "00111010": {
+        "re": -0.1303683814541594,
+        "im": 0.0
+      },
+      "00111100": {
+        "re": -0.24360083012665795,
+        "im": 0.0
+      },
+      "01010011": {
+        "re": 0.12857639796887113,
+        "im": 0.0
+      },
+      "01010101": {
+        "re": -0.0008620221769352817,
+        "im": 0.0
+      },
+      "01010110": {
+        "re": -0.13203315699005103,
+        "im": 0.0
+      },
+      "01011001": {
+        "re": -0.13059410566266827,
+        "im": 0.0
+      },
+      "01011010": {
+        "re": -0.49541558035359284,
+        "im": 0.0
+      },
+      "01011100": {
+        "re": -0.1296037122658642,
+        "im": 0.0
+      },
+      "01100011": {
+        "re": 0.0005638152803107567,
+        "im": 0.0
+      },
+      "01100101": {
+        "re": -0.12840936948849255,
+        "im": 0.0
+      },
+      "01100110": {
+        "re": -0.05124877267975496,
+        "im": 0.0
+      },
+      "01101001": {
+        "re": -0.2460725137257468,
+        "im": 0.0
+      },
+      "01101010": {
+        "re": -0.1299742248709889,
+        "im": 0.0
+      },
+      "01101100": {
+        "re": -0.0009537720012355203,
+        "im": 0.0
+      },
+      "10010011": {
+        "re": 0.0008437338770904118,
+        "im": 0.0
+      },
+      "10010101": {
+        "re": -0.12918063829468118,
+        "im": 0.0
+      },
+      "10010110": {
+        "re": -0.2508540631507282,
+        "im": 0.0
+      },
+      "10011001": {
+        "re": -0.05139177994659354,
+        "im": 0.0
+      },
+      "10011010": {
+        "re": -0.130537471870741,
+        "im": 0.0
+      },
+      "10011100": {
+        "re": -0.0008206051692039115,
+        "im": 0.0
+      },
+      "10100011": {
+        "re": -0.12738282666057482,
+        "im": 0.0
+      },
+      "10100101": {
+        "re": -0.48530562453478276,
+        "im": 0.0
+      },
+      "10100110": {
+        "re": -0.12831562621553294,
+        "im": 0.0
+      },
+      "10101001": {
+        "re": -0.1280551355418942,
+        "im": 0.0
+      },
+      "10101010": {
+        "re": -6.622108327954826e-05,
+        "im": 0.0
+      },
+      "10101100": {
+        "re": 0.12777071844061033,
+        "im": 0.0
+      },
+      "11000011": {
+        "re": -0.24377586736379825,
+        "im": 0.0
+      },
+      "11000101": {
+        "re": -0.12754358801363377,
+        "im": 0.0
+      },
+      "11000110": {
+        "re": 0.0006039524174597912,
+        "im": 0.0
+      },
+      "11001001": {
+        "re": 0.0004634608301195,
+        "im": 0.0
+      },
+      "11001010": {
+        "re": 0.12942822701038947,
+        "im": 0.0
+      },
+      "11001100": {
+        "re": 0.05115290351287747,
+        "im": 0.0
+      }
+    }
+  },
+  "trajectory": [
+    {
+      "time": 0.0,
+      "fidelity": 0.9998746882400258,
+      "energy_static_exact": -2.102748483462075,
+      "energy_static_exact_ansatz": -2.1026450003175245,
+      "energy_static_trotter": -2.1026450003175245,
+      "energy_total_exact": -2.102748483462075,
+      "energy_total_exact_ansatz": -2.1026450003175245,
+      "energy_total_trotter": -2.1026450003175245,
+      "n_up_site0_exact": 0.4999999999999999,
+      "n_up_site0_exact_ansatz": 0.4923469699197069,
+      "n_up_site0_trotter": 0.4923469699197069,
+      "n_dn_site0_exact": 0.5000000000000004,
+      "n_dn_site0_exact_ansatz": 0.5074391707449537,
+      "n_dn_site0_trotter": 0.5074391707449537,
+      "n_site_exact": [
+        1.0000000000000004,
+        1.0000000000000004,
+        1.0,
+        1.0
+      ],
+      "n_site_exact_ansatz": [
+        0.9997861406646606,
+        0.9996843613993631,
+        1.0003865998454708,
+        1.0001428980905067
+      ],
+      "n_site_trotter": [
+        0.9997861406646606,
+        0.9996843613993631,
+        1.0003865998454708,
+        1.0001428980905067
+      ],
+      "staggered_exact": 0.0,
+      "staggered_exact_ansatz": 8.637025506541551e-05,
+      "staggered_trotter": 8.637025506541551e-05,
+      "doublon_exact": 0.28732537269005387,
+      "doublon_exact_ansatz": 0.2872214537542762,
+      "doublon_trotter": 0.2872214537542762,
+      "doublon_avg_exact": 0.07183134317251347,
+      "doublon_avg_exact_ansatz": 0.07180536343856905,
+      "doublon_avg_trotter": 0.07180536343856905,
+      "n_up_site_exact": [
+        0.4999999999999999,
+        0.5000000000000004,
+        0.4999999999999998,
+        0.5000000000000003
+      ],
+      "n_up_site_exact_ansatz": [
+        0.4923469699197069,
+        0.507299124654329,
+        0.49550815520370184,
+        0.5048457502222629
+      ],
+      "n_up_site_trotter": [
+        0.4923469699197069,
+        0.507299124654329,
+        0.49550815520370184,
+        0.5048457502222629
+      ],
+      "n_dn_site_exact": [
+        0.5000000000000004,
+        0.5,
+        0.5000000000000002,
+        0.4999999999999998
+      ],
+      "n_dn_site_exact_ansatz": [
+        0.5074391707449537,
+        0.4923852367450341,
+        0.5048784446417691,
+        0.4952971478682438
+      ],
+      "n_dn_site_trotter": [
+        0.5074391707449537,
+        0.4923852367450341,
+        0.5048784446417691,
+        0.4952971478682438
+      ],
+      "norm_before_renorm": 1.0
+    }
+  ],
+  "sanity": {
+    "jw_reference": {
+      "checked": false,
+      "reason": "no matching bundled reference for these settings"
+    }
+  }
+}

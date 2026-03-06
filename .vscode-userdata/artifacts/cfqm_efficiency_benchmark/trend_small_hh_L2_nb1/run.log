@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/cfqm_vs_suzuki_efficiency_suite.py", line 1827, in <module>
+    main()
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/cfqm_vs_suzuki_efficiency_suite.py", line 1816, in main
+    res = run_efficiency_suite(cfg)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/cfqm_vs_suzuki_efficiency_suite.py", line 1516, in run_efficiency_suite
+    calibration = _maybe_calibrate_transpile(
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/exact_bench/cfqm_vs_suzuki_efficiency_suite.py", line 1319, in _maybe_calibrate_transpile
+    tqc = transpile(qc, backend=backend, optimization_level=1)
+  File "/opt/anaconda3/lib/python3.10/site-packages/qiskit/compiler/transpiler.py", line 264, in transpile
+    _check_circuits_coupling_map(circuits, coupling_map, backend)
+  File "/opt/anaconda3/lib/python3.10/site-packages/qiskit/compiler/transpiler.py", line 315, in _check_circuits_coupling_map
+    raise CircuitTooWideForTarget(
+qiskit.transpiler.exceptions.CircuitTooWideForTarget: 'Number of qubits (6) in circuit-46 is greater than maximum (5) in the coupling_map'

@@ -1,0 +1,27 @@
+[2026-03-03T01:22:30Z] CONFIG L=4 sector=(2,2) encoding=binary ordering=blocked boundary=open poolA=UCCSD+PAOP poolB=UCCSD+PAOP+HVA warm=hh_hva_ptw
+[2026-03-03T01:22:39Z] EXACT sector energy: 0.016657906358
+[2026-03-03T01:22:39Z] WARM restart 1/4 start elapsed_s=0.0 nfev_so_far=0
+[2026-03-03T01:23:40Z] WARM heartbeat restart 1/4 elapsed_s=60.5 nfev_so_far=59 |DeltaE|=6.508417e+00 best|DeltaE|=4.834927e+00
+[2026-03-03T01:24:40Z] WARM heartbeat restart 1/4 elapsed_s=121.0 nfev_so_far=121 |DeltaE|=4.353063e+00 best|DeltaE|=4.349057e+00
+[2026-03-03T01:25:41Z] WARM heartbeat restart 1/4 elapsed_s=181.4 nfev_so_far=183 |DeltaE|=4.377347e+00 best|DeltaE|=3.948519e+00
+[2026-03-03T01:26:41Z] WARM heartbeat restart 1/4 elapsed_s=241.6 nfev_so_far=242 |DeltaE|=3.605906e+00 best|DeltaE|=3.605906e+00
+[2026-03-03T01:27:41Z] WARM heartbeat restart 1/4 elapsed_s=301.8 nfev_so_far=305 |DeltaE|=3.229999e+00 best|DeltaE|=3.179634e+00
+[2026-03-03T01:28:41Z] WARM heartbeat restart 1/4 elapsed_s=362.1 nfev_so_far=366 |DeltaE|=2.607406e+00 best|DeltaE|=2.536807e+00
+[2026-03-03T01:29:42Z] WARM heartbeat restart 1/4 elapsed_s=423.0 nfev_so_far=427 |DeltaE|=2.294865e+00 best|DeltaE|=2.276664e+00
+[2026-03-03T01:30:43Z] WARM heartbeat restart 1/4 elapsed_s=483.8 nfev_so_far=489 |DeltaE|=2.247164e+00 best|DeltaE|=2.204109e+00
+[2026-03-03T01:31:44Z] WARM heartbeat restart 1/4 elapsed_s=544.7 nfev_so_far=552 |DeltaE|=1.616419e+00 best|DeltaE|=1.615346e+00
+[2026-03-03T01:32:45Z] WARM heartbeat restart 1/4 elapsed_s=605.5 nfev_so_far=614 |DeltaE|=1.345197e+00 best|DeltaE|=1.338870e+00
+[2026-03-03T01:33:45Z] WARM heartbeat restart 1/4 elapsed_s=665.6 nfev_so_far=677 |DeltaE|=1.125812e+00 best|DeltaE|=1.125812e+00
+[2026-03-03T01:34:45Z] WARM heartbeat restart 1/4 elapsed_s=725.8 nfev_so_far=740 |DeltaE|=9.821003e-01 best|DeltaE|=9.821003e-01
+[2026-03-03T01:35:45Z] WARM heartbeat restart 1/4 elapsed_s=786.2 nfev_so_far=800 |DeltaE|=9.525606e-01 best|DeltaE|=9.525606e-01
+[2026-03-03T01:41:57Z] WARM heartbeat restart 1/4 elapsed_s=846.3 nfev_so_far=846 |DeltaE|=9.363641e-01 best|DeltaE|=9.126878e-01
+[2026-03-03T01:42:57Z] WARM heartbeat restart 1/4 elapsed_s=906.4 nfev_so_far=906 |DeltaE|=8.891276e-01 best|DeltaE|=8.826955e-01
+[2026-03-03T01:43:58Z] WARM heartbeat restart 1/4 elapsed_s=966.9 nfev_so_far=966 |DeltaE|=8.665128e-01 best|DeltaE|=8.537617e-01
+[2026-03-03T01:44:58Z] WARM heartbeat restart 1/4 elapsed_s=1027.2 nfev_so_far=1023 |DeltaE|=8.249359e-01 best|DeltaE|=8.249359e-01
+[2026-03-03T01:45:59Z] WARM heartbeat restart 1/4 elapsed_s=1087.6 nfev_so_far=1086 |DeltaE|=8.164569e-01 best|DeltaE|=8.078295e-01
+[2026-03-03T01:46:59Z] WARM heartbeat restart 1/4 elapsed_s=1148.4 nfev_so_far=1150 |DeltaE|=7.533364e-01 best|DeltaE|=7.522136e-01
+[2026-03-03T01:47:59Z] WARM heartbeat restart 1/4 elapsed_s=1208.5 nfev_so_far=1212 |DeltaE|=7.359837e-01 best|DeltaE|=7.334074e-01
+[2026-03-03T01:49:00Z] WARM heartbeat restart 1/4 elapsed_s=1269.0 nfev_so_far=1274 |DeltaE|=7.180467e-01 best|DeltaE|=7.150443e-01
+[2026-03-03T01:50:00Z] WARM heartbeat restart 1/4 elapsed_s=1329.6 nfev_so_far=1336 |DeltaE|=6.947053e-01 best|DeltaE|=6.922602e-01
+[2026-03-03T01:51:01Z] WARM heartbeat restart 1/4 elapsed_s=1390.0 nfev_so_far=1396 |DeltaE|=6.811034e-01 best|DeltaE|=6.798913e-01
+[2026-03-03T01:52:02Z] WARM heartbeat restart 1/4 elapsed_s=1451.0 nfev_so_far=1460 |DeltaE|=6.682134e-01 best|DeltaE|=6.665817e-01

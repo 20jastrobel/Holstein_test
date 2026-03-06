@@ -1,0 +1,14 @@
+[2026-03-03T08:46:22Z] VQE_FROM_ADAPT_START state=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_overnight_20260302_230205_adapt_A_probe_checkpoint_state.json
+[2026-03-03T08:46:22Z] VQE config npar=16 restarts=16 maxiter=12000 method=COBYLA budget_s=28800
+[2026-03-03T08:46:22Z] VQE start energy=0.683171357826 |DeltaE|=6.665135e-01
+[2026-03-03T08:47:23Z] VQE heartbeat restart=1/16 elapsed_s=60.8 calls=71 |DeltaE|=6.663711e-01 best|DeltaE|=6.663560e-01 slope_last3=nan/s
+[2026-03-03T08:48:25Z] VQE heartbeat restart=1/16 elapsed_s=121.5 calls=127 |DeltaE|=6.659129e-01 best|DeltaE|=6.659129e-01 slope_last3=nan/s
+[2026-03-03T08:49:25Z] VQE heartbeat restart=1/16 elapsed_s=182.7 calls=179 |DeltaE|=6.657468e-01 best|DeltaE|=6.657436e-01 slope_last3=-5.024502e-06/s
+[2026-03-03T08:50:26Z] VQE heartbeat restart=1/16 elapsed_s=243.1 calls=236 |DeltaE|=6.656267e-01 best|DeltaE|=6.656201e-01 slope_last3=-2.408237e-06/s
+[2026-03-03T08:51:27Z] VQE heartbeat restart=1/16 elapsed_s=303.8 calls=294 |DeltaE|=6.655411e-01 best|DeltaE|=6.655401e-01 slope_last3=-1.679858e-06/s
+[2026-03-03T08:52:28Z] VQE heartbeat restart=1/16 elapsed_s=365.0 calls=353 |DeltaE|=6.655043e-01 best|DeltaE|=6.655037e-01 slope_last3=-9.543648e-07/s
+[2026-03-03T08:53:29Z] VQE heartbeat restart=1/16 elapsed_s=425.2 calls=408 |DeltaE|=6.654794e-01 best|DeltaE|=6.654794e-01 slope_last3=-4.994512e-07/s
+[2026-03-03T08:54:29Z] VQE heartbeat restart=1/16 elapsed_s=486.3 calls=460 |DeltaE|=6.654564e-01 best|DeltaE|=6.654563e-01 slope_last3=-3.915804e-07/s
+[2026-03-03T08:55:30Z] VQE heartbeat restart=1/16 elapsed_s=546.8 calls=508 |DeltaE|=6.654264e-01 best|DeltaE|=6.654261e-01 slope_last3=-4.382142e-07/s
+[2026-03-03T08:56:31Z] VQE heartbeat restart=1/16 elapsed_s=607.3 calls=562 |DeltaE|=6.654055e-01 best|DeltaE|=6.654055e-01 slope_last3=-4.194910e-07/s
+[2026-03-03T08:57:31Z] VQE heartbeat restart=1/16 elapsed_s=668.1 calls=612 |DeltaE|=6.653895e-01 best|DeltaE|=6.653893e-01 slope_last3=-3.034745e-07/s

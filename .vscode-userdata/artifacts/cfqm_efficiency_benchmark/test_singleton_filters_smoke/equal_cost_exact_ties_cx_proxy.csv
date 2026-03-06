@@ -1,0 +1,3 @@
+scenario_id,drive_case_id,track,axis,target_cost,method,stage_mode,trotter_steps,max_energy_abs_err,max_doublon_abs_err,final_infidelity
+hh_L2_nb1,sin_om2.0_tb5.0,integrator_exact_sparse,cx_proxy,640.0,suzuki2,exact_sparse,16,5.8699350063307065e-05,0.0001112268493194124,0.8575032621175004
+hh_L2_nb1,gauss_om2.0_tb0.25,integrator_exact_sparse,cx_proxy,640.0,suzuki2,exact_sparse,16,3.719201629026614e-05,0.00010475600216608427,0.8575054735679546

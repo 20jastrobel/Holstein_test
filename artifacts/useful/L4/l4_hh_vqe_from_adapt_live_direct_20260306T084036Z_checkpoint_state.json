@@ -1,0 +1,23 @@
+{
+  "tag": "l4_hh_vqe_from_adapt_live_direct_20260306T084036Z",
+  "adapt_input_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/json/l4_hh_adapt_fullmeta_spsa_cont_d2_maxdepth20_20260305T183916Z.json",
+  "event": "heartbeat",
+  "best": {
+    "energy": 5.2128049744653335,
+    "delta_abs": 5.1967155435759835
+  },
+  "last": {
+    "event": "heartbeat",
+    "elapsed_s": 1989.0440749162808,
+    "restart": null,
+    "restarts_total": 4,
+    "nfev_so_far": 67,
+    "nfev_restart": 67,
+    "energy_current": 5.683859613676807,
+    "energy_best": 5.2128049744653335,
+    "delta_abs_best": 5.1967155435759835,
+    "method": "SPSA",
+    "message": null
+  },
+  "ts_utc": "2026-03-06T09:13:46Z"
+}

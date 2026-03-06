@@ -969,6 +969,7 @@ def _run_internal_adapt_paop(
     paop_normalization: str,
     adapt_disable_hh_seed: bool,
     psi_ref_override: np.ndarray | None = None,
+    adapt_reopt_policy: str = "append_only",
 ) -> tuple[dict[str, Any], np.ndarray]:
     from pipelines.hardcoded import adapt_pipeline as adapt_mod
 
@@ -1001,6 +1002,7 @@ def _run_internal_adapt_paop(
         paop_normalization=str(paop_normalization),
         disable_hh_seed=bool(adapt_disable_hh_seed),
         psi_ref_override=psi_ref_override,
+        adapt_reopt_policy=str(adapt_reopt_policy),
     )
 
 
@@ -2664,6 +2666,7 @@ def parse_args() -> argparse.Namespace:
             "cse",
             "full_hamiltonian",
             "hva",
+            "full_meta",
             "uccsd_paop_lf_full",
             "paop",
             "paop_min",
@@ -3019,7 +3022,7 @@ def main() -> None:
             "elapsed_s": adapt_internal_payload_raw.get("elapsed_s"),
             "allow_repeats": adapt_internal_payload_raw.get("allow_repeats"),
         }
-        if adapt_ref_source_key != "hf" or str(args.adapt_pool).strip().lower() == "uccsd_paop_lf_full":
+        if adapt_ref_source_key != "hf" or str(args.adapt_pool).strip().lower() in {"uccsd_paop_lf_full", "full_meta"}:
             adapt_internal_payload["adapt_ref_source"] = str(adapt_ref_source_key)
             adapt_internal_payload["nfev_total"] = adapt_internal_payload_raw.get("nfev_total")
         _ai_log(
@@ -3231,7 +3234,7 @@ def main() -> None:
     _use_internal_adapt = str(args.initial_state_source) != "adapt_json"
     _adapt_ref_source_key = str(args.adapt_ref_source).strip().lower()
     if _use_internal_adapt and (
-        _adapt_ref_source_key != "hf" or str(args.adapt_pool).strip().lower() == "uccsd_paop_lf_full"
+        _adapt_ref_source_key != "hf" or str(args.adapt_pool).strip().lower() in {"uccsd_paop_lf_full", "full_meta"}
     ):
         settings["adapt_ref_source"] = str(_adapt_ref_source_key)
     if bool(args.enable_drive):

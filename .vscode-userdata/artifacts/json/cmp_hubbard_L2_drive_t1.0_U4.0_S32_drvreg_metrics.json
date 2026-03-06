@@ -1,0 +1,91 @@
+{
+  "generated_utc": "2026-02-25T18:45:17.291210+00:00",
+  "L": 2,
+  "hc_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/artifacts/drive_reg/json/H_L2_vt_t1.0_U4.0_S32.json",
+  "qk_json": "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/Fermi-Hamil-JW-VQE-TROTTER-PIPELINE/artifacts/drive_reg/json/Q_L2_vt_t1.0_U4.0_S32.json",
+  "metrics": {
+    "time_grid": {
+      "num_times": 51,
+      "t0": 0.0,
+      "t_final": 5.0,
+      "dt": 0.1
+    },
+    "trajectory_deltas": {
+      "fidelity": {
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "final_abs_delta": 0.0,
+        "first_time_abs_delta_gt_1e-4": null,
+        "first_time_abs_delta_gt_1e-3": null
+      },
+      "energy_static_trotter": {
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "final_abs_delta": 0.0,
+        "first_time_abs_delta_gt_1e-4": null,
+        "first_time_abs_delta_gt_1e-3": null
+      },
+      "n_up_site0_trotter": {
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "final_abs_delta": 0.0,
+        "first_time_abs_delta_gt_1e-4": null,
+        "first_time_abs_delta_gt_1e-3": null
+      },
+      "n_dn_site0_trotter": {
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "final_abs_delta": 0.0,
+        "first_time_abs_delta_gt_1e-4": null,
+        "first_time_abs_delta_gt_1e-3": null
+      },
+      "doublon_trotter": {
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "final_abs_delta": 0.0,
+        "first_time_abs_delta_gt_1e-4": null,
+        "first_time_abs_delta_gt_1e-3": null
+      },
+      "energy_total_exact": {
+        "max_abs_delta": 0.1716681545889267,
+        "mean_abs_delta": 0.09129547318328428,
+        "final_abs_delta": 0.01691498115308998,
+        "first_time_abs_delta_gt_1e-4": 0.0,
+        "first_time_abs_delta_gt_1e-3": 0.0
+      },
+      "energy_total_trotter": {
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "final_abs_delta": 0.0,
+        "first_time_abs_delta_gt_1e-4": null,
+        "first_time_abs_delta_gt_1e-3": null
+      }
+    },
+    "ground_state_energy": {
+      "hardcoded_exact_energy": -1.0,
+      "qiskit_exact_energy": -1.0,
+      "abs_delta": 0.0
+    },
+    "acceptance": {
+      "thresholds": {
+        "ground_state_energy_abs_delta": 1e-08,
+        "fidelity_max_abs_delta": 0.0001,
+        "energy_static_trotter_max_abs_delta": 0.001,
+        "energy_total_trotter_max_abs_delta": 0.001,
+        "n_up_site0_trotter_max_abs_delta": 0.005,
+        "n_dn_site0_trotter_max_abs_delta": 0.005,
+        "doublon_trotter_max_abs_delta": 0.001
+      },
+      "checks": {
+        "ground_state_energy_abs_delta": true,
+        "fidelity_max_abs_delta": true,
+        "energy_static_trotter_max_abs_delta": true,
+        "n_up_site0_trotter_max_abs_delta": true,
+        "n_dn_site0_trotter_max_abs_delta": true,
+        "doublon_trotter_max_abs_delta": true,
+        "energy_total_trotter_max_abs_delta": true
+      },
+      "pass": true
+    }
+  }
+}

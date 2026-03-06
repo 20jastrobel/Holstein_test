@@ -1,0 +1,32 @@
+{
+  "source_stage_json": "artifacts/json/hh_noise_robustness_L2_L2_hh_u2_g1_S64_N101.json",
+  "profile": "static",
+  "method": "cfqm4",
+  "mode": "shots",
+  "shots": 512,
+  "oracle_repeats": 1,
+  "num_points": 41,
+  "max_abs_delta": 0.12166317991358533,
+  "mean_abs_delta": 0.07135830186482425,
+  "backend_info": {
+    "noise_mode": "shots",
+    "estimator_kind": "qiskit_aer.primitives.Estimator",
+    "backend_name": "aer_simulator",
+    "using_fake_backend": false,
+    "details": {
+      "shots": 512,
+      "aer_failed": false,
+      "fallback_used": false,
+      "fallback_mode": "sampler_shots",
+      "fallback_reason": "",
+      "env_workaround_applied": true,
+      "mitigation": {
+        "mode": "none",
+        "zne_scales": [],
+        "dd_sequence": null
+      }
+    }
+  },
+  "output_png": "docs/time_dynamics_noise_vs_noiseless_cfqm4_static.png",
+  "output_pdf": "docs/time_dynamics_noise_vs_noiseless_cfqm4_static.pdf"
+}

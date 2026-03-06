@@ -1,0 +1,18 @@
+{
+  "method": "suzuki2",
+  "profile": "drive",
+  "trotter_steps": 72,
+  "num_times": 41,
+  "t_final": 10.0,
+  "shots": 512,
+  "oracle_repeats": 1,
+  "oracle_aggregate": "mean",
+  "max_abs_delta_shots": 0.1446104793007862,
+  "mean_abs_delta_shots": 0.058284882142646065,
+  "max_abs_delta_over_stderr_shots": 144610479300.7862,
+  "mean_abs_delta_over_stderr_shots": 58284882142.64606,
+  "max_abs_delta_aer_noise": 2.979964170896326,
+  "mean_abs_delta_aer_noise": 2.6678593080881816,
+  "max_abs_delta_over_stderr_aer_noise": 2979964170896.3257,
+  "mean_abs_delta_over_stderr_aer_noise": 2667859308088.1816
+}

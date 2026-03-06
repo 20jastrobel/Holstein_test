@@ -1,0 +1,48 @@
+[CHAIN] start_utc=2026-03-05T02:16:56Z
+[CHAIN] tag=l4_hh_nph2_hva_to_adapt_to_vqe_chain_20260305T021656
+[CHAIN] warm_json=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/json/l4_hh_nph2_hva_to_adapt_to_vqe_chain_20260305T021656_warm_hva_seed.json
+[CHAIN] adapt_json=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/json/l4_hh_nph2_hva_to_adapt_to_vqe_chain_20260305T021656_adapt_from_hva.json
+[CHAIN] vqe_json=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/json/l4_hh_nph2_hva_to_adapt_to_vqe_chain_20260305T021656_vqe_from_adapt.json
+AI_LOG {"L": 4, "ansatz": "hh_hva_ptw", "energy_backend": "one_apply_compiled", "event": "hardcoded_vqe_start", "maxiter": 7111, "method": "COBYLA", "ordering": "blocked", "problem": "hh", "reps": 4, "restarts": 7, "seed": 7, "ts_utc": "2026-03-05T02:16:57.590718+00:00", "vqe_progress_every_s": 60.0}
+AI_LOG {"elapsed_s": 0.0, "event": "hardcoded_vqe_run_start", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "npar": 72, "restarts_total": 7, "ts_utc": "2026-03-05T02:16:58.016722+00:00"}
+AI_LOG {"elapsed_restart_s": 0.0, "elapsed_s": 0.0001237494871020317, "energy_best_global": null, "event": "hardcoded_vqe_restart_start", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "nfev_so_far": 0, "restart_index": 1, "restarts_total": 7, "ts_utc": "2026-03-05T02:16:58.016842+00:00"}
+AI_LOG {"elapsed_restart_s": 60.31780091673136, "elapsed_s": 60.31792466621846, "energy_best_global": 8.541358174100317, "energy_current": 8.541358174100317, "energy_restart_best": 8.541358174100317, "event": "hardcoded_vqe_heartbeat", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "nfev_restart": 2, "nfev_so_far": 2, "restart_index": 1, "restarts_total": 7, "theta_current": null, "theta_restart_best": null, "ts_utc": "2026-03-05T02:17:58.335401+00:00"}
+AI_LOG {"elapsed_restart_s": 150.2738890843466, "elapsed_s": 150.2740128338337, "energy_best_global": 8.401780593595216, "energy_current": 8.401780593595216, "energy_restart_best": 8.401780593595216, "event": "hardcoded_vqe_heartbeat", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "nfev_restart": 5, "nfev_so_far": 5, "restart_index": 1, "restarts_total": 7, "theta_current": null, "theta_restart_best": null, "ts_utc": "2026-03-05T02:19:28.292471+00:00"}
+AI_LOG {"elapsed_restart_s": 210.7703895419836, "elapsed_s": 210.7705132914707, "energy_best_global": 8.401780593595216, "energy_current": 8.654378590777622, "energy_restart_best": 8.401780593595216, "event": "hardcoded_vqe_heartbeat", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "nfev_restart": 7, "nfev_so_far": 7, "restart_index": 1, "restarts_total": 7, "theta_current": null, "theta_restart_best": null, "ts_utc": "2026-03-05T02:20:28.789646+00:00"}
+AI_LOG {"elapsed_restart_s": 271.1049538748339, "elapsed_s": 271.105077624321, "energy_best_global": 7.58964832198059, "energy_current": 7.58964832198059, "energy_restart_best": 7.58964832198059, "event": "hardcoded_vqe_heartbeat", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "nfev_restart": 9, "nfev_so_far": 9, "restart_index": 1, "restarts_total": 7, "theta_current": null, "theta_restart_best": null, "ts_utc": "2026-03-05T02:21:29.124881+00:00"}
+AI_LOG {"elapsed_restart_s": 332.5699175838381, "elapsed_s": 332.5700413333252, "energy_best_global": 7.411193697951177, "energy_current": 7.411193697951177, "energy_restart_best": 7.411193697951177, "event": "hardcoded_vqe_heartbeat", "label": "hardcoded_vqe", "maxiter": 7111, "method": "COBYLA", "nfev_restart": 11, "nfev_so_far": 11, "restart_index": 1, "restarts_total": 7, "theta_current": null, "theta_restart_best": null, "ts_utc": "2026-03-05T02:22:30.590483+00:00"}
+capi_return is NULL
+Call-back cb_calcfc_in__cobyla__user__routines failed.
+Traceback (most recent call last):
+  File "<stdin>", line 23, in <module>
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/pipelines/hardcoded/hubbard_pipeline.py", line 828, in _run_hardcoded_vqe
+    result = ns["vqe_minimize"](
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 1966, in vqe_minimize
+    res = minimize(
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_minimize.py", line 744, in minimize
+    res = _minimize_cobyla(fun, x0, args, constraints, callback=callback,
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_cobyla_py.py", line 35, in wrapper
+    return func(*args, **kwargs)
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_cobyla_py.py", line 293, in _minimize_cobyla
+    xopt, info = cobyla.minimize(calcfc, m=m, x=np.copy(x0), rhobeg=rhobeg,
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_cobyla_py.py", line 281, in calcfc
+    f = sf.fun(x)
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_differentiable_functions.py", line 326, in fun
+    self._update_fun()
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_differentiable_functions.py", line 295, in _update_fun
+    fx = self._wrapped_fun(self.x)
+  File "/opt/anaconda3/lib/python3.10/site-packages/scipy/optimize/_differentiable_functions.py", line 21, in wrapped
+    fx = fun(np.copy(x), *args)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 1793, in _objective_with_progress
+    e_val = float(energy_fn(x))
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 1720, in energy_fn
+    psi = ansatz.prepare_state(theta, psi_ref)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 1416, in prepare_state
+    psi = apply_exp_pauli_polynomial(
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 386, in apply_exp_pauli_polynomial
+    psi = apply_pauli_rotation(psi, ps, angle)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 346, in apply_pauli_rotation
+    Ppsi = apply_pauli_string(state, pauli)
+  File "/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/src/quantum/vqe_latex_python_pairs.py", line 254, in apply_pauli_string
+    for q in range(nq):
+KeyboardInterrupt

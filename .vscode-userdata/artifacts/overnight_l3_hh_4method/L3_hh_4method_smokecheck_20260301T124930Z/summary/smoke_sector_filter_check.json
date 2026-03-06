@@ -1,0 +1,18 @@
+{
+  "checked_at_utc": "2026-03-01T12:49:30.468734+00:00",
+  "config": {
+    "L": 3,
+    "t": 1.0,
+    "U": 2.0,
+    "dv": 0.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "n_ph_max": 1,
+    "ordering": "blocked",
+    "boundary": "open",
+    "boson_encoding": "binary"
+  },
+  "E_exact_sector_(2,1)": -0.5269377197656464,
+  "E_exact_sector_(1,1)": -1.3421804037121141,
+  "different": true
+}

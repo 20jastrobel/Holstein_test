@@ -1,0 +1,8 @@
+[2026-03-04T01:49:34Z] VQE_FROM_ADAPT_START state=/Users/jakestrobel/Documents/Holstein_implementation/Holstein_test/artifacts/useful/L4/l4_hh_seq_20260302_215706_resume_adaptB_20260303_111311_adapt_B_B_probe_checkpoint_state.json
+[2026-03-04T01:49:34Z] VQE config npar=16 restarts=16 maxiter=12000 method=COBYLA budget_s=72000
+[2026-03-04T01:49:34Z] VQE start energy=0.528860769598 |DeltaE|=5.122029e-01
+[2026-03-04T01:49:34Z] VQE restart 1/16 start elapsed_s=0.0 calls=0
+[2026-03-04T01:50:35Z] VQE heartbeat restart=1/16 elapsed_s=60.1 calls=61 |DeltaE|=1.042312e+00 best|DeltaE|=1.008844e+00 slope_last3=nan/s
+[2026-03-04T01:51:14Z] VQE restart 1/16 end elapsed_s=98.6 calls=95 best|DeltaE|=6.662343e-01 msg=interrupted_keyboard_returning_best_restart
+[2026-03-04T01:51:14Z] VQE run end elapsed_s=99.5 calls=0 best|DeltaE|=nan best_restart=1
+[2026-03-04T01:51:15Z] VQE done energy=0.682892220597 |DeltaE|=6.662343e-01 rel=3.999508e+01 success=False best_restart=1 nfev=95 runtime_s=100.9

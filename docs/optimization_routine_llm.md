@@ -1,5 +1,7 @@
 # LLM Optimization Routine Spec (Core + Wrappers)
 
+Status: optimization design/reference spec (non-runbook). For executable run defaults and gates, use `AGENTS.md` and `pipelines/run_guide.md`.
+
 ## 1) Purpose, Scope, Non-Goals
 
 ### Purpose
@@ -45,7 +47,7 @@ All optimization changes must preserve the following repository rules:
 
 ## 2.5) Implementation Status Update (2026-03-04)
 
-This spec has now been largely implemented in the hardcoded path. The sections below describing "as-is" behavior are historical context.
+This spec has now been largely implemented in the hardcoded path. The sections below summarize the current runtime behavior.
 
 Implemented:
 - Prompt 1: shared compiled polynomial utility landed in `src/quantum/compiled_polynomial.py` with:
@@ -56,7 +58,7 @@ Implemented:
 - Prompt 2: compiled ansatz executor landed in `src/quantum/compiled_ansatz.py` (`CompiledAnsatzExecutor`).
 - Prompt 3: compiled one-apply energy backend landed in `src/quantum/vqe_latex_python_pairs.py`:
   - `expval_pauli_polynomial_one_apply(...)`
-  - `vqe_minimize(..., energy_backend=\"legacy\"|\"one_apply_compiled\")` (default legacy).
+  - `vqe_minimize(..., energy_backend=\"legacy\"|\"one_apply_compiled\")` (default `one_apply_compiled` in hardcoded pipeline wiring).
 - Prompt 4: ADAPT gradient reuse landed in `pipelines/hardcoded/adapt_pipeline.py`:
   - one `Hpsi` per depth
   - pool gradients via `2*Im(vdot(Hpsi, Apsi))`
@@ -73,17 +75,17 @@ Validation coverage added:
 - `test/test_adapt_vqe_integration.py` parity/regression coverage remains active.
 
 
-## 3) Current Optimization Routine (Historical As-Is Snapshot)
+## 3) Current Optimization Routine (Post-Implementation Snapshot)
 
 ### 3.1 ADAPT flow map
 
 | Topic | Current behavior | Location |
 |---|---|---|
 | ADAPT gradient backend | Uses compiled polynomial actions when provided. | `adapt_pipeline.py::_commutator_gradient` |
-| Redundant Hamiltonian action | `H|psi>` is recomputed inside `_commutator_gradient` for each pool operator during one depth sweep. | `adapt_pipeline.py::_commutator_gradient` and caller loop in `_run_hardcoded_adapt_vqe` |
-| ADAPT ansatz state prep | Uses `apply_exp_pauli_polynomial(...)` per selected op; this path applies Pauli strings through slower per-index/per-qubit logic. | `adapt_pipeline.py::_prepare_adapt_state`, `vqe_latex_python_pairs.py::apply_exp_pauli_polynomial` |
-| ADAPT energy eval | Uses `expval_pauli_polynomial(...)`, which computes termwise expectations repeatedly. | `adapt_pipeline.py::_adapt_energy_fn`, `vqe_latex_python_pairs.py::expval_pauli_polynomial` |
-| ADAPT inner reopt method | Fixed SciPy COBYLA in production ADAPT pipeline (`method="COBYLA"`). | `adapt_pipeline.py::_run_hardcoded_adapt_vqe` |
+| Hamiltonian action reuse | `H|psi>` is computed once per ADAPT depth and reused across pool gradients. | caller loop + `_commutator_gradient` in `adapt_pipeline.py` |
+| ADAPT ansatz state prep | Uses compiled ansatz execution path with cache reuse (fallback paths remain available). | `adapt_pipeline.py` + compiled ansatz helpers |
+| ADAPT energy eval | Uses compiled one-apply energy evaluation path in production flow. | `adapt_pipeline.py::_adapt_energy_fn` + `vqe_latex_python_pairs.py` |
+| ADAPT inner reopt method | Configurable inner optimizer (`COBYLA` or `SPSA`), default `SPSA`. | `adapt_pipeline.py` (`--adapt-inner-optimizer`) |
 | Conventional VQE optimizer | Method is configurable (e.g., COBYLA, SLSQP, L-BFGS-B, Powell, Nelder-Mead) in hardcoded pipeline. | `hubbard_pipeline.py` (`--vqe-method`) and `vqe_latex_python_pairs.py::vqe_minimize` |
 
 ### 3.2 Existing fast primitives already present
@@ -204,10 +206,10 @@ Use one compiled Hamiltonian apply and one `vdot` for energy:
 - Keep existing objective-aggregation/repeat knobs as primary variance control.
 
 ### B3) Optional plumbing proposal
-- Add explicit ADAPT inner optimizer options only if adopted:
-  - `--adapt-optimizer-method` (default legacy behavior).
-  - Method-specific options guarded by compatibility defaults.
-- If not adopted now, document as planned follow-up and keep ADAPT COBYLA-fixed.
+- ADAPT inner optimizer plumbing is already available in runtime:
+  - `--adapt-inner-optimizer {COBYLA,SPSA}` (default `SPSA`).
+  - SPSA method knobs are exposed via `--adapt-spsa-*`.
+- Keep proposals compatible with this surface; avoid introducing parallel flag families.
 
 
 ## Phase C: Gradient step-change roadmap (staged follow-up)
@@ -235,7 +237,7 @@ These are proposed deltas for implementation planning:
   - compiled ansatz operator/term dataclasses for reusable exp application.
   - energy helper that computes from one Hamiltonian apply.
 - Optional CLI/interface (only if optimizer policy is implemented now):
-  - ADAPT inner optimizer method plumbing with legacy default preserved.
+  - ADAPT inner optimizer method plumbing with current `SPSA` default preserved.
 
 No changes to operator-core base files are required.
 
@@ -323,7 +325,7 @@ Add compiled ansatz execution in `pipelines/hardcoded/adapt_pipeline.py`: compil
 Replace ADAPT energy evaluation internals with one Hamiltonian apply plus one dot product (`Re(vdot(psi, H_psi))`) using compiled Hamiltonian actions where available. Keep parity with `expval_pauli_polynomial` and add tests.
 
 #### Template B (optimizer policy, optional)
-Propose a backward-compatible ADAPT inner-optimizer policy that keeps default behavior stable and allows deterministic heavy runs to use `L-BFGS-B`/`BFGS` under explicit configuration. Do not break existing run defaults or run-guide contracts.
+Propose a backward-compatible ADAPT inner-optimizer policy that keeps current defaults stable (`SPSA`) and allows deterministic heavy runs to use `L-BFGS-B`/`BFGS` under explicit configuration. Do not break existing run defaults or run-guide contracts.
 
 
 ## 10) Assumptions Locked For This Spec

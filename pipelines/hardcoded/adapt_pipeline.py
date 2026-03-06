@@ -16,6 +16,7 @@ No dependency on Qiskit in the core path.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -276,6 +277,48 @@ def _state_to_amplitudes_qn_to_q0(psi: np.ndarray, cutoff: float = 1e-12) -> dic
         bit = format(idx, f"0{nq}b")
         out[bit] = {"re": float(np.real(amp)), "im": float(np.imag(amp))}
     return out
+
+
+def _state_from_amplitudes_qn_to_q0(
+    amplitudes_qn_to_q0: dict[str, Any],
+    nq_total: int,
+) -> np.ndarray:
+    if not isinstance(amplitudes_qn_to_q0, dict) or len(amplitudes_qn_to_q0) == 0:
+        raise ValueError("Missing or empty initial_state.amplitudes_qn_to_q0 in ADAPT JSON.")
+    dim = 1 << int(nq_total)
+    psi = np.zeros(dim, dtype=complex)
+    for bitstr, comp in amplitudes_qn_to_q0.items():
+        if not isinstance(bitstr, str) or len(bitstr) != int(nq_total) or any(ch not in "01" for ch in bitstr):
+            raise ValueError(f"Invalid bitstring key in ADAPT amplitudes: {bitstr!r}")
+        if not isinstance(comp, dict):
+            raise ValueError(f"Amplitude payload for bitstring {bitstr!r} must be a dict.")
+        re_val = float(comp.get("re", 0.0))
+        im_val = float(comp.get("im", 0.0))
+        idx = int(bitstr, 2)
+        psi[idx] = complex(re_val, im_val)
+    return _normalize_state(psi)
+
+
+def _load_adapt_initial_state(
+    adapt_json_path: Path,
+    nq_total: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if not adapt_json_path.exists():
+        raise FileNotFoundError(f"ADAPT input JSON not found: {adapt_json_path}")
+    raw = json.loads(adapt_json_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("ADAPT input JSON must be a top-level object.")
+    initial_state = raw.get("initial_state")
+    if not isinstance(initial_state, dict):
+        raise ValueError("ADAPT input JSON missing object key: initial_state")
+    amplitudes = initial_state.get("amplitudes_qn_to_q0")
+    psi = _state_from_amplitudes_qn_to_q0(amplitudes, int(nq_total))
+    meta = {
+        "settings": raw.get("settings", {}),
+        "adapt_vqe": raw.get("adapt_vqe", {}),
+        "initial_state_source": initial_state.get("source"),
+    }
+    return psi, meta
 
 
 # ============================================================================
@@ -602,6 +645,133 @@ def _deduplicate_pool_terms(pool: list[AnsatzTerm]) -> list[AnsatzTerm]:
     return dedup_pool
 
 
+def _polynomial_signature_digest(poly: Any, tol: float = 1e-12) -> str:
+    """Low-memory ordered polynomial signature digest."""
+    h = hashlib.sha1()
+    for term in poly.return_polynomial():
+        coeff = complex(term.p_coeff)
+        if abs(coeff) <= float(tol):
+            continue
+        if abs(coeff.imag) > 1e-10:
+            raise ValueError(f"Non-negligible imaginary coefficient in pool term: {coeff}")
+        label = str(term.pw2strng())
+        coeff_real = round(float(coeff.real), 12)
+        h.update(label.encode("ascii", errors="ignore"))
+        h.update(b":")
+        h.update(f"{coeff_real:+.12e}".encode("ascii"))
+        h.update(b";")
+    return h.hexdigest()
+
+
+def _deduplicate_pool_terms_lightweight(pool: list[AnsatzTerm]) -> list[AnsatzTerm]:
+    """Deduplicate pool operators with a streaming digest to reduce peak memory."""
+    seen: set[str] = set()
+    dedup_pool: list[AnsatzTerm] = []
+    for term in pool:
+        sig = _polynomial_signature_digest(term.polynomial)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        dedup_pool.append(term)
+    return dedup_pool
+
+
+def _build_hh_full_meta_pool(
+    *,
+    h_poly: Any,
+    num_sites: int,
+    t: float,
+    u: float,
+    omega0: float,
+    g_ep: float,
+    dv: float,
+    n_ph_max: int,
+    boson_encoding: str,
+    ordering: str,
+    boundary: str,
+    paop_r: int,
+    paop_split_paulis: bool,
+    paop_prune_eps: float,
+    paop_normalization: str,
+    num_particles: tuple[int, int],
+) -> tuple[list[AnsatzTerm], dict[str, int]]:
+    """Build HH full meta-pool: uccsd_lifted + hva + paop_full + paop_lf_full."""
+    uccsd_lifted_pool = _build_hh_uccsd_fermion_lifted_pool(
+        int(num_sites),
+        int(n_ph_max),
+        str(boson_encoding),
+        str(ordering),
+        str(boundary),
+        num_particles=num_particles,
+    )
+    hva_pool = _build_hva_pool(
+        int(num_sites),
+        float(t),
+        float(u),
+        float(omega0),
+        float(g_ep),
+        float(dv),
+        int(n_ph_max),
+        str(boson_encoding),
+        str(ordering),
+        str(boundary),
+    )
+    termwise_aug: list[AnsatzTerm] = []
+    if abs(float(g_ep)) > 1e-15:
+        termwise_aug = [
+            AnsatzTerm(label=f"hh_termwise_{term.label}", polynomial=term.polynomial)
+            for term in _build_hh_termwise_augmented_pool(h_poly)
+        ]
+    paop_full_pool = _build_paop_pool(
+        int(num_sites),
+        int(n_ph_max),
+        str(boson_encoding),
+        str(ordering),
+        str(boundary),
+        "paop_full",
+        int(paop_r),
+        bool(paop_split_paulis),
+        float(paop_prune_eps),
+        str(paop_normalization),
+        num_particles,
+    )
+    paop_lf_full_pool = _build_paop_pool(
+        int(num_sites),
+        int(n_ph_max),
+        str(boson_encoding),
+        str(ordering),
+        str(boundary),
+        "paop_lf_full",
+        int(paop_r),
+        bool(paop_split_paulis),
+        float(paop_prune_eps),
+        str(paop_normalization),
+        num_particles,
+    )
+    merged = (
+        list(uccsd_lifted_pool)
+        + list(hva_pool)
+        + list(termwise_aug)
+        + list(paop_full_pool)
+        + list(paop_lf_full_pool)
+    )
+    meta = {
+        "raw_uccsd_lifted": int(len(uccsd_lifted_pool)),
+        "raw_hva": int(len(hva_pool)),
+        "raw_hh_termwise_augmented": int(len(termwise_aug)),
+        "raw_paop_full": int(len(paop_full_pool)),
+        "raw_paop_lf_full": int(len(paop_lf_full_pool)),
+        "raw_total": int(len(merged)),
+    }
+    # n_ph_max>=2 can create very large term signatures; use streaming digest
+    # dedup to avoid high transient memory spikes from tuple materialization.
+    if int(n_ph_max) >= 2:
+        dedup_pool = _deduplicate_pool_terms_lightweight(merged)
+    else:
+        dedup_pool = _deduplicate_pool_terms(merged)
+    return dedup_pool, meta
+
+
 def _apply_pauli_polynomial_uncached(state: np.ndarray, poly: Any) -> np.ndarray:
     r"""Compute G|psi> where G is a PauliPolynomial (sum of weighted Pauli strings).
 
@@ -703,6 +873,12 @@ def _exact_gs_energy_for_problem(
     indexing: str,
     n_ph_max: int = 1,
     boson_encoding: str = "binary",
+    t: float | None = None,
+    u: float | None = None,
+    dv: float | None = None,
+    omega0: float | None = None,
+    g_ep: float | None = None,
+    boundary: str = "open",
 ) -> float:
     """Dispatch to the correct sector-filtered exact ground energy.
 
@@ -710,6 +886,61 @@ def _exact_gs_energy_for_problem(
     For problem='hubbard', use standard full-register sector filtering.
     """
     if str(problem).strip().lower() == "hh":
+        if (
+            t is not None
+            and u is not None
+            and dv is not None
+            and omega0 is not None
+            and g_ep is not None
+        ):
+            try:
+                from src.quantum.ed_hubbard_holstein import build_hh_sector_hamiltonian_ed
+
+                h_sector = build_hh_sector_hamiltonian_ed(
+                    dims=int(num_sites),
+                    J=float(t),
+                    U=float(u),
+                    omega0=float(omega0),
+                    g=float(g_ep),
+                    n_ph_max=int(n_ph_max),
+                    num_particles=tuple(num_particles),
+                    indexing=str(indexing),
+                    boson_encoding=str(boson_encoding),
+                    pbc=(str(boundary).strip().lower() == "periodic"),
+                    delta_v=float(dv),
+                    include_zero_point=True,
+                    sparse=True,
+                    return_basis=False,
+                )
+                try:
+                    from scipy.sparse import spmatrix as _spmatrix
+                    from scipy.sparse.linalg import eigsh as _eigsh
+
+                    if isinstance(h_sector, _spmatrix):
+                        eval0 = _eigsh(
+                            h_sector,
+                            k=1,
+                            which="SA",
+                            return_eigenvectors=False,
+                            tol=1e-10,
+                            maxiter=max(1000, 10 * int(h_sector.shape[0])),
+                        )
+                        return float(np.real(eval0[0]))
+                except Exception:
+                    pass
+
+                h_dense = np.asarray(
+                    h_sector.toarray() if hasattr(h_sector, "toarray") else h_sector,
+                    dtype=complex,
+                )
+                evals = np.linalg.eigvalsh(h_dense)
+                return float(np.min(np.real(evals)))
+            except Exception as exc:
+                _ai_log(
+                    "hardcoded_adapt_hh_exact_sparse_fallback",
+                    status="failed",
+                    error=str(exc),
+                )
         return exact_ground_energy_sector_hh(
             h_poly,
             num_sites=int(num_sites),
@@ -747,7 +978,7 @@ def _run_hardcoded_adapt_vqe(
     eps_energy: float,
     maxiter: int,
     seed: int,
-    adapt_inner_optimizer: str = "COBYLA",
+    adapt_inner_optimizer: str = "SPSA",
     adapt_spsa_a: float = 0.2,
     adapt_spsa_c: float = 0.1,
     adapt_spsa_alpha: float = 0.602,
@@ -756,10 +987,19 @@ def _run_hardcoded_adapt_vqe(
     adapt_spsa_avg_last: int = 0,
     adapt_spsa_eval_repeats: int = 1,
     adapt_spsa_eval_agg: str = "mean",
+    adapt_spsa_callback_every: int = 1,
+    adapt_spsa_progress_every_s: float = 60.0,
     allow_repeats: bool,
     finite_angle_fallback: bool,
     finite_angle: float,
     finite_angle_min_improvement: float,
+    adapt_drop_floor: float = -1.0,
+    adapt_drop_patience: int = 0,
+    adapt_drop_min_depth: int = 0,
+    adapt_grad_floor: float = -1.0,
+    adapt_eps_energy_min_extra_depth: int = -1,
+    adapt_eps_energy_patience: int = -1,
+    adapt_ref_base_depth: int = 0,
     paop_r: int = 0,
     paop_split_paulis: bool = False,
     paop_prune_eps: float = 0.0,
@@ -768,6 +1008,8 @@ def _run_hardcoded_adapt_vqe(
     psi_ref_override: np.ndarray | None = None,
     adapt_gradient_parity_check: bool = False,
     adapt_state_backend: str = "compiled",
+    adapt_reopt_policy: str = "append_only",
+    exact_gs_override: float | None = None,
 ) -> tuple[dict[str, Any], np.ndarray]:
     """Run standard ADAPT-VQE and return (payload, psi_ground)."""
     if float(finite_angle) <= 0.0:
@@ -777,12 +1019,47 @@ def _run_hardcoded_adapt_vqe(
     adapt_state_backend_key = str(adapt_state_backend).strip().lower()
     if adapt_state_backend_key not in {"legacy", "compiled"}:
         raise ValueError("adapt_state_backend must be one of {'legacy','compiled'}.")
+    adapt_reopt_policy_key = str(adapt_reopt_policy).strip().lower()
+    if adapt_reopt_policy_key not in {"append_only", "full"}:
+        raise ValueError("adapt_reopt_policy must be one of {'append_only','full'}.")
     adapt_inner_optimizer_key = str(adapt_inner_optimizer).strip().upper()
     if adapt_inner_optimizer_key not in {"COBYLA", "SPSA"}:
         raise ValueError("adapt_inner_optimizer must be one of {'COBYLA','SPSA'}.")
     adapt_spsa_eval_agg_key = str(adapt_spsa_eval_agg).strip().lower()
     if adapt_spsa_eval_agg_key not in {"mean", "median"}:
         raise ValueError("adapt_spsa_eval_agg must be one of {'mean','median'}.")
+    if int(adapt_spsa_callback_every) < 1:
+        raise ValueError("adapt_spsa_callback_every must be >= 1.")
+    if float(adapt_spsa_progress_every_s) < 0.0:
+        raise ValueError("adapt_spsa_progress_every_s must be >= 0.")
+    if float(adapt_drop_floor) >= 0.0 and int(adapt_drop_patience) < 1:
+        raise ValueError("adapt_drop_patience must be >= 1 when adapt_drop_floor is enabled.")
+    if float(adapt_drop_floor) >= 0.0 and int(adapt_drop_min_depth) < 1:
+        raise ValueError("adapt_drop_min_depth must be >= 1 when adapt_drop_floor is enabled.")
+    if int(adapt_drop_patience) < 0:
+        raise ValueError("adapt_drop_patience must be >= 0.")
+    if int(adapt_drop_min_depth) < 0:
+        raise ValueError("adapt_drop_min_depth must be >= 0.")
+    if int(adapt_eps_energy_min_extra_depth) < -1:
+        raise ValueError("adapt_eps_energy_min_extra_depth must be >= 0 or -1 (auto=L).")
+    if int(adapt_eps_energy_patience) < -1 or int(adapt_eps_energy_patience) == 0:
+        raise ValueError("adapt_eps_energy_patience must be >= 1 or -1 (auto=L).")
+    if int(adapt_ref_base_depth) < 0:
+        raise ValueError("adapt_ref_base_depth must be >= 0.")
+    eps_energy_min_extra_depth_effective = (
+        int(num_sites)
+        if int(adapt_eps_energy_min_extra_depth) == -1
+        else int(adapt_eps_energy_min_extra_depth)
+    )
+    eps_energy_patience_effective = (
+        int(num_sites)
+        if int(adapt_eps_energy_patience) == -1
+        else int(adapt_eps_energy_patience)
+    )
+    if int(eps_energy_patience_effective) < 1:
+        raise ValueError("resolved eps-energy patience must be >= 1.")
+    if int(eps_energy_min_extra_depth_effective) < 0:
+        raise ValueError("resolved eps-energy min extra depth must be >= 0.")
     adapt_spsa_params = {
         "a": float(adapt_spsa_a),
         "c": float(adapt_spsa_c),
@@ -792,7 +1069,10 @@ def _run_hardcoded_adapt_vqe(
         "avg_last": int(adapt_spsa_avg_last),
         "eval_repeats": int(adapt_spsa_eval_repeats),
         "eval_agg": str(adapt_spsa_eval_agg_key),
+        "callback_every": int(adapt_spsa_callback_every),
+        "progress_every_s": float(adapt_spsa_progress_every_s),
     }
+    drop_policy_enabled = bool(float(adapt_drop_floor) >= 0.0 and int(adapt_drop_patience) > 0)
 
     t0 = time.perf_counter()
     hf_bits = "N/A"
@@ -809,6 +1089,18 @@ def _run_hardcoded_adapt_vqe(
         finite_angle_min_improvement=float(finite_angle_min_improvement),
         adapt_gradient_parity_check=bool(adapt_gradient_parity_check),
         adapt_state_backend=str(adapt_state_backend_key),
+        adapt_drop_policy_enabled=bool(drop_policy_enabled),
+        adapt_drop_floor=(float(adapt_drop_floor) if drop_policy_enabled else None),
+        adapt_drop_patience=(int(adapt_drop_patience) if drop_policy_enabled else None),
+        adapt_drop_min_depth=(int(adapt_drop_min_depth) if drop_policy_enabled else None),
+        adapt_grad_floor=(float(adapt_grad_floor) if float(adapt_grad_floor) >= 0.0 else None),
+        adapt_eps_energy_min_extra_depth=int(adapt_eps_energy_min_extra_depth),
+        adapt_eps_energy_patience=int(adapt_eps_energy_patience),
+        adapt_ref_base_depth=int(adapt_ref_base_depth),
+        adapt_eps_energy_min_extra_depth_effective=int(eps_energy_min_extra_depth_effective),
+        adapt_eps_energy_patience_effective=int(eps_energy_patience_effective),
+        eps_energy_gate_cumulative_depth=int(adapt_ref_base_depth) + int(eps_energy_min_extra_depth_effective),
+        adapt_reopt_policy=str(adapt_reopt_policy_key),
     )
 
     num_particles = half_filled_num_particles(int(num_sites))
@@ -880,6 +1172,31 @@ def _run_hardcoded_adapt_vqe(
             else:
                 pool = hva_pool
             method_name = "hardcoded_adapt_vqe_hva_hh"
+        elif pool_key == "full_meta":
+            pool, full_meta_sizes = _build_hh_full_meta_pool(
+                h_poly=h_poly,
+                num_sites=int(num_sites),
+                t=float(t),
+                u=float(u),
+                omega0=float(omega0),
+                g_ep=float(g_ep),
+                dv=float(dv),
+                n_ph_max=int(n_ph_max),
+                boson_encoding=str(boson_encoding),
+                ordering=str(ordering),
+                boundary=str(boundary),
+                paop_r=int(paop_r),
+                paop_split_paulis=bool(paop_split_paulis),
+                paop_prune_eps=float(paop_prune_eps),
+                paop_normalization=str(paop_normalization),
+                num_particles=num_particles,
+            )
+            _ai_log(
+                "hardcoded_adapt_full_meta_pool_built",
+                **full_meta_sizes,
+                dedup_total=int(len(pool)),
+            )
+            method_name = "hardcoded_adapt_vqe_full_meta"
         elif pool_key == "uccsd_paop_lf_full":
             uccsd_lifted_pool = _build_hh_uccsd_fermion_lifted_pool(
                 int(num_sites),
@@ -954,7 +1271,7 @@ def _run_hardcoded_adapt_vqe(
         else:
             raise ValueError(
                 "For problem='hh', supported ADAPT pools are: "
-                "hva, uccsd_paop_lf_full, paop, paop_min, paop_std, paop_full, "
+                "hva, full_meta, uccsd_paop_lf_full, paop, paop_min, paop_std, paop_full, "
                 "paop_lf, paop_lf_std, paop_lf2_std, paop_lf_full, full_hamiltonian"
             )
     else:
@@ -979,6 +1296,8 @@ def _run_hardcoded_adapt_vqe(
                 "For problem='hubbard', pool='hva' is not valid. "
                 "Use uccsd, cse, or full_hamiltonian."
             )
+        elif pool_key == "full_meta":
+            raise ValueError("Pool 'full_meta' is only valid for problem='hh'.")
         elif pool_key == "uccsd_paop_lf_full":
             raise ValueError("Pool 'uccsd_paop_lf_full' is only valid for problem='hh'.")
         else:
@@ -1051,6 +1370,28 @@ def _run_hardcoded_adapt_vqe(
     energy_current = float(energy_current)
     nfev_total += 1
     _ai_log("hardcoded_adapt_initial_energy", energy=energy_current)
+    if exact_gs_override is None:
+        exact_gs = _exact_gs_energy_for_problem(
+            h_poly,
+            problem=problem_key,
+            num_sites=int(num_sites),
+            num_particles=num_particles,
+            indexing=str(ordering),
+            n_ph_max=int(n_ph_max),
+            boson_encoding=str(boson_encoding),
+            t=float(t),
+            u=float(u),
+            dv=float(dv),
+            omega0=float(omega0),
+            g_ep=float(g_ep),
+            boundary=str(boundary),
+        )
+    else:
+        exact_gs = float(exact_gs_override)
+        _ai_log("hardcoded_adapt_exact_override_used", exact_gs=exact_gs)
+    drop_prev_delta_abs = float(abs(energy_current - exact_gs))
+    drop_plateau_hits = 0
+    eps_energy_low_streak = 0
 
     # HH preconditioning: optimize a compact boson-quadrature e-ph seed block
     # before greedy ADAPT selection. This helps avoid the weak-coupling basin
@@ -1084,22 +1425,69 @@ def _run_hardcoded_adapt_vqe(
                 if adapt_state_backend_key == "compiled"
                 else None
             )
+            seed_opt_t0 = time.perf_counter()
+            seed_cobyla_last_hb_t = seed_opt_t0
+            seed_cobyla_nfev_so_far = 0
+            seed_cobyla_best_fun = float("inf")
 
             def _seed_obj(x: np.ndarray) -> float:
+                nonlocal seed_cobyla_last_hb_t, seed_cobyla_nfev_so_far, seed_cobyla_best_fun
                 if seed_executor is not None:
                     psi_seed = seed_executor.prepare_state(np.asarray(x, dtype=float), psi_ref)
                     seed_energy, _ = energy_via_one_apply(psi_seed, h_compiled)
-                    return float(seed_energy)
-                return _adapt_energy_fn(
-                    h_poly,
-                    psi_ref,
-                    seed_ops,
-                    x,
-                    h_compiled=h_compiled,
-                )
+                    seed_energy_val = float(seed_energy)
+                else:
+                    seed_energy_val = _adapt_energy_fn(
+                        h_poly,
+                        psi_ref,
+                        seed_ops,
+                        x,
+                        h_compiled=h_compiled,
+                    )
+                if adapt_inner_optimizer_key == "COBYLA":
+                    seed_cobyla_nfev_so_far += 1
+                    if seed_energy_val < seed_cobyla_best_fun:
+                        seed_cobyla_best_fun = float(seed_energy_val)
+                    now = time.perf_counter()
+                    if (now - seed_cobyla_last_hb_t) >= float(adapt_spsa_progress_every_s):
+                        _ai_log(
+                            "hardcoded_adapt_cobyla_heartbeat",
+                            stage="hh_seed_preopt",
+                            depth=0,
+                            nfev_opt_so_far=int(seed_cobyla_nfev_so_far),
+                            best_fun=float(seed_cobyla_best_fun),
+                            delta_abs_best=(
+                                float(abs(seed_cobyla_best_fun - exact_gs))
+                                if math.isfinite(seed_cobyla_best_fun)
+                                else None
+                            ),
+                            elapsed_opt_s=float(now - seed_opt_t0),
+                        )
+                        seed_cobyla_last_hb_t = now
+                return float(seed_energy_val)
 
             seed_maxiter = int(max(100, min(int(maxiter), 600)))
             if adapt_inner_optimizer_key == "SPSA":
+                seed_last_hb_t = seed_opt_t0
+
+                def _seed_spsa_callback(ev: dict[str, Any]) -> None:
+                    nonlocal seed_last_hb_t
+                    now = time.perf_counter()
+                    if (now - seed_last_hb_t) < float(adapt_spsa_progress_every_s):
+                        return
+                    seed_best = float(ev.get("best_fun", float("nan")))
+                    _ai_log(
+                        "hardcoded_adapt_spsa_heartbeat",
+                        stage="hh_seed_preopt",
+                        depth=0,
+                        iter=int(ev.get("iter", 0)),
+                        nfev_opt_so_far=int(ev.get("nfev_so_far", 0)),
+                        best_fun=seed_best,
+                        delta_abs_best=float(abs(seed_best - exact_gs)) if math.isfinite(seed_best) else None,
+                        elapsed_opt_s=float(now - seed_opt_t0),
+                    )
+                    seed_last_hb_t = now
+
                 seed_result = spsa_minimize(
                     fun=_seed_obj,
                     x0=theta_seed0,
@@ -1115,6 +1503,8 @@ def _run_hardcoded_adapt_vqe(
                     eval_repeats=int(adapt_spsa_eval_repeats),
                     eval_agg=str(adapt_spsa_eval_agg_key),
                     avg_last=int(adapt_spsa_avg_last),
+                    callback=_seed_spsa_callback,
+                    callback_every=int(adapt_spsa_callback_every),
                 )
                 seed_theta = np.asarray(seed_result.x, dtype=float)
                 seed_energy = float(seed_result.fun)
@@ -1327,28 +1717,91 @@ def _run_hardcoded_adapt_vqe(
         else:
             selected_executor = None
 
-        # 5) Re-optimize ALL parameters with selected inner optimizer
+        # 5) Re-optimize parameters with selected inner optimizer
+        # Policy: 'full' re-optimizes all parameters (legacy behavior),
+        #         'append_only' freezes the prefix and optimizes only the
+        #         newly appended parameter.
         energy_prev = energy_current
+        theta_before_opt = np.array(theta, copy=True)
+        optimizer_t0 = time.perf_counter()
+        cobyla_last_hb_t = optimizer_t0
+        cobyla_nfev_so_far = 0
+        cobyla_best_fun = float("inf")
 
         def _obj(x: np.ndarray) -> float:
+            nonlocal cobyla_last_hb_t, cobyla_nfev_so_far, cobyla_best_fun
             if adapt_state_backend_key == "compiled":
                 assert selected_executor is not None
                 psi_obj = selected_executor.prepare_state(np.asarray(x, dtype=float), psi_ref)
                 energy_obj, _ = energy_via_one_apply(psi_obj, h_compiled)
-                return float(energy_obj)
-            return _adapt_energy_fn(
-                h_poly,
-                psi_ref,
-                selected_ops,
-                x,
-                h_compiled=h_compiled,
-            )
+                energy_obj_val = float(energy_obj)
+            else:
+                energy_obj_val = _adapt_energy_fn(
+                    h_poly,
+                    psi_ref,
+                    selected_ops,
+                    x,
+                    h_compiled=h_compiled,
+                )
+            if adapt_inner_optimizer_key == "COBYLA":
+                cobyla_nfev_so_far += 1
+                if energy_obj_val < cobyla_best_fun:
+                    cobyla_best_fun = float(energy_obj_val)
+                now = time.perf_counter()
+                if (now - cobyla_last_hb_t) >= float(adapt_spsa_progress_every_s):
+                    _ai_log(
+                        "hardcoded_adapt_cobyla_heartbeat",
+                        stage="depth_opt",
+                        depth=int(depth + 1),
+                        nfev_opt_so_far=int(cobyla_nfev_so_far),
+                        best_fun=float(cobyla_best_fun),
+                        delta_abs_best=(
+                            float(abs(cobyla_best_fun - exact_gs))
+                            if math.isfinite(cobyla_best_fun)
+                            else None
+                        ),
+                        elapsed_opt_s=float(now - optimizer_t0),
+                    )
+                    cobyla_last_hb_t = now
+            return float(energy_obj_val)
 
-        optimizer_t0 = time.perf_counter()
+        # -- append_only wrapper: freeze prefix, optimize only newest param --
+        if adapt_reopt_policy_key == "append_only":
+            _frozen_prefix = np.array(theta[:-1], copy=True)
+
+            def _obj_opt(x_new: np.ndarray) -> float:
+                full = np.concatenate([_frozen_prefix, np.asarray(x_new, dtype=float).ravel()])
+                return _obj(full)
+
+            opt_x0 = np.array([float(theta[-1])], dtype=float)
+        else:
+            _obj_opt = _obj
+            opt_x0 = np.array(theta, copy=True)
+
         if adapt_inner_optimizer_key == "SPSA":
+            spsa_last_hb_t = optimizer_t0
+
+            def _depth_spsa_callback(ev: dict[str, Any]) -> None:
+                nonlocal spsa_last_hb_t
+                now = time.perf_counter()
+                if (now - spsa_last_hb_t) < float(adapt_spsa_progress_every_s):
+                    return
+                best_fun = float(ev.get("best_fun", float("nan")))
+                _ai_log(
+                    "hardcoded_adapt_spsa_heartbeat",
+                    stage="depth_opt",
+                    depth=int(depth + 1),
+                    iter=int(ev.get("iter", 0)),
+                    nfev_opt_so_far=int(ev.get("nfev_so_far", 0)),
+                    best_fun=best_fun,
+                    delta_abs_best=float(abs(best_fun - exact_gs)) if math.isfinite(best_fun) else None,
+                    elapsed_opt_s=float(now - optimizer_t0),
+                )
+                spsa_last_hb_t = now
+
             result = spsa_minimize(
-                fun=_obj,
-                x0=theta,
+                fun=_obj_opt,
+                x0=opt_x0,
                 maxiter=int(maxiter),
                 seed=int(seed) + int(depth),
                 a=float(adapt_spsa_a),
@@ -1361,8 +1814,13 @@ def _run_hardcoded_adapt_vqe(
                 eval_repeats=int(adapt_spsa_eval_repeats),
                 eval_agg=str(adapt_spsa_eval_agg_key),
                 avg_last=int(adapt_spsa_avg_last),
+                callback=_depth_spsa_callback,
+                callback_every=int(adapt_spsa_callback_every),
             )
-            theta = np.asarray(result.x, dtype=float)
+            if adapt_reopt_policy_key == "append_only":
+                theta = np.concatenate([_frozen_prefix, np.asarray(result.x, dtype=float).ravel()])
+            else:
+                theta = np.asarray(result.x, dtype=float)
             energy_current = float(result.fun)
             nfev_opt = int(result.nfev)
             nit_opt = int(result.nit)
@@ -1372,19 +1830,69 @@ def _run_hardcoded_adapt_vqe(
             if scipy_minimize is None:
                 raise RuntimeError("SciPy minimize is unavailable for COBYLA ADAPT inner optimizer.")
             result = scipy_minimize(
-                _obj,
-                theta,
+                _obj_opt,
+                opt_x0,
                 method="COBYLA",
                 options={"maxiter": int(maxiter), "rhobeg": 0.3},
             )
-            theta = np.asarray(result.x, dtype=float)
+            if adapt_reopt_policy_key == "append_only":
+                theta = np.concatenate([_frozen_prefix, np.asarray(result.x, dtype=float).ravel()])
+            else:
+                theta = np.asarray(result.x, dtype=float)
             energy_current = float(result.fun)
             nfev_opt = int(getattr(result, "nfev", 0))
             nit_opt = int(getattr(result, "nit", 0))
             opt_success = bool(getattr(result, "success", False))
             opt_message = str(getattr(result, "message", ""))
+
+        # -- Depth-level non-improvement rollback guard --
+        # If the optimizer returned an energy worse than the entry energy for
+        # this depth, roll back to the pre-optimization parameters.  This
+        # prevents stochastic optimizer noise from accumulating regressions.
+        depth_rollback = False
+        if float(energy_current) > float(energy_prev):
+            _ai_log(
+                "hardcoded_adapt_depth_rollback",
+                depth=int(depth + 1),
+                energy_before_opt=float(energy_prev),
+                energy_after_opt=float(energy_current),
+                regression=float(energy_current - energy_prev),
+                opt_method=str(adapt_inner_optimizer_key),
+            )
+            theta = np.array(theta_before_opt, copy=True)
+            energy_current = float(energy_prev)
+            depth_rollback = True
+
         optimizer_elapsed_s = float(time.perf_counter() - optimizer_t0)
         nfev_total += int(nfev_opt)
+        depth_local = int(depth + 1)
+        depth_cumulative = int(adapt_ref_base_depth) + int(depth_local)
+        delta_abs_prev = float(drop_prev_delta_abs)
+        delta_abs_current = float(abs(energy_current - exact_gs))
+        delta_abs_drop = float(delta_abs_prev - delta_abs_current)
+        drop_prev_delta_abs = float(delta_abs_current)
+        eps_energy_step_abs = float(abs(energy_current - energy_prev))
+        eps_energy_low_step = bool(eps_energy_step_abs < float(eps_energy))
+        eps_energy_gate_open = bool(depth_local >= int(eps_energy_min_extra_depth_effective))
+        if eps_energy_gate_open:
+            if eps_energy_low_step:
+                eps_energy_low_streak += 1
+            else:
+                eps_energy_low_streak = 0
+        else:
+            eps_energy_low_streak = 0
+        drop_low_signal = None
+        drop_low_grad = None
+        if drop_policy_enabled and int(depth_local) >= int(adapt_drop_min_depth):
+            drop_low_signal = bool(delta_abs_drop < float(adapt_drop_floor))
+            if float(adapt_grad_floor) >= 0.0:
+                drop_low_grad = bool(float(max_grad) < float(adapt_grad_floor))
+            else:
+                drop_low_grad = True
+            if bool(drop_low_signal) and bool(drop_low_grad):
+                drop_plateau_hits += 1
+            else:
+                drop_plateau_hits = 0
         _ai_log(
             "hardcoded_adapt_optimizer_timing",
             depth=int(depth + 1),
@@ -1415,7 +1923,11 @@ def _run_hardcoded_adapt_vqe(
             "energy_before_opt": float(energy_prev),
             "energy_after_opt": float(energy_current),
             "delta_energy": float(energy_current - energy_prev),
+            "delta_abs_prev": float(delta_abs_prev),
+            "delta_abs_current": float(delta_abs_current),
+            "delta_abs_drop_from_prev": float(delta_abs_drop),
             "opt_method": str(adapt_inner_optimizer_key),
+            "reopt_policy": str(adapt_reopt_policy_key),
             "nfev_opt": int(nfev_opt),
             "nit_opt": int(nit_opt),
             "opt_success": bool(opt_success),
@@ -1423,6 +1935,19 @@ def _run_hardcoded_adapt_vqe(
             "gradient_eval_elapsed_s": float(gradient_eval_elapsed_s),
             "optimizer_elapsed_s": float(optimizer_elapsed_s),
             "iter_elapsed_s": float(time.perf_counter() - iter_t0),
+            "drop_policy_enabled": bool(drop_policy_enabled),
+            "drop_low_signal": drop_low_signal,
+            "drop_low_grad": drop_low_grad,
+            "drop_plateau_hits": int(drop_plateau_hits),
+            "depth_rollback": bool(depth_rollback),
+            "depth_cumulative": int(depth_cumulative),
+            "adapt_ref_base_depth": int(adapt_ref_base_depth),
+            "eps_energy_step_abs": float(eps_energy_step_abs),
+            "eps_energy_low_step": bool(eps_energy_low_step),
+            "eps_energy_low_streak": int(eps_energy_low_streak),
+            "eps_energy_gate_open": bool(eps_energy_gate_open),
+            "eps_energy_min_extra_depth_effective": int(eps_energy_min_extra_depth_effective),
+            "eps_energy_patience_effective": int(eps_energy_patience_effective),
         }
         if adapt_inner_optimizer_key == "SPSA":
             history_row["spsa_params"] = dict(adapt_spsa_params)
@@ -1433,19 +1958,68 @@ def _run_hardcoded_adapt_vqe(
             depth=int(depth + 1),
             energy=float(energy_current),
             delta_e=float(energy_current - energy_prev),
+            eps_energy_step_abs=float(eps_energy_step_abs),
+            eps_energy_low_step=bool(eps_energy_low_step),
+            eps_energy_low_streak=int(eps_energy_low_streak),
+            eps_energy_gate_open=bool(eps_energy_gate_open),
+            eps_energy_min_extra_depth_effective=int(eps_energy_min_extra_depth_effective),
+            eps_energy_patience_effective=int(eps_energy_patience_effective),
+            depth_cumulative=int(depth_cumulative),
+            delta_abs_current=float(delta_abs_current),
+            delta_abs_drop_from_prev=float(delta_abs_drop),
+            drop_plateau_hits=int(drop_plateau_hits),
+            depth_rollback=bool(depth_rollback),
             gradient_eval_elapsed_s=float(gradient_eval_elapsed_s),
             optimizer_elapsed_s=float(optimizer_elapsed_s),
         )
 
+        if (
+            drop_policy_enabled
+            and int(depth_local) >= int(adapt_drop_min_depth)
+            and int(drop_plateau_hits) >= int(adapt_drop_patience)
+        ):
+            stop_reason = "drop_plateau"
+            _ai_log(
+                "hardcoded_adapt_converged_drop_plateau",
+                depth=int(depth_local),
+                delta_abs_current=float(delta_abs_current),
+                delta_abs_drop_from_prev=float(delta_abs_drop),
+                drop_floor=float(adapt_drop_floor),
+                drop_patience=int(adapt_drop_patience),
+                drop_min_depth=int(adapt_drop_min_depth),
+                drop_plateau_hits=int(drop_plateau_hits),
+                grad_floor=(float(adapt_grad_floor) if float(adapt_grad_floor) >= 0.0 else None),
+                max_grad=float(max_grad),
+            )
+            break
+
         # 6) Check energy convergence
-        if abs(energy_current - energy_prev) < float(eps_energy):
+        if bool(eps_energy_gate_open) and int(eps_energy_low_streak) >= int(eps_energy_patience_effective):
             stop_reason = "eps_energy"
             _ai_log(
                 "hardcoded_adapt_converged_energy",
-                delta_e=float(abs(energy_current - energy_prev)),
+                depth=int(depth_local),
+                depth_cumulative=int(depth_cumulative),
+                delta_e=float(eps_energy_step_abs),
                 eps_energy=float(eps_energy),
+                eps_energy_low_streak=int(eps_energy_low_streak),
+                eps_energy_patience=int(eps_energy_patience_effective),
+                eps_energy_min_extra_depth=int(eps_energy_min_extra_depth_effective),
+                adapt_ref_base_depth=int(adapt_ref_base_depth),
+                eps_energy_gate_cumulative_depth=int(adapt_ref_base_depth) + int(eps_energy_min_extra_depth_effective),
             )
             break
+        if bool(eps_energy_low_step) and (not bool(eps_energy_gate_open)):
+            _ai_log(
+                "hardcoded_adapt_energy_convergence_gate_wait",
+                depth=int(depth_local),
+                depth_cumulative=int(depth_cumulative),
+                delta_e=float(eps_energy_step_abs),
+                eps_energy=float(eps_energy),
+                eps_energy_min_extra_depth=int(eps_energy_min_extra_depth_effective),
+                adapt_ref_base_depth=int(adapt_ref_base_depth),
+                eps_energy_gate_cumulative_depth=int(adapt_ref_base_depth) + int(eps_energy_min_extra_depth_effective),
+            )
 
         # Check if pool exhausted
         if not allow_repeats and not available_indices:
@@ -1467,20 +2041,6 @@ def _run_hardcoded_adapt_vqe(
 
     elapsed = time.perf_counter() - t0
 
-    # Exact sector-filtered energy for comparison
-    # ADAPT-VQE preserves particle number, so compare against the GS
-    # within the same (n_alpha, n_beta) sector as the HF reference.
-    # For HH: use fermion-only sector filtering (phonon qubits free).
-    exact_gs = _exact_gs_energy_for_problem(
-        h_poly,
-        problem=problem_key,
-        num_sites=int(num_sites),
-        num_particles=num_particles,
-        indexing=str(ordering),
-        n_ph_max=int(n_ph_max),
-        boson_encoding=str(boson_encoding),
-    )
-
     payload = {
         "success": True,
         "method": method_name,
@@ -1498,10 +2058,24 @@ def _run_hardcoded_adapt_vqe(
         "stop_reason": str(stop_reason),
         "nfev_total": int(nfev_total),
         "adapt_inner_optimizer": str(adapt_inner_optimizer_key),
+        "adapt_reopt_policy": str(adapt_reopt_policy_key),
         "allow_repeats": bool(allow_repeats),
         "finite_angle_fallback": bool(finite_angle_fallback),
         "finite_angle": float(finite_angle),
         "finite_angle_min_improvement": float(finite_angle_min_improvement),
+        "adapt_drop_policy_enabled": bool(drop_policy_enabled),
+        "adapt_drop_floor": (float(adapt_drop_floor) if drop_policy_enabled else None),
+        "adapt_drop_patience": (int(adapt_drop_patience) if drop_policy_enabled else None),
+        "adapt_drop_min_depth": (int(adapt_drop_min_depth) if drop_policy_enabled else None),
+        "adapt_grad_floor": (float(adapt_grad_floor) if float(adapt_grad_floor) >= 0.0 else None),
+        "adapt_ref_base_depth": int(adapt_ref_base_depth),
+        "adapt_eps_energy_min_extra_depth": int(adapt_eps_energy_min_extra_depth),
+        "adapt_eps_energy_patience": int(adapt_eps_energy_patience),
+        "eps_energy_min_extra_depth_effective": int(eps_energy_min_extra_depth_effective),
+        "eps_energy_patience_effective": int(eps_energy_patience_effective),
+        "eps_energy_gate_cumulative_depth": int(adapt_ref_base_depth) + int(eps_energy_min_extra_depth_effective),
+        "eps_energy_low_streak_final": int(eps_energy_low_streak),
+        "drop_plateau_hits_final": int(drop_plateau_hits),
         "adapt_gradient_parity_check": bool(adapt_gradient_parity_check),
         "adapt_state_backend": str(adapt_state_backend_key),
         "compiled_pauli_cache": {
@@ -1766,6 +2340,7 @@ def parse_args() -> argparse.Namespace:
             "cse",
             "full_hamiltonian",
             "hva",
+            "full_meta",
             "uccsd_paop_lf_full",
             "paop",
             "paop_min",
@@ -1784,8 +2359,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--adapt-inner-optimizer",
         choices=["COBYLA", "SPSA"],
-        default="COBYLA",
+        default="SPSA",
         help="Inner re-optimizer for HH seed pre-opt and per-depth ADAPT re-optimization.",
+    )
+    p.add_argument(
+        "--adapt-state-backend",
+        choices=["compiled", "legacy"],
+        default="compiled",
+        help="State action backend for ADAPT gradient/energy evaluations (compiled is default production path).",
+    )
+    p.add_argument(
+        "--adapt-reopt-policy",
+        choices=["append_only", "full"],
+        default="append_only",
+        help=(
+            "Per-depth re-optimization policy. "
+            "'append_only' (default): freeze the prefix theta[:k] and optimize only the newly appended parameter. "
+            "'full': legacy behavior — re-optimize all parameters jointly."
+        ),
     )
     p.add_argument("--adapt-maxiter", type=int, default=300, help="Inner optimizer maxiter per re-optimization")
     p.add_argument("--adapt-spsa-a", type=float, default=0.2)
@@ -1800,6 +2391,8 @@ def parse_args() -> argparse.Namespace:
         choices=["mean", "median"],
         default="mean",
     )
+    p.add_argument("--adapt-spsa-callback-every", type=int, default=5)
+    p.add_argument("--adapt-spsa-progress-every-s", type=float, default=60.0)
     p.add_argument("--adapt-seed", type=int, default=7)
     p.set_defaults(adapt_allow_repeats=True)
     p.add_argument("--adapt-allow-repeats", dest="adapt_allow_repeats", action="store_true")
@@ -1842,6 +2435,54 @@ def parse_args() -> argparse.Namespace:
             f"against the legacy commutator path (rtol={_ADAPT_GRADIENT_PARITY_RTOL:.1e})."
         ),
     )
+    p.add_argument(
+        "--adapt-drop-floor",
+        type=float,
+        default=-1.0,
+        help="Energy-drop floor for plateau stop policy; set >=0 to enable (drop = ΔE_abs(d-1)-ΔE_abs(d)).",
+    )
+    p.add_argument(
+        "--adapt-drop-patience",
+        type=int,
+        default=0,
+        help="Consecutive low-drop depth count required to trigger drop plateau stop.",
+    )
+    p.add_argument(
+        "--adapt-drop-min-depth",
+        type=int,
+        default=0,
+        help="Minimum ADAPT depth before evaluating the drop plateau stop policy.",
+    )
+    p.add_argument(
+        "--adapt-grad-floor",
+        type=float,
+        default=-1.0,
+        help="Optional secondary gradient floor for drop plateau stop; negative disables this guard.",
+    )
+    p.add_argument(
+        "--adapt-eps-energy-min-extra-depth",
+        type=int,
+        default=-1,
+        help=(
+            "Minimum extra ADAPT depth before eps-energy stop can trigger. "
+            "Use -1 to auto-set this to L."
+        ),
+    )
+    p.add_argument(
+        "--adapt-eps-energy-patience",
+        type=int,
+        default=-1,
+        help=(
+            "Consecutive low-improvement depth count required for eps-energy stop. "
+            "Use -1 to auto-set this to L."
+        ),
+    )
+    p.add_argument(
+        "--adapt-ref-json",
+        type=Path,
+        default=None,
+        help="Import reference state from an ADAPT/VQE JSON initial_state.amplitudes_qn_to_q0.",
+    )
     p.add_argument("--paop-r", type=int, default=1, help="Cloud radius R for paop_full/paop_lf_full pools.")
     p.add_argument(
         "--paop-split-paulis",
@@ -1871,6 +2512,12 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--output-json", type=Path, default=None)
     p.add_argument("--output-pdf", type=Path, default=None)
+    p.add_argument(
+        "--dense-eigh-max-dim",
+        type=int,
+        default=8192,
+        help="Skip full dense Hamiltonian diagonalization when Hilbert dimension exceeds this threshold.",
+    )
     p.add_argument("--skip-pdf", action="store_true")
     return p.parse_args()
 
@@ -1926,8 +2573,18 @@ def main() -> None:
         ordered_labels_exyz = list(native_order)
     else:
         ordered_labels_exyz = sorted(coeff_map_exyz)
-
-    hmat = _build_hamiltonian_matrix(coeff_map_exyz)
+    nq_total = len(ordered_labels_exyz[0]) if ordered_labels_exyz else 2 * int(args.L)
+    hilbert_dim = 1 << int(nq_total)
+    dense_eigh_enabled = bool(hilbert_dim <= int(args.dense_eigh_max_dim))
+    hmat: np.ndarray | None = None
+    if dense_eigh_enabled:
+        hmat = _build_hamiltonian_matrix(coeff_map_exyz)
+    else:
+        _ai_log(
+            "hardcoded_adapt_dense_eigh_skipped",
+            hilbert_dim=int(hilbert_dim),
+            dense_eigh_max_dim=int(args.dense_eigh_max_dim),
+        )
 
     # Sector-filtered exact ground state: ADAPT-VQE preserves particle number,
     # so compare against the GS within the same (n_alpha, n_beta) sector.
@@ -1941,24 +2598,82 @@ def main() -> None:
         indexing=str(args.ordering),
         n_ph_max=int(args.n_ph_max),
         boson_encoding=str(args.boson_encoding),
+        t=float(args.t),
+        u=float(args.u),
+        dv=float(args.dv),
+        omega0=float(args.omega0),
+        g_ep=float(args.g_ep),
+        boundary=str(args.boundary),
     )
-    # Full-spectrum eigenvectors — pick the one closest to sector GS energy
-    # that lives in the correct particle-number sector (for initial-state fallback).
-    evals_full, evecs_full = np.linalg.eigh(hmat)
-    psi_exact_ground = None
-    for idx in range(len(evals_full)):
-        if abs(evals_full[idx] - gs_energy_exact) < 1e-8:
-            psi_exact_ground = _normalize_state(
-                np.asarray(evecs_full[:, idx], dtype=complex).reshape(-1)
+    # Full-spectrum eigenvectors are optional (memory heavy for large HH spaces).
+    psi_exact_ground: np.ndarray
+    if hmat is not None:
+        evals_full, evecs_full = np.linalg.eigh(hmat)
+        psi_exact_ground_opt: np.ndarray | None = None
+        for idx in range(len(evals_full)):
+            if abs(evals_full[idx] - gs_energy_exact) < 1e-8:
+                psi_exact_ground_opt = _normalize_state(
+                    np.asarray(evecs_full[:, idx], dtype=complex).reshape(-1)
+                )
+                break
+        if psi_exact_ground_opt is None:
+            gs_idx_fallback = int(np.argmin(evals_full))
+            psi_exact_ground_opt = _normalize_state(
+                np.asarray(evecs_full[:, gs_idx_fallback], dtype=complex).reshape(-1)
             )
-            break
-    if psi_exact_ground is None:
-        gs_idx_fallback = int(np.argmin(evals_full))
+        psi_exact_ground = psi_exact_ground_opt
+    elif problem_key == "hh":
         psi_exact_ground = _normalize_state(
-            np.asarray(evecs_full[:, gs_idx_fallback], dtype=complex).reshape(-1)
+            np.asarray(
+                hubbard_holstein_reference_state(
+                    dims=int(args.L),
+                    num_particles=num_particles_main,
+                    n_ph_max=int(args.n_ph_max),
+                    boson_encoding=str(args.boson_encoding),
+                    indexing=str(args.ordering),
+                ),
+                dtype=complex,
+            ).reshape(-1)
+        )
+    else:
+        psi_exact_ground = _normalize_state(
+            np.asarray(
+                hartree_fock_statevector(int(args.L), num_particles_main, indexing=str(args.ordering)),
+                dtype=complex,
+            ).reshape(-1)
         )
 
     # 2) Run ADAPT-VQE
+    psi_ref_override_for_adapt: np.ndarray | None = None
+    adapt_ref_import: dict[str, Any] | None = None
+    adapt_ref_base_depth = 0
+    if args.adapt_ref_json is not None:
+        psi_ref_override_for_adapt, adapt_ref_meta = _load_adapt_initial_state(
+            Path(args.adapt_ref_json),
+            int(nq_total),
+        )
+        adapt_ref_vqe = adapt_ref_meta.get("adapt_vqe", {})
+        if isinstance(adapt_ref_vqe, dict):
+            ref_depth_raw = adapt_ref_vqe.get("ansatz_depth")
+            try:
+                ref_depth_val = int(ref_depth_raw)
+                if ref_depth_val >= 0:
+                    adapt_ref_base_depth = int(ref_depth_val)
+            except (TypeError, ValueError):
+                adapt_ref_base_depth = 0
+        adapt_ref_import = {
+            "path": str(Path(args.adapt_ref_json)),
+            "initial_state_source": adapt_ref_meta.get("initial_state_source"),
+            "settings": adapt_ref_meta.get("settings", {}),
+            "adapt_vqe": adapt_ref_meta.get("adapt_vqe", {}),
+            "adapt_ref_base_depth": int(adapt_ref_base_depth),
+        }
+        _ai_log(
+            "hardcoded_adapt_ref_json_loaded",
+            path=str(Path(args.adapt_ref_json)),
+            initial_state_source=adapt_ref_meta.get("initial_state_source"),
+            adapt_ref_base_depth=int(adapt_ref_base_depth),
+        )
     adapt_payload: dict[str, Any]
     try:
         adapt_payload, psi_adapt = _run_hardcoded_adapt_vqe(
@@ -1989,16 +2704,29 @@ def main() -> None:
             adapt_spsa_avg_last=int(args.adapt_spsa_avg_last),
             adapt_spsa_eval_repeats=int(args.adapt_spsa_eval_repeats),
             adapt_spsa_eval_agg=str(args.adapt_spsa_eval_agg),
+            adapt_spsa_callback_every=int(args.adapt_spsa_callback_every),
+            adapt_spsa_progress_every_s=float(args.adapt_spsa_progress_every_s),
+            adapt_state_backend=str(args.adapt_state_backend),
+            adapt_reopt_policy=str(args.adapt_reopt_policy),
             allow_repeats=bool(args.adapt_allow_repeats),
             finite_angle_fallback=bool(args.adapt_finite_angle_fallback),
             finite_angle=float(args.adapt_finite_angle),
             finite_angle_min_improvement=float(args.adapt_finite_angle_min_improvement),
+            adapt_drop_floor=float(args.adapt_drop_floor),
+            adapt_drop_patience=int(args.adapt_drop_patience),
+            adapt_drop_min_depth=int(args.adapt_drop_min_depth),
+            adapt_grad_floor=float(args.adapt_grad_floor),
+            adapt_eps_energy_min_extra_depth=int(args.adapt_eps_energy_min_extra_depth),
+            adapt_eps_energy_patience=int(args.adapt_eps_energy_patience),
+            adapt_ref_base_depth=int(adapt_ref_base_depth),
             paop_r=int(args.paop_r),
             paop_split_paulis=bool(args.paop_split_paulis),
             paop_prune_eps=float(args.paop_prune_eps),
             paop_normalization=str(args.paop_normalization),
             disable_hh_seed=bool(args.adapt_disable_hh_seed),
+            psi_ref_override=psi_ref_override_for_adapt,
             adapt_gradient_parity_check=bool(args.adapt_gradient_parity_check),
+            exact_gs_override=float(gs_energy_exact),
         )
     except Exception as exc:
         _ai_log("hardcoded_adapt_vqe_failed", L=int(args.L), error=str(exc))
@@ -2058,17 +2786,25 @@ def main() -> None:
         _ai_log("hardcoded_adapt_initial_state_selected", source="exact")
 
     # 4) Trajectory
-    trajectory, _exact_states = _simulate_trajectory(
-        num_sites=int(args.L),
-        psi0=psi0,
-        hmat=hmat,
-        ordered_labels_exyz=ordered_labels_exyz,
-        coeff_map_exyz=coeff_map_exyz,
-        trotter_steps=int(args.trotter_steps),
-        t_final=float(args.t_final),
-        num_times=int(args.num_times),
-        suzuki_order=int(args.suzuki_order),
-    )
+    if hmat is None:
+        trajectory = []
+        _ai_log(
+            "hardcoded_adapt_trajectory_skipped_no_dense_hmat",
+            hilbert_dim=int(hilbert_dim),
+            dense_eigh_max_dim=int(args.dense_eigh_max_dim),
+        )
+    else:
+        trajectory, _exact_states = _simulate_trajectory(
+            num_sites=int(args.L),
+            psi0=psi0,
+            hmat=hmat,
+            ordered_labels_exyz=ordered_labels_exyz,
+            coeff_map_exyz=coeff_map_exyz,
+            trotter_steps=int(args.trotter_steps),
+            t_final=float(args.t_final),
+            num_times=int(args.num_times),
+            suzuki_order=int(args.suzuki_order),
+        )
 
     # 5) Emit JSON
     payload: dict[str, Any] = {
@@ -2091,16 +2827,28 @@ def main() -> None:
             "suzuki_order": int(args.suzuki_order),
             "trotter_steps": int(args.trotter_steps),
             "term_order": str(args.term_order),
+            "dense_eigh_max_dim": int(args.dense_eigh_max_dim),
+            "dense_eigh_enabled": bool(dense_eigh_enabled),
+            "hilbert_dim": int(hilbert_dim),
             "adapt_pool": str(args.adapt_pool),
             "adapt_max_depth": int(args.adapt_max_depth),
             "adapt_eps_grad": float(args.adapt_eps_grad),
             "adapt_eps_energy": float(args.adapt_eps_energy),
             "adapt_inner_optimizer": str(args.adapt_inner_optimizer),
+            "adapt_state_backend": str(args.adapt_state_backend),
             "adapt_finite_angle_fallback": bool(args.adapt_finite_angle_fallback),
             "adapt_finite_angle": float(args.adapt_finite_angle),
             "adapt_finite_angle_min_improvement": float(args.adapt_finite_angle_min_improvement),
+            "adapt_drop_floor": float(args.adapt_drop_floor),
+            "adapt_drop_patience": int(args.adapt_drop_patience),
+            "adapt_drop_min_depth": int(args.adapt_drop_min_depth),
+            "adapt_grad_floor": float(args.adapt_grad_floor),
+            "adapt_eps_energy_min_extra_depth": int(args.adapt_eps_energy_min_extra_depth),
+            "adapt_eps_energy_patience": int(args.adapt_eps_energy_patience),
+            "adapt_ref_base_depth": int(adapt_ref_base_depth),
             "adapt_gradient_parity_check": bool(args.adapt_gradient_parity_check),
             "adapt_seed": int(args.adapt_seed),
+            "adapt_ref_json": (str(args.adapt_ref_json) if args.adapt_ref_json is not None else None),
             "paop_r": int(args.paop_r),
             "paop_split_paulis": bool(args.paop_split_paulis),
             "paop_prune_eps": float(args.paop_prune_eps),
@@ -2124,7 +2872,7 @@ def main() -> None:
         },
         "ground_state": {
             "exact_energy": float(gs_energy_exact),
-            "method": EXACT_METHOD,
+            "method": (EXACT_METHOD if hmat is not None else "sector_exact_only_no_dense_eigh"),
         },
         "adapt_vqe": adapt_payload,
         "initial_state": {
@@ -2143,7 +2891,11 @@ def main() -> None:
             "avg_last": int(args.adapt_spsa_avg_last),
             "eval_repeats": int(args.adapt_spsa_eval_repeats),
             "eval_agg": str(args.adapt_spsa_eval_agg),
+            "callback_every": int(args.adapt_spsa_callback_every),
+            "progress_every_s": float(args.adapt_spsa_progress_every_s),
         }
+    if adapt_ref_import is not None:
+        payload["adapt_ref_import"] = adapt_ref_import
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
