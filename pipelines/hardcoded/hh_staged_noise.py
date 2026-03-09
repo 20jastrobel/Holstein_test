@@ -21,7 +21,8 @@ from pipelines.hardcoded.hh_staged_noise_workflow import (
 def build_parser() -> argparse.ArgumentParser:
     return build_staged_hh_parser(
         description=(
-            "Staged HH noise workflow: HF -> hh_hva_ptw warm-start -> staged ADAPT -> "
+            "Staged HH noise workflow: HF -> warm-start HH-HVA "
+            "(hh_hva_ptw default; --warm-ansatz hh_hva opt-in) -> staged ADAPT -> "
             "matched-family conventional replay -> final-only noisy/noiseless dynamics."
         ),
         include_noise=True,

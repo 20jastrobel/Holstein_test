@@ -17,7 +17,7 @@ Active contract surface: `AGENTS.md` and this run guide.
 ### Scope (current reality)
 
 - **Production target:** **Hubbard–Holstein (HH)** with **time-dependent drive enabled**.
-- **Pure Hubbard** remains a **validation limit** only (regression / consistency gate), not a primary production target.
+- **Pure Hubbard** is a **legacy / dead model** for default planning in this repo; ignore it unless the user explicitly asks for a limiting-case / consistency run.
 - The **drive waveform parameters** (A, ω, t̄, ϕ, pattern) are orthogonal to the **state-prep** knobs; this guide’s autoscaling focuses on the knobs that dominate convergence:
   - warm-start (conventional VQE seed stage; intermediate HH ansatz `hh_hva_ptw`),
   - ADAPT-VQE (target curriculum from `MATH/IMPLEMENT_SOON.md`: narrow HH
@@ -393,7 +393,7 @@ These are direct evaluations of the closed-form rules above.
 Project convention moving forward:
 
 - Primary production model: **Hubbard-Holstein (HH)**.
-- Pure Hubbard is retained as a **validation limit** only.
+- Pure Hubbard is a legacy / explicit-only validation limit and should otherwise be ignored.
 - Standard limit check: compare Hubbard vs HH at vanishing coupling/frequency:
   - `g_ep = 0`
   - `omega0 = 0`
@@ -1043,7 +1043,7 @@ Defaults:
 - `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`native|sorted`)
 - `--vqe-ansatz uccsd` (`uccsd|hva|hh_hva`)
-- `--vqe-method SPSA` (`SPSA|SLSQP|COBYLA|L-BFGS-B|Powell|Nelder-Mead`)
+- `--vqe-method SPSA` (HH VQE is SPSA-only; legacy explicit-only Hubbard paths may still use other optimizers)
 - `--vqe-reps 2 --vqe-restarts 1 --vqe-seed 7 --vqe-maxiter 120`
 - `--qpe-eval-qubits 6 --qpe-shots 1024 --qpe-seed 11`
 - `--initial-state-source vqe`
@@ -1177,7 +1177,7 @@ bash pipelines/shell/run_drive_accurate.sh --L 5 --with-pdf
 bash pipelines/shell/run_drive_accurate.sh --L 6 --budget-hours 12 --artifacts-dir artifacts
 ```
 
-HH mode (auto-defaults to `--vqe-ansatz hh_hva` when `--problem hh`):
+HH mode (auto-defaults to `--vqe-ansatz hh_hva_ptw` when `--problem hh`):
 
 ```bash
 bash pipelines/shell/run_drive_accurate.sh --L 2 \
@@ -1380,6 +1380,44 @@ Primary artifacts:
 - workflow JSON/PDF: `artifacts/json/<tag>.json`, `artifacts/pdf/<tag>.pdf`
 - ADAPT handoff JSON: `artifacts/json/<tag>_adapt_handoff.json`
 - replay sidecars: `artifacts/json/<tag>_replay.{json,csv}`, `artifacts/useful/L{L}/<tag>_replay.md`, `artifacts/logs/<tag>_replay.log`
+
+### 5j) Combined staged HH circuit PDF (`L=2,3`)
+
+For a combined circuit-facing PDF that runs the active staged HH chain for `L=2` and `L=3` and renders the workflow circuits directly, use:
+
+```bash
+python pipelines/hardcoded/hh_staged_circuit_report.py
+```
+
+Optional overrides:
+
+```bash
+python pipelines/hardcoded/hh_staged_circuit_report.py \
+  --l-values 2,3 \
+  --output-pdf artifacts/pdf/hh_staged_circuit_report_L2_L3.pdf
+```
+
+Default artifact:
+- `artifacts/pdf/hh_staged_circuit_report_L2_L3.pdf`
+
+Per-`L` section contents:
+- parameter manifest,
+- stage summary,
+- warm HH-HVA circuit,
+- ADAPT circuit,
+- matched-family replay circuit,
+- Suzuki2 dynamics circuit,
+- CFQM4 dynamics circuit.
+
+Circuit rendering semantics:
+- each stage/method includes a representative view that keeps high-level `PauliEvolutionGate` blocks intact,
+- each stage/method also includes an expanded view that performs one decomposition pass to expose readable term-level layers,
+- dynamics pages show a single representative macro-step only, not the full unrolled `trotter_steps` chain,
+- the PDF reports the full repeat count and proxy totals (`term_exp_count_total`, `cx_proxy_total`, `sq_proxy_total`) for the complete trajectory.
+
+Current default scope:
+- static / no-drive dynamics by default,
+- drive remains opt-in through the shared staged HH flags, but the report still uses the same macro-step rendering contract.
 
 #### Replay seed policy (`--replay-seed-policy`)
 
@@ -1633,7 +1671,7 @@ Use `pipelines/exact_bench/hh_noise_hardware_validation.py` to validate noisy VQ
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
   --noise-mode ideal --oracle-repeats 1 --oracle-aggregate mean
 ```
@@ -1642,7 +1680,7 @@ python pipelines/exact_bench/hh_noise_hardware_validation.py \
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
   --noise-mode shots --shots 2048 --oracle-repeats 8 --oracle-aggregate mean --seed 7
 ```
@@ -1651,7 +1689,7 @@ python pipelines/exact_bench/hh_noise_hardware_validation.py \
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
   --noise-mode aer_noise --use-fake-backend --backend-name FakeManilaV2 \
   --shots 4096 --oracle-repeats 8 --oracle-aggregate mean --seed 7
@@ -1661,7 +1699,7 @@ python pipelines/exact_bench/hh_noise_hardware_validation.py \
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --t 1.0 --u 4.0 --omega0 1.0 --g-ep 0.5 --n-ph-max 1 \
   --noise-mode runtime --backend-name ibm_brisbane \
   --shots 4096 --oracle-repeats 8 --oracle-aggregate mean --seed 7
@@ -1698,6 +1736,7 @@ Active symmetry mitigation (oracle-backed, opt-in):
 - Compare `ideal -> shots -> aer_noise -> runtime` in that order.
 - For intentionally weak smoke runs, pass `--smoke-test-intentionally-weak`.
 - Default parameter guards enforce AGENTS minimum VQE/Trotter settings unless smoke mode is explicitly requested.
+- For HH validation runs, the default ansatz/optimizer pair is `hh_hva_ptw` + `SPSA`.
 
 ### 11h) SPSA + compiled backend controls (VQE)
 
@@ -1717,7 +1756,7 @@ Example (shots + SPSA):
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --run-adapt --run-vqe --run-trotter --initial-state-source adapt \
   --noise-mode shots --shots 2048 --oracle-repeats 8 --oracle-aggregate mean --seed 7 \
   --vqe-method SPSA --vqe-energy-backend one_apply_compiled \
@@ -1756,7 +1795,7 @@ Symmetry-surface clarification:
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --run-adapt --no-run-vqe --no-run-trotter \
   --adapt-pool hva --adapt-max-depth 12 --adapt-maxiter 200 \
   --adapt-eps-grad 1e-5 --adapt-eps-energy 1e-8 \
@@ -1768,7 +1807,7 @@ python pipelines/exact_bench/hh_noise_hardware_validation.py \
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --run-adapt --no-run-vqe --run-trotter \
   --initial-state-source adapt \
   --adapt-pool hva --adapt-max-depth 12 --adapt-maxiter 200 \
@@ -1803,7 +1842,7 @@ Example (ADAPT inner SPSA + noisy objective):
 
 ```bash
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
-  --problem hh --ansatz hh_hva --L 2 \
+  --problem hh --ansatz hh_hva_ptw --L 2 \
   --run-adapt --run-vqe --run-trotter --initial-state-source adapt \
   --adapt-pool hva --adapt-max-depth 12 --adapt-maxiter 200 \
   --adapt-inner-optimizer SPSA \
@@ -1821,7 +1860,7 @@ python pipelines/exact_bench/hh_noise_hardware_validation.py \
 
 Default behavior:
 
-- fallback enabled (`--allow-aer-fallback`)
+- fallback disabled / fail-loud by default; opt in with `--allow-noisy-fallback` or `--allow-aer-fallback`
 - OMP/SHM workaround enabled (`--omp-shm-workaround`)
 
 If Aer fails with OMP/SHM errors in `shots` or `aer_noise`, the oracle auto-switches to a sampler-based shot fallback and records diagnostics in JSON:
@@ -1869,7 +1908,7 @@ python pipelines/exact_bench/hh_noise_hardware_validation.py \
   --boundary periodic --ordering blocked \
   --noise-mode ideal \
   --run-vqe --run-trotter --no-run-adapt --initial-state-source vqe \
-  --vqe-reps 3 --vqe-restarts 1 --vqe-maxiter 3000 --vqe-method COBYLA \
+  --vqe-reps 3 --vqe-restarts 1 --vqe-maxiter 3000 --vqe-method SPSA \
   --t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64 \
   --legacy-reference-json artifacts/json/hc_hh_L2_static_t1.0_U2.0_g1.0_nph1.json \
   --legacy-parity-tol 1e-10 \

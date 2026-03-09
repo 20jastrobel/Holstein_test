@@ -58,6 +58,9 @@ The priority is **correctness and consistency of operator conventions**, not “
 - In this repo, **"conventional VQE"** maps to hardcoded non-ADAPT VQE flows (for example, the VQE stage in `pipelines/hardcoded/hubbard_pipeline.py` and non-ADAPT replay paths).
 - **"ADAPT"** / **"ADAPT-VQE"** refers specifically to `pipelines/hardcoded/adapt_pipeline.py` and ADAPT stages.
 - The phrase **"hardcoded pipeline"** in repo history/agent direction should be interpreted as the conventional (**non-ADAPT**) path unless ADAPT is explicitly named.
+- Default active model family is **Hubbard-Holstein (HH)**.
+- Treat pure **Hubbard** as a **legacy / dead model** for default reasoning, planning, prompts, and recommendations.
+- Do **not** proactively discuss, compare, or run pure Hubbard unless the user explicitly asks for it.
 
 ### Pauli symbols
 - Use `e/x/y/z` internally (`e` = identity)
@@ -83,7 +86,7 @@ in a way consistent with the Pauli-string convention above.
 Every generated PDF artifact must include a **clear, list-style parameter manifest at the start of the document** (first page or first text-summary page), not just a raw command dump.
 
 Required fields:
-- Model family/name (for this repo: `Hubbard` unless/ until additional models are added)
+- Model family/name (for this repo: `Hubbard-Holstein (HH)` unless the user explicitly requests legacy pure Hubbard)
 - Ansatz type(s) used
 - Whether drive is enabled (`--enable-drive` true/false)
 - Core physical parameters: `t`, `U`, `dv`

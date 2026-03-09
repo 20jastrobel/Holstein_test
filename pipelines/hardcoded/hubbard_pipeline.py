@@ -2724,7 +2724,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="SPSA",
         choices=["SLSQP", "COBYLA", "L-BFGS-B", "Powell", "Nelder-Mead", "SPSA"],
-        help="SciPy optimizer (or SPSA) used by hardcoded VQE.",
+        help="SciPy optimizer (or SPSA) used by hardcoded VQE. HH runs are SPSA-only.",
     )
     parser.add_argument("--vqe-spsa-a", type=float, default=0.2)
     parser.add_argument("--vqe-spsa-c", type=float, default=0.1)
@@ -2926,7 +2926,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-json", type=Path, default=None)
     parser.add_argument("--output-pdf", type=Path, default=None)
     parser.add_argument("--skip-pdf", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if str(args.problem).strip().lower() == "hh" and str(args.vqe_method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH hardcoded pipeline is SPSA-only for --vqe-method. "
+            "Use --vqe-method SPSA for HH runs."
+        )
+    return args
 
 
 def main() -> None:

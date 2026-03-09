@@ -1565,6 +1565,7 @@ def _run_hardcoded_adapt_vqe(
     phase3_enable_rescue: bool = False,
     phase3_lifetime_cost_mode: str = "phase3_v1",
     phase3_runtime_split_mode: str = "off",
+    diagnostics_out: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], np.ndarray]:
     """Run standard ADAPT-VQE and return (payload, psi_ground)."""
     if float(finite_angle) <= 0.0:
@@ -4825,6 +4826,19 @@ def _run_hardcoded_adapt_vqe(
         stop_reason=str(stop_reason),
         elapsed_sec=round(elapsed, 6),
     )
+    if diagnostics_out is not None:
+        diagnostics_out.clear()
+        diagnostics_out.update(
+            {
+                "reference_state": np.asarray(psi_ref, dtype=complex).reshape(-1).copy(),
+                "selected_ops": list(selected_ops),
+                "selected_operator_labels": [str(op.label) for op in selected_ops],
+                "theta": np.asarray(theta, dtype=float).copy(),
+                "num_qubits": int(round(math.log2(int(np.asarray(psi_ref).size)))),
+                "pool_type": str(pool_key),
+                "continuation_mode": str(continuation_mode),
+            }
+        )
     return payload, psi_adapt
 
 

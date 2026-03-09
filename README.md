@@ -8,9 +8,8 @@ Jordan-Wigner operator construction, binary or unary bosonic encoding, blocked o
 ## Project focus
 
 - Primary production model: `Hubbard-Holstein (HH)`.
-- Pure Hubbard is retained as a limiting-case validation path.
-- Standard regression checks: HH with `g_ep = 0` and `omega0 = 0` under
-  matched settings should reduce to Hubbard behavior.
+- Pure Hubbard is a legacy / dead model for default planning and should be ignored unless explicitly requested.
+- Standard regression checks may still use the HH -> Hubbard limiting case when the task explicitly calls for that consistency check.
 - Noiseless shots and Aer simulator should match the pipeline with noise simular turned off.
 
 
@@ -33,6 +32,21 @@ python pipelines/hardcoded/hh_staged_noiseless.py --L 2
 ```
 
 This wrapper keeps drive opt-in, runs final matched-family replay (not fixed `hh_hva_*` replay), and reports Suzuki/CFQM dynamics from the replay seed with GS-baseline energy error plus seeded exact-reference fidelity.
+
+Combined staged circuit PDF for `L=2,3`:
+
+```bash
+python pipelines/hardcoded/hh_staged_circuit_report.py
+```
+
+Default artifact:
+- `artifacts/pdf/hh_staged_circuit_report_L2_L3.pdf`
+
+Report contract:
+- one combined PDF with separate `L=2` and `L=3` sections,
+- per-`L` pages for manifest, stage summary, warm HH-HVA, ADAPT, matched-family replay, Suzuki2 macro-step, and CFQM4 macro-step,
+- each circuit stage/method gets both a representative view (high-level `PauliEvolutionGate` blocks) and an expanded one-level decomposition view,
+- dynamics pages show one representative macro-step only; the PDF states the repeat count and proxy totals for the full `trotter_steps` trajectory.
 
 ## Repository map (minimal)
 
@@ -136,7 +150,7 @@ graph TB
     PD3 --> GCompute
 
     GCompute["Compute commutator_grad for available operators"] --> GSelect["Select max magnitude operator and append"]
-    GSelect --> Reopt["Re-optimize all parameters with COBYLA"]
+    GSelect --> Reopt["Re-optimize all parameters (HH workflow: SPSA)"]
     Reopt --> Stop{"Stop rule"}
     Stop -->|eps_grad or eps_energy or pool_exhausted or max_depth| ADOut["Produce psi_adapt"]
     Stop -->|continue| GCompute

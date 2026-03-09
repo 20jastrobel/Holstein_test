@@ -34,6 +34,15 @@ from docs.reports.pdf_utils import (
     render_text_page,
     require_matplotlib,
 )
+from docs.reports.qiskit_circuit_report import (
+    adapt_ops_to_circuit,
+    ansatz_to_circuit,
+    build_cfqm_time_dependent_circuit,
+    build_suzuki2_time_dependent_circuit,
+    compute_time_dynamics_proxy_cost,
+    render_circuit_page,
+    render_circuit_summary_page,
+)
 from pipelines.hardcoded import adapt_pipeline as adapt_mod
 from pipelines.hardcoded import hh_vqe_from_adapt_family as replay_mod
 from pipelines.hardcoded import hubbard_pipeline as hc_pipeline
@@ -49,6 +58,11 @@ from src.quantum.hartree_fock_reference_state import hubbard_holstein_reference_
 from src.quantum.hubbard_latex_python_pairs import (
     boson_qubits_per_site,
     build_hubbard_holstein_hamiltonian,
+)
+from src.quantum.vqe_latex_python_pairs import (
+    HubbardHolsteinLayerwiseAnsatz,
+    HubbardHolsteinPhysicalTermwiseAnsatz,
+    HubbardHolsteinTermwiseAnsatz,
 )
 
 
@@ -99,6 +113,10 @@ class AdaptConfig:
     maxiter: int
     eps_grad: float
     eps_energy: float
+    drop_floor: float | None
+    drop_patience: int | None
+    drop_min_depth: int | None
+    grad_floor: float | None
     seed: int
     inner_optimizer: str
     allow_repeats: bool
@@ -232,6 +250,7 @@ class StagedHHConfig:
     gates: GateConfig
     smoke_test_intentionally_weak: bool = False
     default_provenance: dict[str, str] = field(default_factory=dict)
+    external_noise_handle: dict[str, Any] | None = None
 
 
 @dataclass
@@ -248,6 +267,9 @@ class StageExecutionResult:
     warm_payload: dict[str, Any]
     adapt_payload: dict[str, Any]
     replay_payload: dict[str, Any]
+    warm_circuit_context: dict[str, Any] | None = None
+    adapt_circuit_context: dict[str, Any] | None = None
+    replay_circuit_context: dict[str, Any] | None = None
 
 
 """
@@ -354,6 +376,7 @@ def _default_output_tag(
     drive_time_sampling: str,
     noiseless_methods: str,
     adapt_continuation_mode: str,
+    warm_ansatz: str,
 ) -> str:
     drive_label = "drive" if bool(drive_enabled) else "static"
     spec = {
@@ -377,11 +400,13 @@ def _default_output_tag(
         "drive_time_sampling": str(drive_time_sampling),
         "noiseless_methods": str(noiseless_methods),
         "adapt_continuation_mode": str(adapt_continuation_mode),
+        "warm_ansatz": str(warm_ansatz),
     }
     digest = hashlib.sha1(json.dumps(spec, sort_keys=True).encode("utf-8")).hexdigest()[:10]
     return (
         f"hh_staged_L{int(L)}_{drive_label}_"
-        f"t{float(t):g}_U{float(u):g}_dv{float(dv):g}_w{float(omega0):g}_g{float(g_ep):g}_nph{int(n_ph_max)}_{digest}"
+        f"t{float(t):g}_U{float(u):g}_dv{float(dv):g}_w{float(omega0):g}_g{float(g_ep):g}_"
+        f"nph{int(n_ph_max)}_warm{str(warm_ansatz)}_{digest}"
     )
 
 
@@ -466,6 +491,15 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
     L = int(getattr(args, "L"))
     defaults = _scaled_defaults(L)
     provenance: dict[str, str] = {}
+    warm_ansatz = str(
+        _resolve_with_default(
+            name="warm_ansatz",
+            raw=getattr(args, "warm_ansatz", None),
+            default="hh_hva_ptw",
+            provenance=provenance,
+            default_source="workflow.warm_ansatz.default=hh_hva_ptw",
+        )
+    )
 
     sector_n_up_raw = getattr(args, "sector_n_up", None)
     sector_n_dn_raw = getattr(args, "sector_n_dn", None)
@@ -503,6 +537,7 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
             drive_time_sampling=str(getattr(args, "drive_time_sampling")),
             noiseless_methods=str(getattr(args, "noiseless_methods")),
             adapt_continuation_mode=str(getattr(args, "adapt_continuation_mode")),
+            warm_ansatz=str(warm_ansatz),
         ),
         provenance=provenance,
         default_source="workflow.tag.default",
@@ -654,7 +689,7 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         sector_n_dn=int(sector_n_dn),
     )
     warm_start = WarmStartConfig(
-        ansatz_name="hh_hva_ptw",
+        ansatz_name=str(warm_ansatz),
         reps=int(cfg_values["warm_reps"]),
         restarts=int(cfg_values["warm_restarts"]),
         maxiter=int(cfg_values["warm_maxiter"]),
@@ -679,6 +714,26 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         maxiter=int(cfg_values["adapt_maxiter"]),
         eps_grad=float(cfg_values["adapt_eps_grad"]),
         eps_energy=float(cfg_values["adapt_eps_energy"]),
+        drop_floor=(
+            None
+            if getattr(args, "adapt_drop_floor", None) is None
+            else float(getattr(args, "adapt_drop_floor"))
+        ),
+        drop_patience=(
+            None
+            if getattr(args, "adapt_drop_patience", None) is None
+            else int(getattr(args, "adapt_drop_patience"))
+        ),
+        drop_min_depth=(
+            None
+            if getattr(args, "adapt_drop_min_depth", None) is None
+            else int(getattr(args, "adapt_drop_min_depth"))
+        ),
+        grad_floor=(
+            None
+            if getattr(args, "adapt_grad_floor", None) is None
+            else float(getattr(args, "adapt_grad_floor"))
+        ),
         seed=int(getattr(args, "adapt_seed")),
         inner_optimizer=str(getattr(args, "adapt_inner_optimizer")),
         allow_repeats=bool(getattr(args, "adapt_allow_repeats")),
@@ -926,10 +981,45 @@ def _handoff_continuation_meta(adapt_payload: Mapping[str, Any]) -> dict[str, An
     }
 
 
+def _infer_handoff_adapt_pool(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any]) -> str | None:
+    if cfg.adapt.pool not in {None, "", "none"}:
+        return str(cfg.adapt.pool)
+
+    continuation = adapt_payload.get("continuation", {})
+    if not isinstance(continuation, Mapping):
+        continuation = {}
+
+    record_sets: list[Any] = [
+        continuation.get("selected_generator_metadata", []),
+    ]
+    motif_library = continuation.get("motif_library", {})
+    if isinstance(motif_library, Mapping):
+        record_sets.append(motif_library.get("records", []))
+
+    for records in record_sets:
+        if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
+            continue
+        families = sorted(
+            {
+                str(rec.get("family_id")).strip().lower()
+                for rec in records
+                if isinstance(rec, Mapping) and rec.get("family_id") not in {None, "", "none"}
+            }
+        )
+        if len(families) == 1:
+            return families[0]
+
+    raw_pool = adapt_payload.get("pool_type")
+    if raw_pool not in {None, "", "none"}:
+        return str(raw_pool)
+    return None
+
+
 def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], psi_adapt: np.ndarray) -> None:
     exact_energy = float(adapt_payload.get("exact_gs_energy", float("nan")))
     energy = float(adapt_payload.get("energy", float("nan")))
     continuation_meta = _handoff_continuation_meta(adapt_payload)
+    handoff_adapt_pool = _infer_handoff_adapt_pool(cfg, adapt_payload)
     handoff_cfg = HandoffStateBundleConfig(
         L=int(cfg.physics.L),
         t=float(cfg.physics.t),
@@ -960,7 +1050,8 @@ def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], 
         },
         adapt_operators=[str(x) for x in adapt_payload.get("operators", [])],
         adapt_optimal_point=[float(x) for x in adapt_payload.get("optimal_point", [])],
-        adapt_pool_type=(None if adapt_payload.get("pool_type") is None else str(adapt_payload.get("pool_type"))),
+        adapt_pool_type=handoff_adapt_pool,
+        settings_adapt_pool=handoff_adapt_pool,
         handoff_state_kind="prepared_state",
         continuation_mode=str(continuation_meta.get("continuation_mode", cfg.adapt.continuation_mode)),
         continuation_scaffold=continuation_meta.get("continuation_scaffold"),
@@ -982,8 +1073,88 @@ def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], 
     )
 
 
+def _build_hh_warm_ansatz(cfg: StagedHHConfig) -> Any:
+    common_kwargs = {
+        "dims": int(cfg.physics.L),
+        "J": float(cfg.physics.t),
+        "U": float(cfg.physics.u),
+        "omega0": float(cfg.physics.omega0),
+        "g": float(cfg.physics.g_ep),
+        "n_ph_max": int(cfg.physics.n_ph_max),
+        "boson_encoding": str(cfg.physics.boson_encoding),
+        "reps": int(cfg.warm_start.reps),
+        "repr_mode": "JW",
+        "indexing": str(cfg.physics.ordering),
+        "pbc": (str(cfg.physics.boundary).strip().lower() == "periodic"),
+    }
+    ansatz_name = str(cfg.warm_start.ansatz_name).strip().lower()
+    if ansatz_name == "hh_hva":
+        return HubbardHolsteinLayerwiseAnsatz(**common_kwargs)
+    if ansatz_name == "hh_hva_tw":
+        return HubbardHolsteinTermwiseAnsatz(**common_kwargs)
+    if ansatz_name == "hh_hva_ptw":
+        return HubbardHolsteinPhysicalTermwiseAnsatz(**common_kwargs)
+    raise ValueError(f"Unsupported staged HH warm ansatz {cfg.warm_start.ansatz_name!r}.")
+
+
+def _assemble_stage_circuit_contexts(
+    *,
+    cfg: StagedHHConfig,
+    psi_hf: np.ndarray,
+    warm_payload: Mapping[str, Any],
+    adapt_diagnostics: Mapping[str, Any] | None,
+    replay_diagnostics: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any] | None]:
+    warm_ctx: dict[str, Any] | None = None
+    adapt_ctx: dict[str, Any] | None = None
+    replay_ctx: dict[str, Any] | None = None
+
+    warm_theta_raw = warm_payload.get("optimal_point", None)
+    if isinstance(warm_theta_raw, Sequence) and not isinstance(warm_theta_raw, (str, bytes)):
+        warm_theta = np.asarray([float(x) for x in warm_theta_raw], dtype=float)
+        if int(warm_theta.size) > 0:
+            warm_ctx = {
+                "ansatz": _build_hh_warm_ansatz(cfg),
+                "theta": np.asarray(warm_theta, dtype=float).copy(),
+                "reference_state": np.asarray(psi_hf, dtype=complex).reshape(-1).copy(),
+                "num_qubits": int(round(math.log2(int(np.asarray(psi_hf).size)))),
+                "ansatz_name": str(cfg.warm_start.ansatz_name),
+            }
+
+    if isinstance(adapt_diagnostics, Mapping) and adapt_diagnostics:
+        adapt_ctx = {
+            "selected_ops": list(adapt_diagnostics.get("selected_ops", [])),
+            "theta": np.asarray(adapt_diagnostics.get("theta", []), dtype=float).copy(),
+            "reference_state": np.asarray(adapt_diagnostics.get("reference_state"), dtype=complex).reshape(-1).copy(),
+            "num_qubits": int(adapt_diagnostics.get("num_qubits", 0)),
+            "pool_type": str(adapt_diagnostics.get("pool_type", cfg.adapt.pool or cfg.adapt.continuation_mode)),
+            "continuation_mode": str(adapt_diagnostics.get("continuation_mode", cfg.adapt.continuation_mode)),
+        }
+
+    if isinstance(replay_diagnostics, Mapping) and replay_diagnostics:
+        replay_ctx = {
+            "ansatz": replay_diagnostics.get("ansatz"),
+            "theta": np.asarray(replay_diagnostics.get("best_theta", []), dtype=float).copy(),
+            "seed_theta": np.asarray(replay_diagnostics.get("seed_theta", []), dtype=float).copy(),
+            "reference_state": np.asarray(replay_diagnostics.get("reference_state"), dtype=complex).reshape(-1).copy(),
+            "num_qubits": int(replay_diagnostics.get("num_qubits", 0)),
+            "family_info": dict(replay_diagnostics.get("family_info", {})),
+            "handoff_state_kind": str(replay_diagnostics.get("handoff_state_kind", "prepared_state")),
+            "provenance_source": str(replay_diagnostics.get("provenance_source", "explicit")),
+            "resolved_seed_policy": str(replay_diagnostics.get("resolved_seed_policy", cfg.replay.replay_seed_policy)),
+        }
+
+    return {
+        "warm_circuit_context": warm_ctx,
+        "adapt_circuit_context": adapt_ctx,
+        "replay_circuit_context": replay_ctx,
+    }
+
+
 def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
     h_poly, hmat, ordered_labels_exyz, coeff_map_exyz, psi_hf = _build_hh_context(cfg)
+    adapt_diagnostics: dict[str, Any] = {}
+    replay_diagnostics: dict[str, Any] = {}
 
     warm_payload, psi_warm = hc_pipeline._run_hardcoded_vqe(
         num_sites=int(cfg.physics.L),
@@ -1033,6 +1204,10 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         max_depth=int(cfg.adapt.max_depth),
         eps_grad=float(cfg.adapt.eps_grad),
         eps_energy=float(cfg.adapt.eps_energy),
+        adapt_drop_floor=cfg.adapt.drop_floor,
+        adapt_drop_patience=cfg.adapt.drop_patience,
+        adapt_drop_min_depth=cfg.adapt.drop_min_depth,
+        adapt_grad_floor=cfg.adapt.grad_floor,
         maxiter=int(cfg.adapt.maxiter),
         seed=int(cfg.adapt.seed),
         adapt_inner_optimizer=str(cfg.adapt.inner_optimizer),
@@ -1079,6 +1254,7 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         phase3_enable_rescue=bool(cfg.adapt.phase3_enable_rescue),
         phase3_lifetime_cost_mode=str(cfg.adapt.phase3_lifetime_cost_mode),
         phase3_runtime_split_mode=str(cfg.adapt.phase3_runtime_split_mode),
+        diagnostics_out=adapt_diagnostics,
     )
 
     _write_adapt_handoff(cfg, adapt_payload, np.asarray(psi_adapt, dtype=complex).reshape(-1))
@@ -1133,7 +1309,13 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         replay_qn_spsa_refresh_mode=str(cfg.replay.replay_qn_spsa_refresh_mode),
         phase3_symmetry_mitigation_mode=str(cfg.replay.phase3_symmetry_mitigation_mode),
     )
-    replay_payload = replay_mod.run(replay_cfg)
+    try:
+        replay_payload = replay_mod.run(replay_cfg, diagnostics_out=replay_diagnostics)
+    except TypeError as exc:
+        if "diagnostics_out" not in str(exc):
+            raise
+        replay_payload = replay_mod.run(replay_cfg)
+        replay_diagnostics = {}
     nq_total = _hh_nq_total(cfg.physics.L, cfg.physics.n_ph_max, cfg.physics.boson_encoding)
     best_state = replay_payload.get("best_state", {})
     if not isinstance(best_state, Mapping):
@@ -1143,6 +1325,13 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         raise ValueError("Replay payload missing best_state.amplitudes_qn_to_q0.")
     psi_final = hc_pipeline._state_from_amplitudes_qn_to_q0(amplitudes, int(nq_total))
     psi_final = hc_pipeline._normalize_state(np.asarray(psi_final, dtype=complex).reshape(-1))
+    circuit_contexts = _assemble_stage_circuit_contexts(
+        cfg=cfg,
+        psi_hf=np.asarray(psi_hf, dtype=complex).reshape(-1),
+        warm_payload=warm_payload,
+        adapt_diagnostics=adapt_diagnostics,
+        replay_diagnostics=replay_diagnostics,
+    )
 
     return StageExecutionResult(
         h_poly=h_poly,
@@ -1157,6 +1346,9 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         warm_payload=dict(warm_payload),
         adapt_payload=dict(adapt_payload),
         replay_payload=dict(replay_payload),
+        warm_circuit_context=circuit_contexts["warm_circuit_context"],
+        adapt_circuit_context=circuit_contexts["adapt_circuit_context"],
+        replay_circuit_context=circuit_contexts["replay_circuit_context"],
     )
 
 
@@ -1347,6 +1539,298 @@ def run_noiseless_profiles(stage_result: StageExecutionResult, cfg: StagedHHConf
             ground_state_reference_energy=replay_exact,
         )
     return {"profiles": profiles}
+
+
+def _empty_qiskit_circuit(num_qubits: int) -> Any:
+    from qiskit import QuantumCircuit
+
+    return QuantumCircuit(int(num_qubits))
+
+
+def build_stage_circuit_report_artifacts(
+    stage_result: StageExecutionResult,
+    cfg: StagedHHConfig,
+) -> dict[str, Any]:
+    stage_bundles: dict[str, dict[str, Any] | None] = {
+        "warm_start": None,
+        "adapt_vqe": None,
+        "conventional_replay": None,
+    }
+
+    warm_ctx = stage_result.warm_circuit_context
+    if isinstance(warm_ctx, Mapping) and warm_ctx.get("ansatz") is not None:
+        warm_circuit = ansatz_to_circuit(
+            warm_ctx["ansatz"],
+            np.asarray(warm_ctx.get("theta", []), dtype=float),
+            num_qubits=int(warm_ctx.get("num_qubits", stage_result.nq_total)),
+            reference_state=np.asarray(warm_ctx.get("reference_state"), dtype=complex),
+        )
+        stage_bundles["warm_start"] = {
+            "title": f"L={int(cfg.physics.L)} warm HH-HVA",
+            "circuit": warm_circuit,
+            "metadata": {
+                "ansatz": str(cfg.warm_start.ansatz_name),
+                "reps": int(cfg.warm_start.reps),
+                "energy": float(stage_result.warm_payload.get("energy", float("nan"))),
+                "exact_energy": float(stage_result.warm_payload.get("exact_filtered_energy", float("nan"))),
+                "delta_abs": float(
+                    abs(
+                        float(stage_result.warm_payload.get("energy", float("nan")))
+                        - float(stage_result.warm_payload.get("exact_filtered_energy", float("nan")))
+                    )
+                ),
+            },
+            "notes": [
+                "Representative view keeps PauliEvolutionGate blocks intact.",
+                "Expanded view applies one circuit-definition decomposition pass.",
+            ],
+        }
+
+    adapt_ctx = stage_result.adapt_circuit_context
+    if isinstance(adapt_ctx, Mapping) and adapt_ctx.get("reference_state") is not None:
+        adapt_circuit = adapt_ops_to_circuit(
+            list(adapt_ctx.get("selected_ops", [])),
+            np.asarray(adapt_ctx.get("theta", []), dtype=float),
+            num_qubits=int(adapt_ctx.get("num_qubits", stage_result.nq_total)),
+            reference_state=np.asarray(adapt_ctx.get("reference_state"), dtype=complex),
+        )
+        stage_bundles["adapt_vqe"] = {
+            "title": f"L={int(cfg.physics.L)} ADAPT-VQE",
+            "circuit": adapt_circuit,
+            "metadata": {
+                "depth": int(stage_result.adapt_payload.get("ansatz_depth", 0)),
+                "pool_type": str(adapt_ctx.get("pool_type", stage_result.adapt_payload.get("pool_type", ""))),
+                "continuation_mode": str(
+                    adapt_ctx.get("continuation_mode", stage_result.adapt_payload.get("continuation_mode", ""))
+                ),
+                "energy": float(stage_result.adapt_payload.get("energy", float("nan"))),
+                "exact_energy": float(stage_result.adapt_payload.get("exact_gs_energy", float("nan"))),
+                "stop_reason": str(stage_result.adapt_payload.get("stop_reason", "")),
+            },
+            "notes": [
+                "Circuit uses the actual selected ADAPT generators and optimized theta values.",
+                "Reference state is the warm-stage output handed to ADAPT.",
+            ],
+        }
+
+    replay_ctx = stage_result.replay_circuit_context
+    replay_circuit = None
+    if isinstance(replay_ctx, Mapping) and replay_ctx.get("ansatz") is not None:
+        replay_circuit = ansatz_to_circuit(
+            replay_ctx["ansatz"],
+            np.asarray(replay_ctx.get("theta", []), dtype=float),
+            num_qubits=int(replay_ctx.get("num_qubits", stage_result.nq_total)),
+            reference_state=np.asarray(replay_ctx.get("reference_state"), dtype=complex),
+        )
+        stage_bundles["conventional_replay"] = {
+            "title": f"L={int(cfg.physics.L)} matched-family replay",
+            "circuit": replay_circuit,
+            "metadata": {
+                "family_info": dict(replay_ctx.get("family_info", {})),
+                "reps": int(cfg.replay.reps),
+                "seed_policy": str(replay_ctx.get("resolved_seed_policy", cfg.replay.replay_seed_policy)),
+                "energy": float(stage_result.replay_payload.get("vqe", {}).get("energy", float("nan"))),
+                "exact_energy": float(stage_result.replay_payload.get("exact", {}).get("E_exact_sector", float("nan"))),
+                "stop_reason": str(stage_result.replay_payload.get("vqe", {}).get("stop_reason", "")),
+            },
+            "notes": [
+                "Replay circuit uses the matched ADAPT-family ansatz with the final optimized replay theta values.",
+                "This is the conventional non-ADAPT VQE stage in the staged HH workflow.",
+            ],
+        }
+
+    ordered_for_run = list(stage_result.ordered_labels_exyz)
+    drive_provider = None
+    drive_profile = None
+    if bool(cfg.dynamics.enable_drive):
+        drive_provider, _drive_meta, ordered_for_run, drive_profile = _build_drive_provider(
+            cfg=cfg,
+            nq_total=int(stage_result.nq_total),
+            ordered_labels_exyz=stage_result.ordered_labels_exyz,
+        )
+
+    macro_time = float(cfg.dynamics.t_final) / float(cfg.dynamics.trotter_steps)
+    initial_circuit = replay_circuit if replay_circuit is not None else _empty_qiskit_circuit(int(stage_result.nq_total))
+    dynamics_bundles: dict[str, dict[str, Any]] = {}
+    for method in ("suzuki2", "cfqm4"):
+        if method == "suzuki2":
+            circuit = build_suzuki2_time_dependent_circuit(
+                initial_circuit=initial_circuit,
+                ordered_labels_exyz=list(ordered_for_run),
+                static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+                drive_provider_exyz=drive_provider,
+                time_value=float(macro_time),
+                trotter_steps=1,
+                drive_t0=float(cfg.dynamics.drive_t0),
+                drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+            )
+        else:
+            circuit = build_cfqm_time_dependent_circuit(
+                method=str(method),
+                initial_circuit=initial_circuit,
+                ordered_labels_exyz=list(ordered_for_run),
+                static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+                drive_provider_exyz=drive_provider,
+                time_value=float(macro_time),
+                trotter_steps=1,
+                drive_t0=float(cfg.dynamics.drive_t0),
+                coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+            )
+        proxy_total = compute_time_dynamics_proxy_cost(
+            method=str(method),
+            t_final=float(cfg.dynamics.t_final),
+            trotter_steps=int(cfg.dynamics.trotter_steps),
+            drive_t0=float(cfg.dynamics.drive_t0),
+            drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+            ordered_labels_exyz=list(ordered_for_run),
+            static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+            drive_provider_exyz=drive_provider,
+            coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+        )
+        proxy_macro = compute_time_dynamics_proxy_cost(
+            method=str(method),
+            t_final=float(macro_time),
+            trotter_steps=1,
+            drive_t0=float(cfg.dynamics.drive_t0),
+            drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+            ordered_labels_exyz=list(ordered_for_run),
+            static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+            drive_provider_exyz=drive_provider,
+            coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+        )
+        dynamics_bundles[str(method)] = {
+            "title": f"L={int(cfg.physics.L)} {str(method).upper()} dynamics macro-step",
+            "circuit": circuit,
+            "metadata": {
+                "repeat_count": int(cfg.dynamics.trotter_steps),
+                "macro_step_time": float(macro_time),
+                "t_final": float(cfg.dynamics.t_final),
+                "drive_enabled": bool(cfg.dynamics.enable_drive),
+                "drive_profile": drive_profile,
+                "proxy_macro": dict(proxy_macro),
+                "proxy_total": dict(proxy_total),
+            },
+            "notes": [
+                "Circuit shows one representative macro-step only; repeat_count gives the full unrolled count.",
+                "Expanded view decomposes only the PauliEvolutionGate layers, not the full repeated trajectory.",
+            ],
+        }
+
+    return {
+        "stages": stage_bundles,
+        "dynamics": dynamics_bundles,
+    }
+
+
+def write_hh_staged_circuit_report_section(
+    pdf: Any,
+    *,
+    cfg: StagedHHConfig,
+    stage_result: StageExecutionResult,
+    run_command: str | None = None,
+) -> None:
+    report_payload = build_stage_circuit_report_artifacts(stage_result, cfg)
+    stage_summary = _stage_summary(stage_result, cfg)
+    render_parameter_manifest(
+        pdf,
+        model="Hubbard-Holstein (HH)",
+        ansatz=(
+            f"warm: {cfg.warm_start.ansatz_name}; "
+            f"ADAPT: {cfg.adapt.continuation_mode}; "
+            "final: matched-family replay"
+        ),
+        drive_enabled=bool(cfg.dynamics.enable_drive),
+        t=float(cfg.physics.t),
+        U=float(cfg.physics.u),
+        dv=float(cfg.physics.dv),
+        extra={
+            "L": int(cfg.physics.L),
+            "omega0": float(cfg.physics.omega0),
+            "g_ep": float(cfg.physics.g_ep),
+            "n_ph_max": int(cfg.physics.n_ph_max),
+            "boundary": str(cfg.physics.boundary),
+            "ordering": str(cfg.physics.ordering),
+            "warm_reps": int(cfg.warm_start.reps),
+            "adapt_max_depth": int(cfg.adapt.max_depth),
+            "replay_reps": int(cfg.replay.reps),
+            "t_final": float(cfg.dynamics.t_final),
+            "trotter_steps": int(cfg.dynamics.trotter_steps),
+            "num_times": int(cfg.dynamics.num_times),
+        },
+        command=str(run_command) if run_command is not None else None,
+    )
+    summary_lines = [
+        f"HH staged circuit report, L={int(cfg.physics.L)}",
+        "",
+        f"Warm: E={stage_summary['warm_start']['energy']:.12g} "
+        f"exact={stage_summary['warm_start']['exact_energy']:.12g} "
+        f"|dE|={stage_summary['warm_start']['delta_abs']:.6e}",
+        f"ADAPT: depth={stage_summary['adapt_vqe']['depth']} "
+        f"pool={stage_summary['adapt_vqe']['pool_type']} "
+        f"stop={stage_summary['adapt_vqe']['stop_reason']} "
+        f"|dE|={stage_summary['adapt_vqe']['delta_abs']:.6e}",
+        f"Replay: E={stage_summary['conventional_replay']['energy']:.12g} "
+        f"exact={stage_summary['conventional_replay']['exact_energy']:.12g} "
+        f"|dE|={stage_summary['conventional_replay']['delta_abs']:.6e}",
+        "",
+        "Section semantics",
+        "- Representative view keeps high-level PauliEvolutionGate blocks.",
+        "- Expanded view performs one decomposition pass to expose term-level layers.",
+        "- Dynamics pages show one macro-step only; proxy totals summarize the full repeat count.",
+    ]
+    render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.03, max_line_width=110)
+
+    for key in ("warm_start", "adapt_vqe", "conventional_replay"):
+        bundle = report_payload["stages"].get(key)
+        if not isinstance(bundle, Mapping):
+            render_text_page(
+                pdf,
+                [f"L={int(cfg.physics.L)} {key}", "", "Circuit context unavailable for this stage."],
+                fontsize=10,
+                line_spacing=0.03,
+            )
+            continue
+        circuit = bundle["circuit"]
+        title = str(bundle["title"])
+        notes = [str(x) for x in bundle.get("notes", [])]
+        render_circuit_summary_page(
+            pdf,
+            title=title,
+            circuit=circuit,
+            metadata=dict(bundle.get("metadata", {})),
+            notes=notes,
+        )
+        render_circuit_page(pdf, circuit=circuit, title=title, subtitle="Representative view", notes=notes)
+        render_circuit_page(
+            pdf,
+            circuit=circuit,
+            title=title,
+            subtitle="Expanded view",
+            notes=notes,
+            expand_evolution=True,
+        )
+
+    for method in ("suzuki2", "cfqm4"):
+        bundle = report_payload["dynamics"][method]
+        circuit = bundle["circuit"]
+        title = str(bundle["title"])
+        notes = [str(x) for x in bundle.get("notes", [])]
+        render_circuit_summary_page(
+            pdf,
+            title=title,
+            circuit=circuit,
+            metadata=dict(bundle.get("metadata", {})),
+            notes=notes,
+        )
+        render_circuit_page(pdf, circuit=circuit, title=title, subtitle="Representative macro-step", notes=notes)
+        render_circuit_page(
+            pdf,
+            circuit=circuit,
+            title=title,
+            subtitle="Expanded macro-step",
+            notes=notes,
+            expand_evolution=True,
+        )
 
 
 def _stage_delta(payload: Mapping[str, Any], *, energy_key: str, exact_key: str) -> float:

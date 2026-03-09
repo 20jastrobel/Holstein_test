@@ -22,19 +22,57 @@ from qiskit.circuit.library import PauliEvolutionGate
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit.synthesis import SuzukiTrotter
 
+from docs.reports.qiskit_circuit_report import (
+    ansatz_to_circuit as _shared_ansatz_to_circuit,
+    append_reference_state as _shared_append_reference_state,
+    pauli_poly_to_sparse_pauli_op as _shared_pauli_poly_to_sparse_pauli_op,
+)
+from pipelines.exact_bench.noise_aer_builders import (
+    build_backend_basic_artifact,
+    build_backend_scheduled_artifact,
+    build_patch_snapshot_artifact,
+    build_shots_only_artifact,
+)
+from pipelines.exact_bench.noise_model_spec import (
+    NoiseArtifact,
+    ResolvedNoiseSpec,
+    calibration_snapshot_to_dict,
+    noise_artifact_metadata,
+    normalize_to_resolved_noise_spec,
+    resolved_noise_spec_hash,
+    resolved_noise_spec_to_dict,
+    transpile_snapshot_to_dict,
+)
+from pipelines.exact_bench.noise_snapshot import (
+    freeze_backend_snapshot,
+    load_calibration_snapshot,
+    write_calibration_snapshot,
+)
+
 
 @dataclass(frozen=True)
 class OracleConfig:
-    noise_mode: str = "ideal"  # ideal | shots | aer_noise | runtime
+    noise_mode: str = "ideal"  # ideal | shots | aer_noise | runtime | advanced internal values
     shots: int = 2048
     seed: int = 7
     oracle_repeats: int = 1
     oracle_aggregate: str = "mean"  # mean | median
     backend_name: str | None = None
     use_fake_backend: bool = False
+    backend_profile: str | None = None
+    aer_noise_kind: str = "scheduled"
+    schedule_policy: str | None = None
+    layout_policy: str | None = None
+    noise_snapshot_json: str | None = None
+    fixed_physical_patch: str | list[int] | tuple[int, ...] | None = None
+    fixed_couplers: str | list[list[int]] | tuple[tuple[int, int], ...] | None = None
+    layout_lock_key: str | None = None
+    seed_transpiler: int | None = None
+    seed_simulator: int | None = None
     approximation: bool = False
     abelian_grouping: bool = True
-    allow_aer_fallback: bool = True
+    allow_aer_fallback: bool = False
+    allow_noisy_fallback: bool = False
     aer_fallback_mode: str = "sampler_shots"
     omp_shm_workaround: bool = True
     mitigation: dict[str, Any] | str = "none"
@@ -66,6 +104,10 @@ class SymmetryMitigationConfig:
     ordering: str = "blocked"
     sector_n_up: int | None = None
     sector_n_dn: int | None = None
+
+
+class SymmetryMitigationDowngrade(RuntimeError):
+    """Semantic symmetry-mitigation ineligibility that may downgrade to verify_only."""
 
 
 _MITIGATION_MODES = {"none", "readout", "zne", "dd"}
@@ -120,6 +162,14 @@ def normalize_mitigation_config(mitigation: Any) -> dict[str, Any]:
         raise ValueError(
             f"Unsupported mitigation mode {mode!r}; expected one of {sorted(_MITIGATION_MODES)}."
         )
+    if mode != "zne" and zne_scales:
+        raise ValueError("zne_scales require mitigation mode 'zne'.")
+    if mode == "zne" and not zne_scales:
+        raise ValueError("mitigation mode 'zne' requires non-empty zne_scales.")
+    if mode != "dd" and dd_sequence not in {None, ""}:
+        raise ValueError("dd_sequence requires mitigation mode 'dd'.")
+    if mode == "dd" and dd_sequence in {None, ""}:
+        raise ValueError("mitigation mode 'dd' requires dd_sequence.")
 
     return {
         "mode": str(mode),
@@ -172,6 +222,22 @@ def normalize_symmetry_mitigation_config(symmetry_mitigation: Any) -> dict[str, 
         raise ValueError(
             f"Unsupported symmetry mitigation mode {mode!r}; expected one of {sorted(_SYMMETRY_MITIGATION_MODES)}."
         )
+    if ordering not in {"blocked", "interleaved"}:
+        raise ValueError("symmetry mitigation ordering must be 'blocked' or 'interleaved'.")
+    if mode in {"postselect_diag_v1", "projector_renorm_v1"}:
+        missing = [
+            name
+            for name, value in (
+                ("num_sites", num_sites),
+                ("sector_n_up", sector_n_up),
+                ("sector_n_dn", sector_n_dn),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "symmetry mitigation mode {!r} requires {}.".format(mode, ", ".join(missing))
+            )
 
     return {
         "mode": str(mode),
@@ -219,23 +285,7 @@ _PAULI_POLY_TO_QOP_MATH = "H = sum_j c_j P_j  ->  SparsePauliOp([(P_j, c_j)])"
 
 def _pauli_poly_to_sparse_pauli_op(poly: Any, tol: float = 1e-12) -> SparsePauliOp:
     """Convert repo PauliPolynomial (exyz labels) into SparsePauliOp."""
-    terms = list(poly.return_polynomial())
-    if not terms:
-        return SparsePauliOp.from_list([("I", 0.0)])
-
-    nq = int(terms[0].nqubit())
-    coeff_map: dict[str, complex] = {}
-    for term in terms:
-        coeff = complex(term.p_coeff)
-        if abs(coeff) <= float(tol):
-            continue
-        lbl = _to_ixyz(str(term.pw2strng()))
-        coeff_map[lbl] = coeff_map.get(lbl, 0.0 + 0.0j) + coeff
-
-    cleaned = [(lbl, c) for lbl, c in coeff_map.items() if abs(c) > float(tol)]
-    if not cleaned:
-        cleaned = [("I" * nq, 0.0 + 0.0j)]
-    return SparsePauliOp.from_list(cleaned).simplify(atol=float(tol))
+    return _shared_pauli_poly_to_sparse_pauli_op(poly, tol=float(tol))
 
 
 def _ansatz_terms_with_parameters(ansatz: Any, theta: np.ndarray) -> list[tuple[Any, float]]:
@@ -275,29 +325,7 @@ def _ansatz_terms_with_parameters(ansatz: Any, theta: np.ndarray) -> list[tuple[
 
 
 def _append_reference_state(circuit: QuantumCircuit, reference_state: np.ndarray) -> None:
-    ref = np.asarray(reference_state, dtype=complex).reshape(-1)
-    dim = int(1 << int(circuit.num_qubits))
-    if ref.size != dim:
-        raise ValueError(
-            f"reference_state dimension {ref.size} does not match num_qubits={circuit.num_qubits}"
-        )
-    nrm = float(np.linalg.norm(ref))
-    if nrm <= 0.0:
-        raise ValueError("reference_state has zero norm")
-    ref = ref / nrm
-
-    nz = np.where(np.abs(ref) > 1e-12)[0]
-    if nz.size == 1:
-        idx = int(nz[0])
-        phase = ref[idx]
-        if abs(abs(phase) - 1.0) <= 1e-10:
-            bit = format(idx, f"0{circuit.num_qubits}b")
-            for q in range(circuit.num_qubits):
-                if bit[circuit.num_qubits - 1 - q] == "1":
-                    circuit.x(q)
-            return
-
-    circuit.initialize(ref, list(range(circuit.num_qubits)))
+    _shared_append_reference_state(circuit, reference_state)
 
 
 def _ansatz_to_circuit(
@@ -309,21 +337,13 @@ def _ansatz_to_circuit(
     coefficient_tolerance: float = 1e-12,
 ) -> QuantumCircuit:
     """Convert existing hardcoded ansatz object into a Qiskit circuit."""
-    qc = QuantumCircuit(int(num_qubits))
-    if reference_state is not None:
-        _append_reference_state(qc, np.asarray(reference_state, dtype=complex))
-
-    terms = _ansatz_terms_with_parameters(ansatz, np.asarray(theta, dtype=float))
-    synthesis = SuzukiTrotter(order=2, reps=1, preserve_order=True)
-
-    for poly, angle in terms:
-        qop = _pauli_poly_to_sparse_pauli_op(poly, tol=float(coefficient_tolerance))
-        coeffs = np.asarray(qop.coeffs, dtype=complex).reshape(-1)
-        if coeffs.size == 0 or np.max(np.abs(coeffs)) <= float(coefficient_tolerance):
-            continue
-        gate = PauliEvolutionGate(qop, time=float(angle), synthesis=synthesis)
-        qc.append(gate, list(range(int(num_qubits))))
-    return qc
+    return _shared_ansatz_to_circuit(
+        ansatz,
+        theta,
+        num_qubits=int(num_qubits),
+        reference_state=reference_state,
+        coefficient_tolerance=float(coefficient_tolerance),
+    )
 
 
 def _load_fake_backend(name: str | None) -> tuple[Any, str]:
@@ -344,34 +364,81 @@ def _load_fake_backend(name: str | None) -> tuple[Any, str]:
         raise ValueError(
             f"Unknown fake backend '{class_name}'. Available examples: {sample}"
         )
-    return backend_cls(), class_name
+    backend = backend_cls()
+    setattr(backend, "_hh_noise_source_kind", "fake_snapshot")
+    setattr(backend, "_hh_noise_backend_name_override", str(class_name))
+    return backend, class_name
 
 
-def _resolve_noise_backend(cfg: OracleConfig) -> tuple[Any, str, bool]:
-    if bool(cfg.use_fake_backend):
+def _make_generic_seeded_backend(
+    *,
+    logical_qubits: int | None,
+    seed: int | None,
+    backend_name: str | None,
+) -> tuple[Any, str]:
+    try:
+        from qiskit.providers.fake_provider import GenericBackendV2
+    except Exception as exc:
+        raise RuntimeError("GenericBackendV2 is unavailable in this Qiskit install.") from exc
+
+    nq = max(2, int(logical_qubits or 2))
+    edges: list[list[int]] = []
+    for q in range(nq - 1):
+        edges.append([int(q), int(q + 1)])
+        edges.append([int(q + 1), int(q)])
+    name = str(backend_name or f"generic_seeded_{nq}q")
+    backend = GenericBackendV2(
+        int(nq),
+        basis_gates=["id", "rz", "sx", "x", "cx", "measure", "delay", "reset"],
+        coupling_map=edges,
+        dt=2.2222222222222221e-10,
+        seed=(None if seed is None else int(seed)),
+        noise_info=True,
+    )
+    setattr(backend, "_hh_noise_source_kind", "generic_seeded")
+    setattr(backend, "_hh_noise_backend_name_override", name)
+    return backend, name
+
+
+def _resolve_noise_backend(
+    cfg: OracleConfig,
+    resolved_spec: ResolvedNoiseSpec,
+    *,
+    logical_qubits: int | None = None,
+) -> tuple[Any | None, str | None, bool]:
+    profile = str(resolved_spec.backend_profile_kind)
+    if profile == "frozen_snapshot_json":
+        return None, str(cfg.backend_name or "frozen_snapshot_json"), False
+    if profile == "generic_seeded":
+        backend, name = _make_generic_seeded_backend(
+            logical_qubits=logical_qubits,
+            seed=(resolved_spec.seed_transpiler if resolved_spec.seed_transpiler is not None else cfg.seed),
+            backend_name=cfg.backend_name,
+        )
+        return backend, name, False
+    if profile == "fake_snapshot" or bool(cfg.use_fake_backend):
         backend, name = _load_fake_backend(cfg.backend_name)
-        return backend, name, True
-
-    if cfg.backend_name is None:
-        backend, name = _load_fake_backend("FakeManilaV2")
         return backend, name, True
 
     try:
         from qiskit_ibm_runtime import QiskitRuntimeService
     except Exception as exc:
         raise RuntimeError(
-            "qiskit_ibm_runtime is required for real backend lookup. "
-            "Use --use-fake-backend or install/configure qiskit-ibm-runtime."
+            "qiskit_ibm_runtime is required for live backend lookup. "
+            "Use --backend-profile fake_snapshot/generic_seeded or install/configure qiskit-ibm-runtime."
         ) from exc
 
+    if cfg.backend_name is None:
+        raise RuntimeError("A live backend profile requires --backend-name <ibm_backend>.")
     try:
         service = QiskitRuntimeService()
         backend = service.backend(str(cfg.backend_name))
+        setattr(backend, "_hh_noise_source_kind", "live_backend")
         return backend, str(cfg.backend_name), False
     except Exception as exc:
         raise RuntimeError(
             f"Unable to resolve runtime backend '{cfg.backend_name}'. "
-            "Check IBM Runtime credentials, backend name, or pass --use-fake-backend."
+            "Check IBM Runtime credentials, backend name, or use a fake/generic backend profile."
         ) from exc
 
 
@@ -382,6 +449,7 @@ _OMP_SHM_MARKERS = (
     "OMP: System error",
 )
 _AER_PREFLIGHT_OK_CACHE: set[tuple[str, int, int | None, bool, bool]] = set()
+_BACKEND_SNAPSHOT_CACHE: dict[str, Any] = {}
 
 
 def _tail_text(text: str, max_chars: int = 2400) -> str:
@@ -413,7 +481,8 @@ def _apply_omp_env_workaround(cfg: OracleConfig) -> bool:
     return changed
 
 
-def _preflight_aer_environment(cfg: OracleConfig, mode: str) -> None:
+def _preflight_aer_environment(cfg: OracleConfig, *, with_noise_model: bool) -> None:
+    mode = "aer_noise" if bool(with_noise_model) else "shots"
     key = (
         str(mode),
         int(cfg.shots),
@@ -480,9 +549,7 @@ print("AER_PREFLIGHT_OK")
             raise RuntimeError(
                 "Aer preflight failed due to OpenMP shared-memory restrictions in this environment "
                 "(detected OMP/SHM2 failure). This is an environment-level crash path, not a script logic "
-                "error. Modes 'shots' and 'aer_noise' are local/offline and do not require IBM Runtime "
-                "credentials. Run this command in a shell/runtime with working shared-memory support "
-                "(for example, a non-sandbox terminal with functional /dev/shm or equivalent). "
+                "error. Local Aer modes are offline and do not require IBM Runtime credentials. "
                 f"Preflight stderr/stdout tail:\n{detail_tail}"
             )
         raise RuntimeError(
@@ -493,16 +560,24 @@ print("AER_PREFLIGHT_OK")
     _AER_PREFLIGHT_OK_CACHE.add(key)
 
 
+def _freeze_snapshot_cached(backend_obj: Any) -> Any:
+    cache_key = f"{getattr(backend_obj, '_hh_noise_source_kind', 'unknown')}::{getattr(backend_obj, '_hh_noise_backend_name_override', getattr(backend_obj, 'name', None))}::{getattr(backend_obj, 'backend_version', None)}"
+    if cache_key not in _BACKEND_SNAPSHOT_CACHE:
+        _BACKEND_SNAPSHOT_CACHE[cache_key] = freeze_backend_snapshot(backend_obj)
+    return _BACKEND_SNAPSHOT_CACHE[cache_key]
+
+
 def _build_estimator(
     cfg: OracleConfig,
-) -> tuple[Any, Any | None, NoiseBackendInfo]:
+    *,
+    logical_qubits: int | None = None,
+) -> tuple[Any, Any | None, NoiseBackendInfo, dict[str, Any] | None]:
     mode = str(cfg.noise_mode).strip().lower()
     mitigation_cfg = normalize_mitigation_config(getattr(cfg, "mitigation", "none"))
     symmetry_cfg = normalize_symmetry_mitigation_config(getattr(cfg, "symmetry_mitigation", "off"))
-    if mode not in {"ideal", "shots", "aer_noise", "runtime"}:
-        raise ValueError(f"Unsupported noise_mode: {mode}")
+    resolved_spec = normalize_to_resolved_noise_spec(cfg)
 
-    if mode == "ideal":
+    if resolved_spec.executor == "statevector":
         try:
             from qiskit.primitives import StatevectorEstimator
         except Exception as exc:
@@ -510,36 +585,103 @@ def _build_estimator(
                 "Failed to import StatevectorEstimator. Ensure qiskit primitives are available."
             ) from exc
         estimator = StatevectorEstimator()
+        details = {
+            "shots": None,
+            "mitigation": dict(mitigation_cfg),
+            "symmetry_mitigation": dict(symmetry_cfg),
+            "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
+            "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
+            "source_kind": resolved_spec.backend_profile_kind,
+            "warnings": [],
+            "omitted_channels": [],
+        }
         info = NoiseBackendInfo(
             noise_mode=mode,
             estimator_kind="qiskit.primitives.StatevectorEstimator",
             backend_name="statevector_simulator",
             using_fake_backend=False,
-            details={
-                "shots": None,
-                "mitigation": dict(mitigation_cfg),
-                "symmetry_mitigation": dict(symmetry_cfg),
-            },
+            details=details,
         )
-        return estimator, None, info
+        return estimator, None, info, None
 
-    if mode in {"shots", "aer_noise"}:
+    if resolved_spec.executor == "aer":
         if str(os.environ.get("HH_FORCE_SAMPLER_FALLBACK", "0")).strip() == "1":
             raise RuntimeError(
                 "OMP: Error #178: Forced sampler fallback via HH_FORCE_SAMPLER_FALLBACK=1."
             )
         env_workaround_applied = _apply_omp_env_workaround(cfg)
-        _preflight_aer_environment(cfg, mode)
+        _preflight_aer_environment(
+            cfg,
+            with_noise_model=bool(resolved_spec.noise_kind in {"backend_basic", "backend_scheduled"}),
+        )
         try:
             from qiskit_aer.primitives import Estimator as AerEstimator
+            from qiskit_aer.noise import NoiseModel
         except Exception as exc:
             raise RuntimeError(
-                "Failed to import qiskit_aer.primitives.Estimator. Install qiskit-aer."
+                "Failed to import qiskit-aer Estimator/NoiseModel. Install qiskit-aer."
             ) from exc
 
+        backend_obj, backend_name, using_fake = _resolve_noise_backend(
+            cfg,
+            resolved_spec,
+            logical_qubits=logical_qubits,
+        )
+        calibration_snapshot = None
+        if resolved_spec.backend_profile_kind == "frozen_snapshot_json":
+            if resolved_spec.snapshot_path is None:
+                raise RuntimeError("frozen_snapshot_json requires --noise-snapshot-json PATH.")
+            calibration_snapshot = load_calibration_snapshot(resolved_spec.snapshot_path)
+            backend_name = str(calibration_snapshot.backend_name or backend_name or "frozen_snapshot_json")
+        elif backend_obj is not None:
+            calibration_snapshot = _freeze_snapshot_cached(backend_obj)
+            if resolved_spec.snapshot_path is not None:
+                write_calibration_snapshot(resolved_spec.snapshot_path, calibration_snapshot)
+
+        if backend_obj is None and resolved_spec.noise_kind != "patch_snapshot":
+            raise RuntimeError(
+                "Local Aer replay from a frozen snapshot JSON is not implemented in phase 1. "
+                "Use --backend-profile fake_snapshot/live_backend/generic_seeded for execution, or --aer-noise-kind patch_snapshot for the explicit deferred mode."
+            )
+
+        noise_model = None
         backend_options: dict[str, Any] = {}
-        backend_name = "aer_simulator"
-        using_fake = False
+        warnings: list[str] = []
+        omitted_channels: list[str] = []
+        if resolved_spec.noise_kind == "backend_basic":
+            noise_model = NoiseModel.from_backend(backend_obj)
+            backend_options["noise_model"] = noise_model
+            omitted_channels = [
+                "delay_relaxation_if_unscheduled",
+                "crosstalk",
+                "leakage",
+                "drift",
+                "coherent_overrotation",
+            ]
+            warnings.append("backend_basic is a smoke/debug hardware-facing approximation; scheduling is not enforced.")
+        elif resolved_spec.noise_kind == "backend_scheduled":
+            noise_model = NoiseModel.from_backend(backend_obj)
+            backend_options["noise_model"] = noise_model
+            omitted_channels = [
+                "crosstalk",
+                "leakage",
+                "non_markovian_drift",
+                "coherent_overrotation",
+            ]
+        elif resolved_spec.noise_kind == "patch_snapshot":
+            warnings.append("patch_snapshot requested; phase-2 replay path is not implemented in phase 1.")
+
+        run_options: dict[str, Any] = {"shots": int(cfg.shots)}
+        sim_seed = resolved_spec.seed_simulator if resolved_spec.seed_simulator is not None else cfg.seed
+        if sim_seed is not None:
+            run_options["seed"] = int(sim_seed)
+            run_options["seed_simulator"] = int(sim_seed)
+        estimator = AerEstimator(
+            backend_options=backend_options if backend_options else None,
+            run_options=run_options,
+            approximation=bool(cfg.approximation),
+            abelian_grouping=bool(cfg.abelian_grouping),
+        )
         details: dict[str, Any] = {
             "shots": int(cfg.shots),
             "aer_failed": False,
@@ -549,30 +691,18 @@ def _build_estimator(
             "env_workaround_applied": bool(cfg.omp_shm_workaround or env_workaround_applied),
             "mitigation": dict(mitigation_cfg),
             "symmetry_mitigation": dict(symmetry_cfg),
+            "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
+            "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
+            "calibration_snapshot": calibration_snapshot_to_dict(calibration_snapshot),
+            "snapshot_hash": (None if calibration_snapshot is None else calibration_snapshot.snapshot_hash),
+            "source_kind": resolved_spec.backend_profile_kind,
+            "seed_transpiler": resolved_spec.seed_transpiler,
+            "seed_simulator": resolved_spec.seed_simulator,
+            "warnings": list(warnings),
+            "omitted_channels": list(omitted_channels),
         }
-
-        if mode == "aer_noise":
-            try:
-                from qiskit_aer.noise import NoiseModel
-            except Exception as exc:
-                raise RuntimeError(
-                    "Failed to import qiskit_aer.noise.NoiseModel for aer_noise mode."
-                ) from exc
-            backend_obj, backend_name, using_fake = _resolve_noise_backend(cfg)
-            noise_model = NoiseModel.from_backend(backend_obj)
-            backend_options["noise_model"] = noise_model
+        if noise_model is not None:
             details["noise_model_basis_gates"] = list(getattr(noise_model, "basis_gates", []))
-
-        run_options: dict[str, Any] = {"shots": int(cfg.shots)}
-        if cfg.seed is not None:
-            run_options["seed"] = int(cfg.seed)
-            run_options["seed_simulator"] = int(cfg.seed)
-        estimator = AerEstimator(
-            backend_options=backend_options if backend_options else None,
-            run_options=run_options,
-            approximation=bool(cfg.approximation),
-            abelian_grouping=bool(cfg.abelian_grouping),
-        )
         info = NoiseBackendInfo(
             noise_mode=mode,
             estimator_kind="qiskit_aer.primitives.Estimator",
@@ -580,9 +710,17 @@ def _build_estimator(
             using_fake_backend=using_fake,
             details=details,
         )
-        return estimator, None, info
+        local_context = {
+            "resolved_spec": resolved_spec,
+            "resolved_backend": backend_obj,
+            "calibration_snapshot": calibration_snapshot,
+            "noise_model": noise_model,
+            "warnings": warnings,
+            "omitted_channels": omitted_channels,
+        }
+        return estimator, None, info, local_context
 
-    # mode == "runtime"
+    # runtime_qpu
     try:
         from qiskit_ibm_runtime import (
             QiskitRuntimeService,
@@ -604,18 +742,26 @@ def _build_estimator(
         backend = service.backend(str(cfg.backend_name))
         session = Session(service=service, backend=backend)
         estimator = RuntimeEstimatorV2(mode=session)
+        details = {
+            "shots": int(cfg.shots),
+            "mitigation": dict(mitigation_cfg),
+            "symmetry_mitigation": dict(symmetry_cfg),
+            "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
+            "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
+            "source_kind": resolved_spec.backend_profile_kind,
+            "warnings": [],
+            "omitted_channels": [],
+            "seed_transpiler": resolved_spec.seed_transpiler,
+            "seed_simulator": resolved_spec.seed_simulator,
+        }
         info = NoiseBackendInfo(
             noise_mode=mode,
             estimator_kind="qiskit_ibm_runtime.EstimatorV2",
             backend_name=str(cfg.backend_name),
             using_fake_backend=False,
-            details={
-                "shots": int(cfg.shots),
-                "mitigation": dict(mitigation_cfg),
-                "symmetry_mitigation": dict(symmetry_cfg),
-            },
+            details=details,
         )
-        return estimator, session, info
+        return estimator, session, info, None
     except Exception as exc:
         raise RuntimeError(
             "Failed to initialize IBM Runtime Estimator. "
@@ -809,7 +955,7 @@ def _exact_postselected_diagonal_expectation(
                 0.0,
             )
     if kept_prob <= 0.0:
-        raise RuntimeError("Symmetry postselection retained zero probability mass.")
+        raise SymmetryMitigationDowngrade("Symmetry postselection retained zero probability mass.")
     return float(np.real(total) / kept_prob), float(kept_prob)
 
 
@@ -844,7 +990,9 @@ def _exact_projector_renorm_diagonal_expectation(
                 0.0,
             )
     if sector_prob <= 0.0:
-        raise RuntimeError("Projector renormalization retained zero probability mass.")
+        raise SymmetryMitigationDowngrade(
+            "Projector renormalization retained zero probability mass."
+        )
     return float(np.real(numerator) / sector_prob), float(sector_prob)
 
 
@@ -868,14 +1016,26 @@ def _sample_measurement_counts(
         result = job.result()
         return dict(result[0].join_data().get_counts())
 
-    if mode == "aer_noise":
+    resolved_spec = normalize_to_resolved_noise_spec(cfg)
+    if resolved_spec.executor == "aer":
         from qiskit_aer import AerSimulator
         from qiskit_aer.noise import NoiseModel
 
-        backend_obj, _backend_name, _using_fake = _resolve_noise_backend(cfg)
-        noise_model = NoiseModel.from_backend(backend_obj)
-        sim = AerSimulator(noise_model=noise_model, seed_simulator=int(cfg.seed) + int(repeat_idx))
-        compiled = transpile(measured, sim, optimization_level=0)
+        backend_obj, _backend_name, _using_fake = _resolve_noise_backend(
+            cfg,
+            resolved_spec,
+            logical_qubits=int(circuit.num_qubits),
+        )
+        sim_kwargs: dict[str, Any] = {
+            "seed_simulator": int(
+                resolved_spec.seed_simulator if resolved_spec.seed_simulator is not None else cfg.seed
+            )
+            + int(repeat_idx)
+        }
+        if backend_obj is not None and resolved_spec.noise_kind in {"backend_basic", "backend_scheduled"}:
+            sim_kwargs["noise_model"] = NoiseModel.from_backend(backend_obj)
+        sim = AerSimulator(**sim_kwargs)
+        compiled = transpile(measured, backend_obj or sim, optimization_level=0)
         result = sim.run(compiled, shots=int(cfg.shots)).result()
         counts = result.get_counts()
         if isinstance(counts, list):
@@ -911,7 +1071,7 @@ def _postselected_counts_and_fraction(
             kept[str(bitstr_raw)] = kept.get(str(bitstr_raw), 0) + int(ct)
             kept_total += int(ct)
     if kept_total <= 0:
-        raise RuntimeError("Symmetry postselection retained zero shots.")
+        raise SymmetryMitigationDowngrade("Symmetry postselection retained zero shots.")
     return kept, float(kept_total) / float(total)
 
 
@@ -947,7 +1107,7 @@ def _projector_renorm_diagonal_expectation_from_counts(
                 0.0,
             )
     if sector_shots <= 0:
-        raise RuntimeError("Projector renormalization retained zero shots.")
+        raise SymmetryMitigationDowngrade("Projector renormalization retained zero shots.")
     sector_prob = float(sector_shots) / float(total_shots)
     numerator_expectation = numerator / float(total_shots)
     return float(np.real(numerator_expectation) / sector_prob), float(sector_prob)
@@ -983,9 +1143,20 @@ class ExpectationOracle:
             oracle_aggregate=str(config.oracle_aggregate).strip().lower(),
             backend_name=(None if config.backend_name is None else str(config.backend_name)),
             use_fake_backend=bool(config.use_fake_backend),
+            backend_profile=(None if getattr(config, "backend_profile", None) in {None, "", "none"} else str(getattr(config, "backend_profile"))),
+            aer_noise_kind=str(getattr(config, "aer_noise_kind", "scheduled")).strip().lower(),
+            schedule_policy=(None if getattr(config, "schedule_policy", None) in {None, "", "none"} else str(getattr(config, "schedule_policy")).strip().lower()),
+            layout_policy=(None if getattr(config, "layout_policy", None) in {None, "", "none"} else str(getattr(config, "layout_policy")).strip().lower()),
+            noise_snapshot_json=(None if getattr(config, "noise_snapshot_json", None) in {None, "", "none"} else str(getattr(config, "noise_snapshot_json"))),
+            fixed_physical_patch=getattr(config, "fixed_physical_patch", None),
+            fixed_couplers=getattr(config, "fixed_couplers", None),
+            layout_lock_key=(None if getattr(config, "layout_lock_key", None) in {None, "", "none"} else str(getattr(config, "layout_lock_key"))),
+            seed_transpiler=(None if getattr(config, "seed_transpiler", None) is None else int(getattr(config, "seed_transpiler"))),
+            seed_simulator=(None if getattr(config, "seed_simulator", None) is None else int(getattr(config, "seed_simulator"))),
             approximation=bool(config.approximation),
             abelian_grouping=bool(config.abelian_grouping),
-            allow_aer_fallback=bool(config.allow_aer_fallback),
+            allow_aer_fallback=bool(getattr(config, "allow_aer_fallback", getattr(config, "allow_noisy_fallback", False))),
+            allow_noisy_fallback=bool(getattr(config, "allow_noisy_fallback", getattr(config, "allow_aer_fallback", False))),
             aer_fallback_mode=str(config.aer_fallback_mode).strip().lower(),
             omp_shm_workaround=bool(config.omp_shm_workaround),
             mitigation=normalize_mitigation_config(getattr(config, "mitigation", "none")),
@@ -1002,10 +1173,12 @@ class ExpectationOracle:
                 f"Unsupported aer_fallback_mode={self.config.aer_fallback_mode}; use sampler_shots."
             )
 
+        self.resolved_noise_spec: ResolvedNoiseSpec = normalize_to_resolved_noise_spec(self.config)
         self._sampler_fallback = None
         self._fallback_reason = ""
         self._estimator = None
         self._session = None
+        self._local_context: dict[str, Any] | None = None
         self.backend_info = NoiseBackendInfo(
             noise_mode=str(self.config.noise_mode),
             estimator_kind="unknown",
@@ -1015,7 +1188,8 @@ class ExpectationOracle:
         )
 
         try:
-            self._estimator, self._session, self.backend_info = _build_estimator(self.config)
+            build_out = _build_estimator(self.config)
+            self._estimator, self._session, self.backend_info, self._local_context = build_out
         except Exception as exc:
             if self._can_fallback_from_error(exc):
                 self._activate_sampler_fallback(reason=str(exc), aer_failed=True)
@@ -1039,6 +1213,27 @@ class ExpectationOracle:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
+    def _local_mode_active(self) -> bool:
+        return bool(self.resolved_noise_spec.executor == "aer")
+
+    def _ensure_estimator_ready(self, *, logical_qubits: int | None = None) -> None:
+        backend_obj = None if self._local_context is None else self._local_context.get("resolved_backend", None)
+        need_rebuild = self._estimator is None and self._sampler_fallback is None
+        if (
+            not need_rebuild
+            and self._local_mode_active()
+            and backend_obj is not None
+            and getattr(backend_obj, "num_qubits", None) is not None
+            and logical_qubits is not None
+            and int(logical_qubits) > int(getattr(backend_obj, "num_qubits"))
+            and str(self.resolved_noise_spec.backend_profile_kind) == "generic_seeded"
+        ):
+            need_rebuild = True
+        if not need_rebuild:
+            return
+        build_out = _build_estimator(self.config, logical_qubits=logical_qubits)
+        self._estimator, self._session, self.backend_info, self._local_context = build_out
+
     def _update_backend_details(self, **updates: Any) -> None:
         details = dict(getattr(self.backend_info, "details", {}))
         details.update(updates)
@@ -1052,6 +1247,153 @@ class ExpectationOracle:
 
     def _set_symmetry_mitigation_details(self, details_map: Mapping[str, Any]) -> None:
         self._update_backend_details(symmetry_mitigation=dict(details_map))
+
+    def _record_noise_artifact(self, artifact: NoiseArtifact) -> None:
+        metadata = noise_artifact_metadata(artifact)
+        transpile_snapshot = metadata.get("transpile_snapshot", None) or {}
+        calibration_snapshot = metadata.get("calibration_snapshot", None) or {}
+        existing_warnings = list(getattr(self.backend_info, "details", {}).get("warnings", []))
+        merged_warnings = list(dict.fromkeys(existing_warnings + list(metadata.get("warnings", []))))
+        self._update_backend_details(
+            resolved_noise_spec=metadata.get("resolved_spec", {}),
+            resolved_noise_spec_hash=resolved_noise_spec_hash(artifact.resolved_spec),
+            calibration_snapshot=calibration_snapshot,
+            transpile_snapshot=transpile_snapshot,
+            noise_artifact_hash=metadata.get("noise_artifact_hash"),
+            snapshot_hash=calibration_snapshot.get("snapshot_hash", None),
+            layout_hash=metadata.get("layout_hash"),
+            transpile_hash=transpile_snapshot.get("transpile_hash", None),
+            omitted_channels=list(metadata.get("omitted_channels", [])),
+            warnings=merged_warnings,
+            source_kind=calibration_snapshot.get("source_kind", self.resolved_noise_spec.backend_profile_kind),
+            used_physical_qubits=list(transpile_snapshot.get("used_physical_qubits", [])),
+            used_physical_edges=list(transpile_snapshot.get("used_physical_edges", [])),
+            scheduled_duration_total=transpile_snapshot.get("scheduled_duration_total", None),
+            idle_duration_total=transpile_snapshot.get("idle_duration_total", None),
+            seed_transpiler=artifact.resolved_spec.seed_transpiler,
+            seed_simulator=artifact.resolved_spec.seed_simulator,
+        )
+
+    def _handle_symmetry_downgrade(self, details: dict[str, Any], reason: str) -> OracleEstimate | None:
+        details["applied_mode"] = "verify_only"
+        details["fallback_reason"] = str(reason)
+        if self.resolved_noise_spec.executor == "statevector":
+            self._set_symmetry_mitigation_details(details)
+            return None
+        if not self._fallback_allowed_for_mode():
+            raise RuntimeError(
+                "Symmetry mitigation requested but could not be executed: {}. "
+                "Re-run with --allow-noisy-fallback to permit verify_only downgrade.".format(
+                    str(reason)
+                )
+            )
+        warnings = list(getattr(self.backend_info, "details", {}).get("warnings", []))
+        downgrade_warning = f"symmetry_mitigation_downgraded:{str(reason)}"
+        if downgrade_warning not in warnings:
+            warnings.append(downgrade_warning)
+        self._set_symmetry_mitigation_details(details)
+        self._update_backend_details(warnings=warnings)
+        return None
+
+    def _build_local_artifact(
+        self,
+        circuit: QuantumCircuit,
+        observable: SparsePauliOp | None,
+    ) -> NoiseArtifact:
+        self._ensure_estimator_ready(logical_qubits=int(circuit.num_qubits))
+        if self._local_context is None:
+            raise RuntimeError("Local Aer context was not initialized.")
+        resolved_spec = self._local_context["resolved_spec"]
+        backend_obj = self._local_context.get("resolved_backend", None)
+        calibration_snapshot = self._local_context.get("calibration_snapshot", None)
+        if resolved_spec.noise_kind == "shots_only":
+            if backend_obj is None:
+                backend_obj, _name, _using_fake = _resolve_noise_backend(
+                    self.config,
+                    resolved_spec,
+                    logical_qubits=int(circuit.num_qubits),
+                )
+            artifact = build_shots_only_artifact(
+                circuit=circuit,
+                observable=observable,
+                resolved_spec=resolved_spec,
+                resolved_backend=backend_obj,
+                calibration_snapshot=calibration_snapshot,
+            )
+        elif resolved_spec.noise_kind == "backend_basic":
+            if backend_obj is None or calibration_snapshot is None:
+                raise RuntimeError("backend_basic requires a resolved backend and calibration snapshot.")
+            artifact = build_backend_basic_artifact(
+                circuit=circuit,
+                observable=observable,
+                resolved_spec=resolved_spec,
+                resolved_backend=backend_obj,
+                calibration_snapshot=calibration_snapshot,
+            )
+        elif resolved_spec.noise_kind == "backend_scheduled":
+            if backend_obj is None or calibration_snapshot is None:
+                raise RuntimeError("backend_scheduled requires a resolved backend and calibration snapshot.")
+            artifact = build_backend_scheduled_artifact(
+                circuit=circuit,
+                observable=observable,
+                resolved_spec=resolved_spec,
+                resolved_backend=backend_obj,
+                calibration_snapshot=calibration_snapshot,
+            )
+        elif resolved_spec.noise_kind == "patch_snapshot":
+            artifact = build_patch_snapshot_artifact(
+                circuit=circuit,
+                observable=observable,
+                resolved_spec=resolved_spec,
+                calibration_snapshot=calibration_snapshot,
+            )
+        else:
+            raise RuntimeError(f"Unsupported local Aer noise kind {resolved_spec.noise_kind!r}.")
+        self._record_noise_artifact(artifact)
+        return artifact
+
+    def prime_layout(self, circuit: QuantumCircuit) -> None:
+        if self._sampler_fallback is not None or (not self._local_mode_active()):
+            return
+        _ = self._build_local_artifact(circuit, None)
+
+    def _run_local_estimator(self, circuit: QuantumCircuit, observable: SparsePauliOp) -> float:
+        artifact = self._build_local_artifact(circuit, observable)
+        mapped_observable = artifact.mapped_observable
+        if mapped_observable is None:
+            raise RuntimeError("Local noise artifact did not provide a mapped observable.")
+        return float(np.real(_run_estimator_job(self._estimator, artifact.transpiled_circuit, mapped_observable)))
+
+    def _run_local_measurement_counts(
+        self,
+        circuit: QuantumCircuit,
+        *,
+        repeat_idx: int,
+    ) -> dict[str, int]:
+        try:
+            from qiskit_aer import AerSimulator
+        except Exception as exc:
+            raise RuntimeError("Counts-based local Aer measurement requires qiskit-aer.") from exc
+        measured = circuit.copy()
+        measured.measure_all()
+        artifact = self._build_local_artifact(measured, None)
+        seed = (
+            self.resolved_noise_spec.seed_simulator
+            if self.resolved_noise_spec.seed_simulator is not None
+            else self.config.seed
+        )
+        sim_kwargs: dict[str, Any] = {
+            "seed_simulator": int(seed) + int(repeat_idx),
+        }
+        if artifact.qiskit_noise_model is not None:
+            sim_kwargs["noise_model"] = artifact.qiskit_noise_model
+        sim = AerSimulator(**sim_kwargs)
+        compiled = artifact.scheduled_circuit_or_none or artifact.transpiled_circuit
+        result = sim.run(compiled, shots=int(self.config.shots)).result()
+        counts = result.get_counts()
+        if isinstance(counts, list):
+            counts = counts[0]
+        return dict(counts)
 
     def _maybe_evaluate_symmetry_mitigated(
         self,
@@ -1082,21 +1424,12 @@ class ExpectationOracle:
             self._set_symmetry_mitigation_details(details)
             return None
         if not _observable_is_diagonal(observable):
-            details["applied_mode"] = "verify_only"
-            details["fallback_reason"] = "observable_not_diagonal"
-            self._set_symmetry_mitigation_details(details)
-            return None
+            return self._handle_symmetry_downgrade(details, "observable_not_diagonal")
         if str(self.config.noise_mode) == "runtime":
-            details["applied_mode"] = "verify_only"
-            details["fallback_reason"] = "runtime_counts_path_unavailable"
-            self._set_symmetry_mitigation_details(details)
-            return None
+            return self._handle_symmetry_downgrade(details, "runtime_counts_path_unavailable")
         required_keys = ("num_sites", "sector_n_up", "sector_n_dn")
         if any(symmetry_cfg.get(key, None) is None for key in required_keys):
-            details["applied_mode"] = "verify_only"
-            details["fallback_reason"] = "incomplete_sector_config"
-            self._set_symmetry_mitigation_details(details)
-            return None
+            return self._handle_symmetry_downgrade(details, "incomplete_sector_config")
         vals: list[float] = []
         retained: list[float] = []
         repeats = max(1, int(self.config.oracle_repeats))
@@ -1116,7 +1449,10 @@ class ExpectationOracle:
                             symmetry_cfg,
                         )
                 else:
-                    counts = _sample_measurement_counts(circuit, self.config, repeat_idx=int(rep))
+                    if self._local_mode_active():
+                        counts = self._run_local_measurement_counts(circuit, repeat_idx=int(rep))
+                    else:
+                        counts = _sample_measurement_counts(circuit, self.config, repeat_idx=int(rep))
                     if requested_mode == "projector_renorm_v1":
                         val, retained_fraction = _projector_renorm_diagonal_expectation_from_counts(
                             counts,
@@ -1133,13 +1469,13 @@ class ExpectationOracle:
                         val = _diagonal_expectation_from_counts(kept_counts, observable)
                 vals.append(float(val))
                 retained.append(float(retained_fraction))
+        except SymmetryMitigationDowngrade as exc:
+            return self._handle_symmetry_downgrade(details, str(exc))
         except Exception as exc:
             if self._can_fallback_from_error(exc):
                 self._activate_sampler_fallback(reason=str(exc), aer_failed=True)
-            details["applied_mode"] = "verify_only"
-            details["fallback_reason"] = str(exc)
-            self._set_symmetry_mitigation_details(details)
-            return None
+                return self._handle_symmetry_downgrade(details, str(exc))
+            raise
         arr = np.asarray(vals, dtype=float)
         stdev = float(np.std(arr, ddof=1)) if arr.size > 1 else 0.0
         stderr = float(stdev / np.sqrt(float(arr.size))) if arr.size > 0 else float("nan")
@@ -1174,8 +1510,8 @@ class ExpectationOracle:
 
     def _fallback_allowed_for_mode(self) -> bool:
         return (
-            str(self.config.noise_mode) in {"shots", "aer_noise"}
-            and bool(self.config.allow_aer_fallback)
+            bool(self.resolved_noise_spec.executor == "aer")
+            and bool(self.resolved_noise_spec.allow_noisy_fallback)
             and str(self.config.aer_fallback_mode) == "sampler_shots"
         )
 
@@ -1198,21 +1534,53 @@ class ExpectationOracle:
             )
         self._fallback_reason = str(reason)
         old = self.backend_info
-        details = dict(getattr(old, "details", {}))
+        calibration_snapshot = None
+        if self._local_context is not None:
+            calibration_snapshot = self._local_context.get("calibration_snapshot", None)
+        details = {
+            "shots": (
+                None
+                if self.resolved_noise_spec.executor == "statevector"
+                else int(self.config.shots)
+            ),
+            "mitigation": normalize_mitigation_config(getattr(self.config, "mitigation", "none")),
+            "symmetry_mitigation": normalize_symmetry_mitigation_config(
+                getattr(self.config, "symmetry_mitigation", "off")
+            ),
+            "resolved_noise_spec": resolved_noise_spec_to_dict(self.resolved_noise_spec),
+            "resolved_noise_spec_hash": resolved_noise_spec_hash(self.resolved_noise_spec),
+            "calibration_snapshot": calibration_snapshot_to_dict(calibration_snapshot),
+            "snapshot_hash": (
+                None if calibration_snapshot is None else calibration_snapshot.snapshot_hash
+            ),
+            "source_kind": (
+                None if calibration_snapshot is None else calibration_snapshot.source_kind
+            )
+            or self.resolved_noise_spec.backend_profile_kind,
+            "seed_transpiler": self.resolved_noise_spec.seed_transpiler,
+            "seed_simulator": self.resolved_noise_spec.seed_simulator,
+            "warnings": [],
+            "omitted_channels": [],
+        }
+        details.update(dict(getattr(old, "details", {})))
         details["aer_failed"] = bool(aer_failed)
         details["fallback_used"] = True
         details["fallback_mode"] = str(self.config.aer_fallback_mode)
         details["fallback_reason"] = str(reason)
         details["env_workaround_applied"] = bool(self.config.omp_shm_workaround)
-        details["mitigation"] = normalize_mitigation_config(getattr(self.config, "mitigation", "none"))
-        details["symmetry_mitigation"] = normalize_symmetry_mitigation_config(
-            getattr(self.config, "symmetry_mitigation", "off")
-        )
+        details["warnings"] = list(details.get("warnings", [])) + [f"fallback:{str(reason)}"]
         self.backend_info = NoiseBackendInfo(
             noise_mode=str(self.config.noise_mode),
             estimator_kind="qiskit.primitives.StatevectorSampler(fallback)",
-            backend_name=(old.backend_name or "statevector_sampler_fallback"),
-            using_fake_backend=bool(old.using_fake_backend),
+            backend_name=(
+                old.backend_name
+                or self.resolved_noise_spec.labels.get("backend_name")
+                or "statevector_sampler_fallback"
+            ),
+            using_fake_backend=bool(
+                old.using_fake_backend
+                or self.resolved_noise_spec.backend_profile_kind == "fake_snapshot"
+            ),
             details=details,
         )
         self._estimator = None
@@ -1233,7 +1601,10 @@ class ExpectationOracle:
                 vals.append(float(np.real(val)))
                 continue
             try:
-                val = _run_estimator_job(self._estimator, circuit, observable)
+                if self._local_mode_active():
+                    val = self._run_local_estimator(circuit, observable)
+                else:
+                    val = _run_estimator_job(self._estimator, circuit, observable)
                 vals.append(float(np.real(val)))
             except Exception as exc:
                 if self._can_fallback_from_error(exc):

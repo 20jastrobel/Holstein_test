@@ -46,6 +46,10 @@ from docs.reports.pdf_utils import (
     render_text_page,
     require_matplotlib,
 )
+from docs.reports.qiskit_circuit_report import (
+    build_cfqm_time_dependent_circuit as _shared_build_cfqm_time_dependent_circuit,
+    build_suzuki2_time_dependent_circuit as _shared_build_suzuki2_time_dependent_circuit,
+)
 from docs.reports.report_labels import (
     report_method_label,
     report_metric_label,
@@ -99,6 +103,7 @@ from pipelines.exact_bench.statevector_kernels import (
     energy_one_apply as _energy_one_apply_shared,
     prepare_state_for_ansatz as _prepare_state_for_ansatz,
 )
+from pipelines.exact_bench.noise_model_spec import stable_noise_hash
 from pipelines.exact_bench.noise_oracle_runtime import (
     ExpectationOracle,
     OracleConfig,
@@ -122,9 +127,9 @@ def _ai_log(event: str, **fields: Any) -> None:
 
 
 _HH_MINIMUMS: dict[tuple[int, int], dict[str, Any]] = {
-    (2, 1): {"trotter_steps": 64, "reps": 2, "restarts": 3, "maxiter": 800, "method": "COBYLA"},
-    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "COBYLA"},
-    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "COBYLA"},
+    (2, 1): {"trotter_steps": 64, "reps": 2, "restarts": 3, "maxiter": 800, "method": "SPSA"},
+    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "SPSA"},
+    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "SPSA"},
 }
 
 _NOISY_METHODS_ALLOWED = {"suzuki2", "cfqm4", "cfqm6"}
@@ -733,28 +738,16 @@ def _build_suzuki2_time_dependent_circuit(
     drive_t0: float,
     drive_time_sampling: str,
 ) -> QuantumCircuit:
-    qc = initial_circuit.copy()
-    if abs(float(time_value)) <= 1e-15:
-        return qc
-
-    dt = float(time_value) / float(trotter_steps)
-    synthesis = SuzukiTrotter(order=2, reps=1, preserve_order=True)
-
-    for step_idx in range(int(trotter_steps)):
-        t_sample = _time_sample(step_idx, dt, drive_time_sampling)
-        drive_map = {}
-        if drive_provider_exyz is not None:
-            drive_map = dict(drive_provider_exyz(float(drive_t0) + float(t_sample)))
-        qop = build_time_dependent_sparse_qop(
-            ordered_labels_exyz=ordered_labels_exyz,
-            static_coeff_map_exyz=static_coeff_map_exyz,
-            drive_coeff_map_exyz=drive_map,
-        )
-        qc.append(
-            PauliEvolutionGate(qop, time=float(dt), synthesis=synthesis),
-            list(range(int(initial_circuit.num_qubits))),
-        )
-    return qc
+    return _shared_build_suzuki2_time_dependent_circuit(
+        initial_circuit=initial_circuit,
+        ordered_labels_exyz=ordered_labels_exyz,
+        static_coeff_map_exyz=static_coeff_map_exyz,
+        drive_provider_exyz=drive_provider_exyz,
+        time_value=time_value,
+        trotter_steps=trotter_steps,
+        drive_t0=drive_t0,
+        drive_time_sampling=drive_time_sampling,
+    )
 
 
 def _build_cfqm_stage_map_exyz(
@@ -807,43 +800,17 @@ def _build_cfqm_time_dependent_circuit(
     drive_t0: float,
     coeff_drop_abs_tol: float,
 ) -> QuantumCircuit:
-    qc = initial_circuit.copy()
-    if abs(float(time_value)) <= 1e-15:
-        return qc
-
-    scheme = get_cfqm_scheme(str(method))
-    c_nodes = [float(x) for x in scheme["c"]]
-    a_rows = [[float(v) for v in row] for row in scheme["a"]]
-    s_static = [float(v) for v in scheme["s_static"]]
-
-    dt = float(time_value) / float(trotter_steps)
-    synthesis = SuzukiTrotter(order=2, reps=1, preserve_order=True)
-    qubits = list(range(int(initial_circuit.num_qubits)))
-
-    for step_idx in range(int(trotter_steps)):
-        t_abs = float(drive_t0) + float(step_idx) * float(dt)
-        drive_maps_exyz: list[dict[str, complex]] = []
-        for c_j in c_nodes:
-            t_node = float(t_abs) + float(c_j) * float(dt)
-            raw = {} if drive_provider_exyz is None else dict(drive_provider_exyz(float(t_node)))
-            drive_maps_exyz.append({str(k): complex(v) for k, v in raw.items()})
-
-        for k, a_row in enumerate(a_rows):
-            stage_map = _build_cfqm_stage_map_exyz(
-                ordered_labels_exyz=list(ordered_labels_exyz),
-                static_coeff_map_exyz=dict(static_coeff_map_exyz),
-                drive_maps_exyz=drive_maps_exyz,
-                a_row=[float(v) for v in a_row],
-                s_static=float(s_static[k]),
-                coeff_drop_abs_tol=float(coeff_drop_abs_tol),
-            )
-            qop = build_time_dependent_sparse_qop(
-                ordered_labels_exyz=ordered_labels_exyz,
-                static_coeff_map_exyz=static_coeff_map_exyz,
-                drive_coeff_map_exyz=stage_map,
-            )
-            qc.append(PauliEvolutionGate(qop, time=float(dt), synthesis=synthesis), qubits)
-    return qc
+    return _shared_build_cfqm_time_dependent_circuit(
+        method=method,
+        initial_circuit=initial_circuit,
+        ordered_labels_exyz=ordered_labels_exyz,
+        static_coeff_map_exyz=static_coeff_map_exyz,
+        drive_provider_exyz=drive_provider_exyz,
+        time_value=time_value,
+        trotter_steps=trotter_steps,
+        drive_t0=drive_t0,
+        coeff_drop_abs_tol=coeff_drop_abs_tol,
+    )
 
 
 def _pauli_weight(label_exyz: str) -> int:
@@ -982,8 +949,15 @@ def _run_noisy_suzuki_trajectory(
     symmetry_mitigation_config: dict[str, Any],
     backend_name: str | None,
     use_fake_backend: bool,
-    allow_aer_fallback: bool,
+    backend_profile: str | None,
+    aer_noise_kind: str,
+    schedule_policy: str | None,
+    layout_policy: str | None,
+    noise_snapshot_json: str | None,
+    fixed_physical_patch: str | None,
+    allow_noisy_fallback: bool,
     omp_shm_workaround: bool,
+    layout_lock_key: str | None,
 ) -> dict[str, Any]:
     nq = int(round(math.log2(int(np.asarray(psi_seed).size))))
     drive_provider_exyz, drive_meta = _drive_provider_from_profile(
@@ -1022,7 +996,15 @@ def _run_noisy_suzuki_trajectory(
         oracle_aggregate=str(oracle_aggregate),
         backend_name=(None if backend_name is None else str(backend_name)),
         use_fake_backend=bool(use_fake_backend),
-        allow_aer_fallback=bool(allow_aer_fallback),
+        backend_profile=(None if backend_profile is None else str(backend_profile)),
+        aer_noise_kind=str(aer_noise_kind),
+        schedule_policy=(None if schedule_policy is None else str(schedule_policy)),
+        layout_policy=(None if layout_policy is None else str(layout_policy)),
+        noise_snapshot_json=(None if noise_snapshot_json is None else str(noise_snapshot_json)),
+        fixed_physical_patch=(None if fixed_physical_patch is None else str(fixed_physical_patch)),
+        allow_noisy_fallback=bool(allow_noisy_fallback),
+        allow_aer_fallback=bool(allow_noisy_fallback),
+        layout_lock_key=(None if layout_lock_key is None else str(layout_lock_key)),
         aer_fallback_mode="sampler_shots",
         omp_shm_workaround=bool(omp_shm_workaround),
         mitigation=dict(mitigation_config),
@@ -1044,6 +1026,7 @@ def _run_noisy_suzuki_trajectory(
     rows: list[dict[str, Any]] = []
 
     with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
+        noisy_oracle.prime_layout(initial_circuit)
         for t_val in times:
             qc_t = _build_suzuki2_time_dependent_circuit(
                 initial_circuit=initial_circuit,
@@ -1198,6 +1181,12 @@ def _run_noisy_suzuki_trajectory(
         "drive_meta": drive_meta,
         "noise_config": {
             "noise_mode": str(noise_mode),
+            "aer_noise_kind": str(aer_noise_kind),
+            "backend_profile": (None if backend_profile is None else str(backend_profile)),
+            "schedule_policy": (None if schedule_policy is None else str(schedule_policy)),
+            "layout_policy": (None if layout_policy is None else str(layout_policy)),
+            "noise_snapshot_json": (None if noise_snapshot_json is None else str(noise_snapshot_json)),
+            "fixed_physical_patch": (None if fixed_physical_patch is None else str(fixed_physical_patch)),
             "shots": int(shots),
             "oracle_repeats": int(oracle_repeats),
             "oracle_aggregate": str(oracle_aggregate),
@@ -1230,8 +1219,15 @@ def _run_noisy_method_trajectory(
     symmetry_mitigation_config: dict[str, Any],
     backend_name: str | None,
     use_fake_backend: bool,
-    allow_aer_fallback: bool,
+    backend_profile: str | None,
+    aer_noise_kind: str,
+    schedule_policy: str | None,
+    layout_policy: str | None,
+    noise_snapshot_json: str | None,
+    fixed_physical_patch: str | None,
+    allow_noisy_fallback: bool,
     omp_shm_workaround: bool,
+    layout_lock_key: str | None,
     method: str,
     benchmark_active_coeff_tol: float,
     cfqm_coeff_drop_abs_tol: float,
@@ -1278,7 +1274,15 @@ def _run_noisy_method_trajectory(
         oracle_aggregate=str(oracle_aggregate),
         backend_name=(None if backend_name is None else str(backend_name)),
         use_fake_backend=bool(use_fake_backend),
-        allow_aer_fallback=bool(allow_aer_fallback),
+        backend_profile=(None if backend_profile is None else str(backend_profile)),
+        aer_noise_kind=str(aer_noise_kind),
+        schedule_policy=(None if schedule_policy is None else str(schedule_policy)),
+        layout_policy=(None if layout_policy is None else str(layout_policy)),
+        noise_snapshot_json=(None if noise_snapshot_json is None else str(noise_snapshot_json)),
+        fixed_physical_patch=(None if fixed_physical_patch is None else str(fixed_physical_patch)),
+        allow_noisy_fallback=bool(allow_noisy_fallback),
+        allow_aer_fallback=bool(allow_noisy_fallback),
+        layout_lock_key=(None if layout_lock_key is None else str(layout_lock_key)),
         aer_fallback_mode="sampler_shots",
         omp_shm_workaround=bool(omp_shm_workaround),
         mitigation=dict(mitigation_config),
@@ -1303,6 +1307,7 @@ def _run_noisy_method_trajectory(
     oracle_calls_total = 0
 
     with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
+        noisy_oracle.prime_layout(initial_circuit)
         for t_val in times:
             t_circ0 = float(time.perf_counter())
             if method_norm == "suzuki2":
@@ -1499,6 +1504,12 @@ def _run_noisy_method_trajectory(
         "drive_meta": drive_meta,
         "noise_config": {
             "noise_mode": str(noise_mode),
+            "aer_noise_kind": str(aer_noise_kind),
+            "backend_profile": (None if backend_profile is None else str(backend_profile)),
+            "schedule_policy": (None if schedule_policy is None else str(schedule_policy)),
+            "layout_policy": (None if layout_policy is None else str(layout_policy)),
+            "noise_snapshot_json": (None if noise_snapshot_json is None else str(noise_snapshot_json)),
+            "fixed_physical_patch": (None if fixed_physical_patch is None else str(fixed_physical_patch)),
             "shots": int(shots),
             "oracle_repeats": int(oracle_repeats),
             "oracle_aggregate": str(oracle_aggregate),
@@ -1530,8 +1541,15 @@ def _run_noisy_final_state_audit(
     symmetry_mitigation_config: dict[str, Any],
     backend_name: str | None,
     use_fake_backend: bool,
-    allow_aer_fallback: bool,
+    backend_profile: str | None,
+    aer_noise_kind: str,
+    schedule_policy: str | None,
+    layout_policy: str | None,
+    noise_snapshot_json: str | None,
+    fixed_physical_patch: str | None,
+    allow_noisy_fallback: bool,
     omp_shm_workaround: bool,
+    layout_lock_key: str | None,
 ) -> dict[str, Any]:
     nq = int(round(math.log2(int(np.asarray(psi_seed).size))))
     drive_provider_exyz, drive_meta = _drive_provider_from_profile(
@@ -1580,7 +1598,15 @@ def _run_noisy_final_state_audit(
         oracle_aggregate=str(oracle_aggregate),
         backend_name=(None if backend_name is None else str(backend_name)),
         use_fake_backend=bool(use_fake_backend),
-        allow_aer_fallback=bool(allow_aer_fallback),
+        backend_profile=(None if backend_profile is None else str(backend_profile)),
+        aer_noise_kind=str(aer_noise_kind),
+        schedule_policy=(None if schedule_policy is None else str(schedule_policy)),
+        layout_policy=(None if layout_policy is None else str(layout_policy)),
+        noise_snapshot_json=(None if noise_snapshot_json is None else str(noise_snapshot_json)),
+        fixed_physical_patch=(None if fixed_physical_patch is None else str(fixed_physical_patch)),
+        allow_noisy_fallback=bool(allow_noisy_fallback),
+        allow_aer_fallback=bool(allow_noisy_fallback),
+        layout_lock_key=(None if layout_lock_key is None else str(layout_lock_key)),
         aer_fallback_mode="sampler_shots",
         omp_shm_workaround=bool(omp_shm_workaround),
         mitigation=dict(mitigation_config),
@@ -1599,6 +1625,7 @@ def _run_noisy_final_state_audit(
     )
 
     with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
+        noisy_oracle.prime_layout(initial_circuit)
         def _pair(obs: SparsePauliOp) -> dict[str, float]:
             n_est = noisy_oracle.evaluate(initial_circuit, obs)
             i_est = ideal_oracle.evaluate(initial_circuit, obs)
@@ -1651,6 +1678,12 @@ def _run_noisy_final_state_audit(
         "time": 0.0,
         "noise_config": {
             "noise_mode": str(noise_mode),
+            "aer_noise_kind": str(aer_noise_kind),
+            "backend_profile": (None if backend_profile is None else str(backend_profile)),
+            "schedule_policy": (None if schedule_policy is None else str(schedule_policy)),
+            "layout_policy": (None if layout_policy is None else str(layout_policy)),
+            "noise_snapshot_json": (None if noise_snapshot_json is None else str(noise_snapshot_json)),
+            "fixed_physical_patch": (None if fixed_physical_patch is None else str(fixed_physical_patch)),
             "shots": int(shots),
             "oracle_repeats": int(oracle_repeats),
             "oracle_aggregate": str(oracle_aggregate),
@@ -2774,6 +2807,8 @@ def _noise_config_caption(settings: dict[str, Any], mode: str) -> str:
     return (
         "noise_config: "
         f"mode={str(mode)}, "
+        f"aer_noise_kind={settings.get('aer_noise_kind')}, "
+        f"backend_profile={settings.get('backend_profile')}, "
         f"shots={settings.get('shots')}, "
         f"oracle_repeats={settings.get('oracle_repeats')}, "
         f"oracle_aggregate={settings.get('oracle_aggregate')}, "
@@ -4123,6 +4158,17 @@ def _enforce_defaults_and_minimums(args: argparse.Namespace) -> argparse.Namespa
     if args.final_method is None:
         args.final_method = str(minimum["method"])
 
+    if str(args.warm_method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH robustness report is SPSA-only for --warm-method. "
+            "Use --warm-method SPSA."
+        )
+    if str(args.final_method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH robustness report is SPSA-only for --final-method. "
+            "Use --final-method SPSA."
+        )
+
     if args.num_times is None:
         args.num_times = 101
     if args.t_final is None:
@@ -4171,7 +4217,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--warm-reps", type=int, default=None)
     p.add_argument("--warm-restarts", type=int, default=None)
     p.add_argument("--warm-maxiter", type=int, default=None)
-    p.add_argument("--warm-method", choices=["COBYLA", "SLSQP", "L-BFGS-B", "Powell", "Nelder-Mead"], default=None)
+    p.add_argument("--warm-method", choices=["SPSA"], default=None)
     p.add_argument("--warm-seed", type=int, default=7)
 
     p.add_argument("--window-k", type=int, default=5)
@@ -4196,7 +4242,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--final-reps", type=int, default=None)
     p.add_argument("--final-restarts", type=int, default=None)
     p.add_argument("--final-maxiter", type=int, default=None)
-    p.add_argument("--final-method", choices=["COBYLA", "SLSQP", "L-BFGS-B", "Powell", "Nelder-Mead"], default=None)
+    p.add_argument("--final-method", choices=["SPSA"], default=None)
     p.add_argument("--final-seed", type=int, default=19)
 
     p.add_argument("--t-final", type=float, default=None)
@@ -4221,6 +4267,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--drive-t0", type=float, default=0.0)
 
     p.add_argument("--noise-modes", type=str, default="ideal,shots,aer_noise")
+    p.add_argument("--aer-noise-kind", choices=["basic", "scheduled", "patch_snapshot"], default="scheduled")
+    p.add_argument(
+        "--backend-profile",
+        choices=["generic_seeded", "fake_snapshot", "live_backend", "frozen_snapshot_json"],
+        default=None,
+    )
+    p.add_argument("--schedule-policy", choices=["none", "asap"], default=None)
+    p.add_argument("--layout-policy", choices=["auto_then_lock", "fixed_patch", "frozen_layout"], default=None)
+    p.add_argument("--noise-snapshot-json", type=Path, default=None)
+    p.add_argument("--fixed-physical-patch", type=str, default=None)
     p.add_argument("--noisy-methods", type=str, default="cfqm4,suzuki2")
     p.add_argument("--benchmark-active-coeff-tol", type=float, default=1e-12)
     p.add_argument("--shots", type=int, default=2048)
@@ -4237,9 +4293,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--noise-seed", type=int, default=7)
     p.add_argument("--backend-name", type=str, default="FakeManilaV2")
     p.add_argument("--use-fake-backend", action="store_true")
-    p.set_defaults(allow_aer_fallback=True)
-    p.add_argument("--allow-aer-fallback", dest="allow_aer_fallback", action="store_true")
-    p.add_argument("--no-allow-aer-fallback", dest="allow_aer_fallback", action="store_false")
+    p.set_defaults(allow_noisy_fallback=False)
+    p.add_argument(
+        "--allow-noisy-fallback",
+        "--allow-aer-fallback",
+        dest="allow_noisy_fallback",
+        action="store_true",
+    )
+    p.add_argument(
+        "--no-allow-noisy-fallback",
+        "--no-allow-aer-fallback",
+        dest="allow_noisy_fallback",
+        action="store_false",
+    )
     p.set_defaults(omp_shm_workaround=True)
     p.add_argument("--omp-shm-workaround", dest="omp_shm_workaround", action="store_true")
     p.add_argument("--no-omp-shm-workaround", dest="omp_shm_workaround", action="store_false")
@@ -4306,14 +4372,31 @@ def _collect_noisy_benchmark_rows(dynamics_noisy: dict[str, Any]) -> list[dict[s
                 cost = mode_data.get("benchmark_cost", {})
                 runtime = mode_data.get("benchmark_runtime", {})
                 delta_unc = mode_data.get("delta_uncertainty", {})
+                backend_info = mode_data.get("backend_info", {}) if isinstance(mode_data, dict) else {}
+                backend_details = backend_info.get("details", {}) if isinstance(backend_info, dict) else {}
                 energy_unc = {}
                 if isinstance(delta_unc, dict):
                     energy_unc = delta_unc.get("energy_total", {}) if isinstance(delta_unc.get("energy_total", {}), dict) else {}
+                benchmark_cell_id = stable_noise_hash(
+                    {
+                        "profile": str(profile_name),
+                        "method": str(method_name),
+                        "mode": str(mode_name),
+                        "snapshot_hash": backend_details.get("snapshot_hash", None),
+                        "layout_hash": backend_details.get("layout_hash", None),
+                    },
+                    prefix="benchcell",
+                )
                 rows.append(
                     {
                         "profile": str(profile_name),
                         "method": str(method_name),
                         "mode": str(mode_name),
+                        "benchmark_cell_id": str(benchmark_cell_id),
+                        "source_kind": backend_details.get("source_kind", None),
+                        "snapshot_hash": backend_details.get("snapshot_hash", None),
+                        "layout_hash": backend_details.get("layout_hash", None),
+                        "omitted_channels": list(backend_details.get("omitted_channels", [])),
                         "term_exp_count_total": int(cost.get("term_exp_count_total", 0)),
                         "pauli_rot_count_total": int(cost.get("pauli_rot_count_total", 0)),
                         "cx_proxy_total": int(cost.get("cx_proxy_total", 0)),
@@ -4322,6 +4405,10 @@ def _collect_noisy_benchmark_rows(dynamics_noisy: dict[str, Any]) -> list[dict[s
                         "wall_total_s": float(runtime.get("wall_total_s", float("nan"))),
                         "oracle_eval_s_total": float(runtime.get("oracle_eval_s_total", float("nan"))),
                         "oracle_calls_total": int(runtime.get("oracle_calls_total", 0)),
+                        "scheduled_duration_total": backend_details.get("scheduled_duration_total", None),
+                        "idle_duration_total": backend_details.get("idle_duration_total", None),
+                        "used_physical_qubits": list(backend_details.get("used_physical_qubits", [])),
+                        "used_physical_edges": list(backend_details.get("used_physical_edges", [])),
                         "max_abs_delta": float(energy_unc.get("max_abs_delta", float("nan"))),
                         "max_abs_delta_over_stderr": float(
                             energy_unc.get("max_abs_delta_over_stderr", float("nan"))
@@ -4548,8 +4635,15 @@ def main(argv: list[str] | None = None) -> None:
                         "symmetry_mitigation_config": dict(symmetry_mitigation_cfg),
                         "backend_name": (None if args.backend_name is None else str(args.backend_name)),
                         "use_fake_backend": bool(args.use_fake_backend),
-                        "allow_aer_fallback": bool(args.allow_aer_fallback),
+                        "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)),
+                        "aer_noise_kind": str(args.aer_noise_kind),
+                        "schedule_policy": (None if args.schedule_policy is None else str(args.schedule_policy)),
+                        "layout_policy": (None if args.layout_policy is None else str(args.layout_policy)),
+                        "noise_snapshot_json": (None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
+                        "fixed_physical_patch": (None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
+                        "allow_noisy_fallback": bool(args.allow_noisy_fallback),
                         "omp_shm_workaround": bool(args.omp_shm_workaround),
+                        "layout_lock_key": stable_noise_hash({"scope": "robustness_dynamics", "profile": str(profile_name), "mode": str(mode), "L": int(args.L), "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)), "backend_name": (None if args.backend_name is None else str(args.backend_name)), "seed": int(args.noise_seed)}, prefix="benchcell"),
                         "method": str(method),
                         "benchmark_active_coeff_tol": float(args.benchmark_active_coeff_tol),
                         "cfqm_coeff_drop_abs_tol": float(args.cfqm_coeff_drop_abs_tol),
@@ -4611,8 +4705,15 @@ def main(argv: list[str] | None = None) -> None:
                     "symmetry_mitigation_config": dict(symmetry_mitigation_cfg),
                     "backend_name": (None if args.backend_name is None else str(args.backend_name)),
                     "use_fake_backend": bool(args.use_fake_backend),
-                    "allow_aer_fallback": bool(args.allow_aer_fallback),
+                    "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)),
+                    "aer_noise_kind": str(args.aer_noise_kind),
+                    "schedule_policy": (None if args.schedule_policy is None else str(args.schedule_policy)),
+                    "layout_policy": (None if args.layout_policy is None else str(args.layout_policy)),
+                    "noise_snapshot_json": (None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
+                    "fixed_physical_patch": (None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
+                    "allow_noisy_fallback": bool(args.allow_noisy_fallback),
                     "omp_shm_workaround": bool(args.omp_shm_workaround),
+                    "layout_lock_key": stable_noise_hash({"scope": "robustness_audit", "profile": str(profile_name), "mode": str(mode), "L": int(args.L), "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)), "backend_name": (None if args.backend_name is None else str(args.backend_name)), "seed": int(args.noise_seed)}, prefix="benchcell"),
                 }
                 mode_result = _run_noisy_audit_mode_isolated(
                     kwargs=kwargs,
@@ -4654,6 +4755,12 @@ def main(argv: list[str] | None = None) -> None:
             "include_drive_profile": bool(args.include_drive_profile),
             "smoke_test_intentionally_weak": bool(args.smoke_test_intentionally_weak),
             "noise_modes": noise_modes,
+            "aer_noise_kind": str(args.aer_noise_kind),
+            "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)),
+            "schedule_policy": (None if args.schedule_policy is None else str(args.schedule_policy)),
+            "layout_policy": (None if args.layout_policy is None else str(args.layout_policy)),
+            "noise_snapshot_json": (None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
+            "fixed_physical_patch": (None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
             "noisy_methods": [str(x) for x in noisy_methods],
             "shots": int(args.shots),
             "oracle_repeats": int(args.oracle_repeats),
@@ -4665,6 +4772,7 @@ def main(argv: list[str] | None = None) -> None:
             "mitigation_config": dict(mitigation_cfg),
             "symmetry_mitigation_config": dict(symmetry_mitigation_cfg),
             "benchmark_active_coeff_tol": float(args.benchmark_active_coeff_tol),
+            "allow_noisy_fallback": bool(args.allow_noisy_fallback),
             "drive_profile": drive_profile,
             "transition_policy": {
                 "window_k": int(args.window_k),

@@ -116,6 +116,28 @@ def _resolve_exact_energy_from_payload(payload: Mapping[str, Any]) -> float | No
     return None
 
 
+def _resolve_family_from_metadata_sequence(
+    records: Any,
+    *,
+    family_key: str,
+) -> tuple[str | None, str | None]:
+    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
+        return None, None
+    families: list[str] = []
+    for rec in records:
+        if not isinstance(rec, Mapping):
+            continue
+        cand = _canonical_family(rec.get(family_key))
+        if cand is not None:
+            families.append(cand)
+    if not families:
+        return None, None
+    unique = sorted(set(families))
+    if len(unique) == 1:
+        return unique[0], family_key
+    return None, None
+
+
 def _resolve_family_from_metadata(payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
     cand = _canonical_family(_extract_nested(payload, "adapt_vqe", "pool_type"))
     if cand is not None:
@@ -124,6 +146,34 @@ def _resolve_family_from_metadata(payload: Mapping[str, Any]) -> tuple[str | Non
     cand = _canonical_family(_extract_nested(payload, "settings", "adapt_pool"))
     if cand is not None:
         return cand, "settings.adapt_pool"
+
+    cand, src = _resolve_family_from_metadata_sequence(
+        _extract_nested(payload, "continuation", "selected_generator_metadata"),
+        family_key="family_id",
+    )
+    if cand is not None:
+        return cand, "continuation.selected_generator_metadata.family_id"
+
+    cand, src = _resolve_family_from_metadata_sequence(
+        _extract_nested(payload, "adapt_vqe", "continuation", "selected_generator_metadata"),
+        family_key="family_id",
+    )
+    if cand is not None:
+        return cand, "adapt_vqe.continuation.selected_generator_metadata.family_id"
+
+    cand, src = _resolve_family_from_metadata_sequence(
+        _extract_nested(payload, "continuation", "motif_library", "records"),
+        family_key="family_id",
+    )
+    if cand is not None:
+        return cand, "continuation.motif_library.records.family_id"
+
+    cand, src = _resolve_family_from_metadata_sequence(
+        _extract_nested(payload, "adapt_vqe", "continuation", "motif_library", "records"),
+        family_key="family_id",
+    )
+    if cand is not None:
+        return cand, "adapt_vqe.continuation.motif_library.records.family_id"
 
     meta_pool_variant = _extract_nested(payload, "meta", "pool_variant")
     if meta_pool_variant is not None:
@@ -979,6 +1029,12 @@ def _build_cfg(args: argparse.Namespace, payload: Mapping[str, Any]) -> RunConfi
     out_md = Path(args.output_md) if args.output_md is not None else Path(f"artifacts/useful/L{int(L)}/{tag}.md")
     out_log = Path(args.output_log) if args.output_log is not None else Path(f"artifacts/logs/{tag}.log")
 
+    if str(args.method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH ADAPT-family replay is SPSA-only for --method. "
+            "Use --method SPSA."
+        )
+
     return RunConfig(
         adapt_input_json=Path(args.adapt_input_json),
         output_json=out_json,
@@ -1088,7 +1144,79 @@ def _resolve_replay_continuation_mode(raw: str | None) -> str:
     return mode
 
 
-def run(cfg: RunConfig) -> dict[str, Any]:
+def build_replay_ansatz_context(
+    cfg: RunConfig,
+    *,
+    payload_in: Mapping[str, Any],
+    psi_ref: np.ndarray,
+    h_poly: Any,
+    family_info: Mapping[str, Any],
+    e_exact: float,
+) -> dict[str, Any]:
+    adapt_labels, adapt_theta = _extract_adapt_operator_theta_sequence(payload_in)
+    handoff_state_kind, provenance_source = _infer_handoff_state_kind(payload_in)
+    if provenance_source == "ambiguous" and str(cfg.replay_seed_policy) == "auto":
+        raise ValueError(
+            "Cannot resolve replay seed policy 'auto': input JSON has no "
+            "initial_state.handoff_state_kind and initial_state.source could not "
+            "be mapped unambiguously to reference_state or prepared_state. "
+            "Use an explicit --replay-seed-policy (scaffold_plus_zero, residual_only, "
+            "or tile_adapt) to proceed."
+        )
+
+    seed_theta, resolved_seed_policy = _build_replay_seed_theta_policy(
+        adapt_theta,
+        reps=int(cfg.reps),
+        policy=str(cfg.replay_seed_policy),
+        handoff_state_kind=str(handoff_state_kind),
+    )
+    family_resolved = str(family_info["resolved"])
+    if family_resolved == "full_meta" and int(cfg.n_ph_max) >= 2:
+        replay_terms, pool_meta = _build_full_meta_replay_terms_sparse(
+            cfg,
+            h_poly=h_poly,
+            adapt_labels=adapt_labels,
+            payload=payload_in,
+        )
+        family_terms_count = int(pool_meta.get("raw_total", 0))
+    else:
+        pool, pool_meta = _build_pool_for_family(cfg, family=family_resolved, h_poly=h_poly)
+        replay_terms = _build_replay_terms_from_adapt_labels(pool, adapt_labels, payload=payload_in)
+        family_terms_count = int(len(pool))
+
+    nq = int(2 * int(cfg.L) + int(cfg.L) * int(boson_qubits_per_site(int(cfg.n_ph_max), str(cfg.boson_encoding))))
+    ansatz = PoolTermwiseAnsatz(terms=replay_terms, reps=int(cfg.reps), nq=nq)
+    if int(seed_theta.size) != int(ansatz.num_parameters):
+        raise ValueError(
+            "Internal replay parameter mismatch: "
+            f"seed size {int(seed_theta.size)} != ansatz.num_parameters {int(ansatz.num_parameters)}."
+        )
+
+    psi_seed = np.asarray(ansatz.prepare_state(seed_theta, psi_ref), dtype=complex).reshape(-1)
+    seed_energy = float(expval_pauli_polynomial(psi_seed, h_poly))
+    seed_delta_abs = float(abs(seed_energy - float(e_exact)))
+    seed_relative_abs = float(seed_delta_abs / max(abs(float(e_exact)), 1e-14))
+    return {
+        "adapt_labels": list(adapt_labels),
+        "adapt_theta": np.asarray(adapt_theta, dtype=float).copy(),
+        "handoff_state_kind": str(handoff_state_kind),
+        "provenance_source": str(provenance_source),
+        "seed_theta": np.asarray(seed_theta, dtype=float).copy(),
+        "resolved_seed_policy": str(resolved_seed_policy),
+        "family_resolved": str(family_resolved),
+        "family_terms_count": int(family_terms_count),
+        "pool_meta": dict(pool_meta),
+        "replay_terms": list(replay_terms),
+        "ansatz": ansatz,
+        "nq": int(nq),
+        "psi_seed": np.asarray(psi_seed, dtype=complex).reshape(-1).copy(),
+        "seed_energy": float(seed_energy),
+        "seed_delta_abs": float(seed_delta_abs),
+        "seed_relative_abs": float(seed_relative_abs),
+    }
+
+
+def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[str, Any]:
     logger = RunLogger(cfg.output_log)
     logger.log(f"Loading ADAPT input JSON: {cfg.adapt_input_json}")
     psi_ref, payload_in = _read_input_state_and_payload(cfg.adapt_input_json)
@@ -1121,18 +1249,18 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         )
         logger.log(f"Computed exact sector energy via ED: E_exact={e_exact:.12f}")
 
-    adapt_labels, adapt_theta = _extract_adapt_operator_theta_sequence(payload_in)
-
-    # ── Provenance resolution ────────────────────────────────────────
-    handoff_state_kind, provenance_source = _infer_handoff_state_kind(payload_in)
-    if provenance_source == "ambiguous" and str(cfg.replay_seed_policy) == "auto":
-        raise ValueError(
-            "Cannot resolve replay seed policy 'auto': input JSON has no "
-            "initial_state.handoff_state_kind and initial_state.source could not "
-            "be mapped unambiguously to reference_state or prepared_state. "
-            "Use an explicit --replay-seed-policy (scaffold_plus_zero, residual_only, "
-            "or tile_adapt) to proceed."
-        )
+    replay_ctx = build_replay_ansatz_context(
+        cfg,
+        payload_in=payload_in,
+        psi_ref=psi_ref,
+        h_poly=h_poly,
+        family_info=family_info,
+        e_exact=float(e_exact),
+    )
+    adapt_labels = [str(x) for x in replay_ctx["adapt_labels"]]
+    adapt_theta = np.asarray(replay_ctx["adapt_theta"], dtype=float)
+    handoff_state_kind = str(replay_ctx["handoff_state_kind"])
+    provenance_source = str(replay_ctx["provenance_source"])
     if provenance_source != "explicit":
         logger.log(
             f"PROVENANCE WARNING: handoff_state_kind inferred as '{handoff_state_kind}' "
@@ -1144,42 +1272,22 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         f"provenance_source={provenance_source} "
         f"replay_seed_policy={cfg.replay_seed_policy}"
     )
-
-    seed_theta, resolved_seed_policy = _build_replay_seed_theta_policy(
-        adapt_theta,
-        reps=int(cfg.reps),
-        policy=str(cfg.replay_seed_policy),
-        handoff_state_kind=str(handoff_state_kind),
-    )
-
-    family_resolved = str(family_info["resolved"])
-    if family_resolved == "full_meta" and int(cfg.n_ph_max) >= 2:
-        replay_terms, pool_meta = _build_full_meta_replay_terms_sparse(
-            cfg,
-            h_poly=h_poly,
-            adapt_labels=adapt_labels,
-            payload=payload_in,
-        )
-        family_terms_count = int(pool_meta.get("raw_total", 0))
-    else:
-        pool, pool_meta = _build_pool_for_family(cfg, family=family_resolved, h_poly=h_poly)
-        replay_terms = _build_replay_terms_from_adapt_labels(pool, adapt_labels, payload=payload_in)
-        family_terms_count = int(len(pool))
-    nq = int(2 * int(cfg.L) + int(cfg.L) * int(boson_qubits_per_site(int(cfg.n_ph_max), str(cfg.boson_encoding))))
-    ansatz = PoolTermwiseAnsatz(terms=replay_terms, reps=int(cfg.reps), nq=nq)
-    if int(seed_theta.size) != int(ansatz.num_parameters):
-        raise ValueError(
-            "Internal replay parameter mismatch: "
-            f"seed size {int(seed_theta.size)} != ansatz.num_parameters {int(ansatz.num_parameters)}."
-        )
+    seed_theta = np.asarray(replay_ctx["seed_theta"], dtype=float)
+    resolved_seed_policy = str(replay_ctx["resolved_seed_policy"])
+    family_resolved = str(replay_ctx["family_resolved"])
+    family_terms_count = int(replay_ctx["family_terms_count"])
+    pool_meta = dict(replay_ctx["pool_meta"])
+    replay_terms = list(replay_ctx["replay_terms"])
+    ansatz = replay_ctx["ansatz"]
+    nq = int(replay_ctx["nq"])
     logger.log(
         f"Pool built: family={family_info['resolved']} family_terms={family_terms_count} "
         f"adapt_depth={len(adapt_labels)} replay_terms={len(replay_terms)} npar={ansatz.num_parameters}"
     )
-    psi_seed = np.asarray(ansatz.prepare_state(seed_theta, psi_ref), dtype=complex).reshape(-1)
-    seed_energy = float(expval_pauli_polynomial(psi_seed, h_poly))
-    seed_delta_abs = float(abs(seed_energy - float(e_exact)))
-    seed_relative_abs = float(seed_delta_abs / max(abs(float(e_exact)), 1e-14))
+    psi_seed = np.asarray(replay_ctx["psi_seed"], dtype=complex).reshape(-1)
+    seed_energy = float(replay_ctx["seed_energy"])
+    seed_delta_abs = float(replay_ctx["seed_delta_abs"])
+    seed_relative_abs = float(replay_ctx["seed_relative_abs"])
     logger.log(
         f"Seed baseline (policy={resolved_seed_policy}): "
         f"E={seed_energy:.12f} |DeltaE|={seed_delta_abs:.6e}"
@@ -1569,6 +1677,22 @@ def run(cfg: RunConfig) -> dict[str, Any]:
         f"DONE family={family_info['resolved']} method={cfg.method} "
         f"abs_delta_e={delta_abs:.6e} runtime_s={runtime_s:.1f}"
     )
+    if diagnostics_out is not None:
+        diagnostics_out.clear()
+        diagnostics_out.update(
+            {
+                "reference_state": np.asarray(psi_ref, dtype=complex).reshape(-1).copy(),
+                "replay_terms": list(replay_terms),
+                "seed_theta": np.asarray(seed_theta, dtype=float).copy(),
+                "best_theta": np.asarray(theta_best, dtype=float).copy(),
+                "ansatz": ansatz,
+                "num_qubits": int(nq),
+                "family_info": dict(family_info),
+                "handoff_state_kind": str(handoff_state_kind),
+                "provenance_source": str(provenance_source),
+                "resolved_seed_policy": str(resolved_seed_policy),
+            }
+        )
     return result
 
 
@@ -1628,7 +1752,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--reps", type=int, default=None)
     p.add_argument("--restarts", type=int, default=16)
     p.add_argument("--maxiter", type=int, default=12000)
-    p.add_argument("--method", type=str, default="SPSA")
+    p.add_argument("--method", type=str, default="SPSA", choices=["SPSA"])
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--energy-backend", type=str, default="one_apply_compiled", choices=["legacy", "one_apply_compiled"])
     p.add_argument("--progress-every-s", type=float, default=60.0)

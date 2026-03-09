@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from pipelines.exact_bench.hh_noise_robustness_seq_report import (
     _build_mitigation_config,
     _build_summary,
@@ -7,6 +9,7 @@ from pipelines.exact_bench.hh_noise_robustness_seq_report import (
     _collect_noisy_benchmark_rows,
     _compute_time_dynamics_proxy_cost,
     _disabled_hardcoded_superset_meta,
+    _enforce_defaults_and_minimums,
     _noise_config_caption,
     _noise_style_legend_lines,
     _normalize_display_string_list,
@@ -23,10 +26,25 @@ def test_parse_args_noisy_benchmark_flags() -> None:
             "suzuki2,cfqm4",
             "--benchmark-active-coeff-tol",
             "1e-9",
+            "--aer-noise-kind",
+            "scheduled",
+            "--backend-profile",
+            "generic_seeded",
+            "--schedule-policy",
+            "asap",
+            "--layout-policy",
+            "auto_then_lock",
+            "--fixed-physical-patch",
+            "0,1",
         ]
     )
     assert str(args.noisy_methods) == "suzuki2,cfqm4"
     assert float(args.benchmark_active_coeff_tol) == 1e-9
+    assert str(args.aer_noise_kind) == "scheduled"
+    assert str(args.backend_profile) == "generic_seeded"
+    assert str(args.schedule_policy) == "asap"
+    assert str(args.layout_policy) == "auto_then_lock"
+    assert str(args.fixed_physical_patch) == "0,1"
     assert bool(args.disable_time_dynamics) is False
 
 
@@ -58,6 +76,21 @@ def test_parse_args_mitigation_defaults_and_values() -> None:
 def test_parse_args_disable_time_dynamics_flag() -> None:
     args = parse_args(["--disable-time-dynamics"])
     assert bool(args.disable_time_dynamics) is True
+
+
+
+def test_hh_robustness_defaults_to_spsa_methods() -> None:
+    args = _enforce_defaults_and_minimums(parse_args([]))
+    assert str(args.warm_method) == "SPSA"
+    assert str(args.final_method) == "SPSA"
+
+
+
+def test_hh_robustness_rejects_non_spsa_methods_at_parse_time() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--warm-method", "COBYLA"])
+    with pytest.raises(SystemExit):
+        parse_args(["--final-method", "COBYLA"])
 
 
 def test_mitigation_schema_defaults_and_caption() -> None:
@@ -176,6 +209,18 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
                         "modes": {
                             "shots": {
                                 "success": True,
+                                "backend_info": {
+                                    "details": {
+                                        "source_kind": "fake_snapshot",
+                                        "snapshot_hash": "snap_a",
+                                        "layout_hash": "layout_a",
+                                        "omitted_channels": ["crosstalk"],
+                                        "scheduled_duration_total": 1.2,
+                                        "idle_duration_total": 0.1,
+                                        "used_physical_qubits": [0, 1],
+                                        "used_physical_edges": [[0, 1]],
+                                    }
+                                },
                                 "delta_uncertainty": {
                                     "energy_total": {
                                         "max_abs_delta": 0.02,
@@ -202,6 +247,18 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
                         "modes": {
                             "shots": {
                                 "success": True,
+                                "backend_info": {
+                                    "details": {
+                                        "source_kind": "fake_snapshot",
+                                        "snapshot_hash": "snap_b",
+                                        "layout_hash": "layout_b",
+                                        "omitted_channels": ["crosstalk"],
+                                        "scheduled_duration_total": 1.0,
+                                        "idle_duration_total": 0.05,
+                                        "used_physical_qubits": [0, 1],
+                                        "used_physical_edges": [[0, 1]],
+                                    }
+                                },
                                 "delta_uncertainty": {
                                     "energy_total": {
                                         "max_abs_delta": 0.015,
@@ -238,6 +295,11 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
             "profile",
             "method",
             "mode",
+            "benchmark_cell_id",
+            "source_kind",
+            "snapshot_hash",
+            "layout_hash",
+            "omitted_channels",
             "term_exp_count_total",
             "pauli_rot_count_total",
             "cx_proxy_total",
@@ -246,6 +308,10 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
             "wall_total_s",
             "oracle_eval_s_total",
             "oracle_calls_total",
+            "scheduled_duration_total",
+            "idle_duration_total",
+            "used_physical_qubits",
+            "used_physical_edges",
             "max_abs_delta",
             "max_abs_delta_over_stderr",
             "mean_abs_delta_over_stderr",

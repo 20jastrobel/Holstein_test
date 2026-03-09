@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """HH-first noise/hardware validation runner (wrapper-level).
 
-This script validates feasibility of HH/Hubbard workflows under measurement and
-device noise without mutating core operator algebra files.
+This script validates HH workflows under measurement and device noise without
+mutating core operator algebra files. Pure Hubbard remains explicit-only legacy
+support and should not be treated as an implicit/default target.
 """
 
 from __future__ import annotations
@@ -46,6 +47,10 @@ from docs.reports.report_pages import (
     render_manifest_overview_page,
     render_section_divider_page,
 )
+from docs.reports.qiskit_circuit_report import (
+    adapt_ops_to_circuit as _shared_adapt_ops_to_circuit,
+    pauli_poly_to_sparse_pauli_op as _shared_pauli_poly_to_sparse_pauli_op,
+)
 from src.quantum.compiled_polynomial import (
     compile_polynomial_action,
     energy_via_one_apply,
@@ -81,11 +86,11 @@ from pipelines.exact_bench.noise_oracle_runtime import (
     _doublon_site_qop,
     _number_operator_qop,
     _ordered_qop_from_exyz,
-    _pauli_poly_to_sparse_pauli_op,
     normalize_ideal_reference_symmetry_mitigation,
     normalize_mitigation_config,
     normalize_symmetry_mitigation_config,
 )
+from pipelines.exact_bench.noise_model_spec import stable_noise_hash
 
 
 def _ai_log(event: str, **fields: Any) -> None:
@@ -102,9 +107,9 @@ _HUBBARD_PARAMS: dict[int, dict[str, Any]] = {
 }
 
 _HH_PARAMS: dict[tuple[int, int], dict[str, Any]] = {
-    (2, 1): {"trotter_steps": 64, "reps": 2, "restarts": 3, "maxiter": 800, "method": "COBYLA"},
-    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "COBYLA"},
-    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "COBYLA"},
+    (2, 1): {"trotter_steps": 64, "reps": 2, "restarts": 3, "maxiter": 800, "method": "SPSA"},
+    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "SPSA"},
+    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "SPSA"},
 }
 
 
@@ -206,6 +211,152 @@ def _mitigation_caption(
     )
 
 
+
+def _ground_state_report_fields(ground_state: dict[str, Any] | None) -> list[tuple[str, Any]]:
+    data = ground_state or {}
+    sector = data.get("filtered_sector", {}) or {}
+    sector_label = None
+    if isinstance(sector, dict) and sector:
+        sector_label = f"n_up={sector.get('n_up')}, n_dn={sector.get('n_dn')}"
+    return [
+        ("Exact ground-state (filtered sector)", data.get("exact_energy_filtered")),
+        ("Filtered sector", sector_label),
+        ("Exact ground-state (full Hilbert)", data.get("exact_energy_full_hilbert")),
+    ]
+
+
+def _string_list(raw: Any) -> list[str]:
+    if raw in {None, "", (), []}:
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        return [str(x) for x in raw if str(x).strip()]
+    return [str(raw)]
+
+
+def _mode_honesty_statement(resolved_noise_spec: dict[str, Any] | None) -> str:
+    spec = resolved_noise_spec or {}
+    executor = str(spec.get("executor", "")).strip().lower()
+    noise_kind = str(spec.get("noise_kind", "")).strip().lower()
+    if executor == "statevector" or noise_kind == "none":
+        return "ideal reference / statevector control"
+    if noise_kind == "shots_only":
+        return "sampling-only control"
+    if noise_kind == "backend_basic":
+        return "backend_basic: debug/smoke approximation, not for headline scientific claims"
+    if noise_kind == "backend_scheduled":
+        return "backend_scheduled: schedule-aware local approximation"
+    if executor == "runtime_qpu":
+        return "runtime: hardware-facing execution"
+    return f"{noise_kind or executor}: local approximate noise mode"
+
+
+def _vqe_energy_block_rows(
+    vqe: dict[str, Any] | None,
+    ground_state: dict[str, Any] | None,
+) -> list[tuple[str, Any]]:
+    data = vqe or {}
+    ground = ground_state or {}
+    rows: list[tuple[str, Any]] = [
+        ("E_exact_filtered", ground.get("exact_energy_filtered")),
+        ("E_ideal_ref", data.get("energy_ideal_reference")),
+        ("E_noisy", data.get("energy_noisy")),
+        ("Δ_ansatz = E_ideal_ref - E_exact_filtered", data.get("delta_ansatz")),
+        ("Δ_total = E_noisy - E_exact_filtered", data.get("delta_total")),
+        ("Δ_noise = E_noisy - E_ideal_ref", data.get("delta_noisy_minus_ideal")),
+    ]
+    if data.get("energy_qiskit_ideal_control", None) is not None:
+        rows.extend(
+            [
+                ("Qiskit ideal control", data.get("energy_qiskit_ideal_control")),
+                (
+                    "Qiskit-control minus ideal-ref",
+                    data.get("delta_qiskit_ideal_control_minus_ideal_reference"),
+                ),
+            ]
+        )
+    return rows
+
+
+def _theta_hash(theta: np.ndarray) -> str:
+    vec = np.asarray(theta, dtype=float).reshape(-1)
+    return stable_noise_hash({"theta": [float(x) for x in vec.tolist()]}, prefix="theta")
+
+
+def _effective_layout_lock_key(
+    *,
+    layout_lock_key: str | None,
+    L: int,
+    problem: str,
+    ansatz: str,
+    noise_mode: str,
+) -> str:
+    if layout_lock_key is not None:
+        return str(layout_lock_key)
+    return f"validation:L{int(L)}:{str(problem)}:{str(ansatz)}:{str(noise_mode)}"
+
+
+def _load_imported_vqe_parameters(
+    json_path: Path,
+    *,
+    current_problem: str,
+    current_ansatz: str,
+    current_L: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    payload = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    settings = dict(payload.get("settings", {}) or {})
+    vqe = dict(payload.get("vqe", {}) or {})
+    theta_raw = vqe.get("optimal_point", None)
+    if theta_raw is None:
+        raise ValueError(f"Imported VQE JSON '{json_path}' does not contain vqe.optimal_point.")
+    expected_fields = {
+        "problem": str(current_problem),
+        "ansatz": str(current_ansatz),
+        "L": int(current_L),
+    }
+    missing_fields = [str(key) for key in expected_fields.keys() if settings.get(key, None) is None]
+    if missing_fields:
+        raise ValueError(
+            "Imported VQE parameter JSON missing required settings fields: {}.".format(
+                ", ".join(missing_fields)
+            )
+        )
+    mismatches: list[str] = []
+    for key, expected in expected_fields.items():
+        got = settings.get(key, None)
+        assert got is not None
+        if key == "L":
+            if int(got) != int(expected):
+                mismatches.append(f"{key}: imported={got} current={expected}")
+        elif str(got) != str(expected):
+            mismatches.append(f"{key}: imported={got} current={expected}")
+    if mismatches:
+        raise ValueError(
+            "Imported VQE parameter JSON mismatch: {}.".format("; ".join(mismatches))
+        )
+    theta = np.asarray([float(x) for x in list(theta_raw)], dtype=float).reshape(-1)
+    if not np.all(np.isfinite(theta)):
+        raise ValueError(f"Imported VQE parameter JSON '{json_path}' contains non-finite theta entries.")
+    meta = {
+        "kind": "imported_json",
+        "path": str(json_path),
+        "optimized_in_run": False,
+        "theta_hash": _theta_hash(theta),
+        "source_problem": settings.get("problem", None),
+        "source_ansatz": settings.get("ansatz", None),
+        "source_L": settings.get("L", None),
+    }
+    return theta, meta
+
+
+def _parameter_source_meta_optimized(theta: np.ndarray) -> dict[str, Any]:
+    return {
+        "kind": "optimized_here",
+        "path": None,
+        "optimized_in_run": True,
+        "theta_hash": _theta_hash(np.asarray(theta, dtype=float)),
+    }
+
+
 _SUZUKI2_MATH = "U(t) ~= [prod_j exp(-i (t/r)/2 H_j) * prod_j^rev exp(-i (t/r)/2 H_j)]^r"
 
 
@@ -255,6 +406,15 @@ def _get_hh_minimum(L: int, n_ph_max: int) -> dict[str, Any]:
     }
 
 
+def _default_validation_ansatz(problem: str) -> str:
+    problem_key = str(problem).strip().lower()
+    if problem_key == "hh":
+        return "hh_hva_ptw"
+    if problem_key == "hubbard":
+        return "hva"
+    raise ValueError(f"Unsupported problem '{problem}'")
+
+
 def _apply_defaults_and_minimums(args: argparse.Namespace) -> argparse.Namespace:
     problem = str(args.problem).strip().lower()
     if problem == "hh":
@@ -262,6 +422,8 @@ def _apply_defaults_and_minimums(args: argparse.Namespace) -> argparse.Namespace
     else:
         minimum = _get_hubbard_minimum(int(args.L))
 
+    if args.ansatz is None:
+        args.ansatz = _default_validation_ansatz(problem)
     if args.vqe_reps is None:
         args.vqe_reps = int(minimum["reps"])
     if args.vqe_restarts is None:
@@ -272,6 +434,12 @@ def _apply_defaults_and_minimums(args: argparse.Namespace) -> argparse.Namespace
         args.trotter_steps = int(minimum["trotter_steps"])
     if args.vqe_method is None:
         args.vqe_method = str(minimum["method"])
+
+    if problem == "hh" and str(args.vqe_method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH validation is SPSA-only for --vqe-method. "
+            "Use --vqe-method SPSA for HH validation runs."
+        )
 
     if problem == "hubbard":
         if args.t_final is None:
@@ -530,21 +698,12 @@ def _adapt_ops_to_circuit(
     num_qubits: int,
     reference_state: np.ndarray,
 ) -> QuantumCircuit:
-    if int(theta.size) != int(len(ops)):
-        raise ValueError(
-            f"theta length {int(theta.size)} does not match selected ADAPT ops {int(len(ops))}"
-        )
-    qc = QuantumCircuit(int(num_qubits))
-    from pipelines.exact_bench.noise_oracle_runtime import _append_reference_state  # local import
-
-    _append_reference_state(qc, np.asarray(reference_state, dtype=complex))
-    synthesis = SuzukiTrotter(order=2, reps=1, preserve_order=True)
-    for op, ang in zip(ops, np.asarray(theta, dtype=float)):
-        qop = _pauli_poly_to_sparse_pauli_op(op.polynomial)
-        if np.max(np.abs(np.asarray(qop.coeffs, dtype=complex))) <= 1e-12:
-            continue
-        qc.append(PauliEvolutionGate(qop, time=float(ang), synthesis=synthesis), list(range(int(num_qubits))))
-    return qc
+    return _shared_adapt_ops_to_circuit(
+        ops,
+        theta,
+        num_qubits=int(num_qubits),
+        reference_state=np.asarray(reference_state, dtype=complex),
+    )
 
 
 def _run_noisy_adapt(
@@ -602,11 +761,19 @@ def _run_noisy_adapt(
         num_qubits=int(h_qop.num_qubits),
         reference_state=psi_ref,
     )
+    noisy_oracle.prime_layout(qc0)
     e0 = noisy_oracle.evaluate(qc0, h_qop)
     energy_current = float(e0.mean)
     nfev_total += 1
 
     for depth in range(max_depth):
+        qc_base = _adapt_ops_to_circuit(
+            selected_ops,
+            theta,
+            num_qubits=int(h_qop.num_qubits),
+            reference_state=psi_ref,
+        )
+        noisy_oracle.prime_layout(qc_base)
         candidate_indices = list(range(len(pool))) if allow_repeats else sorted(available)
         if not candidate_indices:
             stop_reason = "pool_exhausted"
@@ -842,12 +1009,11 @@ def _run_noisy_vqe(
     backend_key = str(args.vqe_energy_backend).strip().lower()
 
     objective_source = "noisy_oracle"
-    compiled_h = None
+    compiled_h = compile_polynomial_action(
+        h_poly,
+        tol=1e-12,
+    )
     if noise_mode_key == "ideal" and backend_key == "one_apply_compiled":
-        compiled_h = compile_polynomial_action(
-            h_poly,
-            tol=1e-12,
-        )
         objective_source = "compiled_one_apply_ideal"
 
     minimize = None
@@ -980,10 +1146,24 @@ def _run_noisy_vqe(
         num_qubits=int(h_qop.num_qubits),
         reference_state=psi_ref,
     )
-    best_noisy = noisy_oracle.evaluate(best_circuit, h_qop)
-    best_ideal = ideal_oracle.evaluate(best_circuit, h_qop)
-    delta_noisy_minus_ideal = float(best_noisy.mean - best_ideal.mean)
-    delta_noisy_minus_ideal_stderr = _combine_stderr(best_noisy.stderr, best_ideal.stderr)
+    best_ideal_control = ideal_oracle.evaluate(best_circuit, h_qop)
+    psi_best = ansatz.prepare_state(best_theta, psi_ref)
+    best_ideal_reference, _hpsi = energy_via_one_apply(np.asarray(psi_best, dtype=complex), compiled_h)
+    best_ideal_reference = float(best_ideal_reference)
+    if noise_mode_key == "ideal" and backend_key == "one_apply_compiled":
+        energy_noisy = float(best_ideal_reference)
+        energy_noisy_std = 0.0
+        energy_noisy_stdev = 0.0
+        energy_noisy_stderr = 0.0
+    else:
+        best_noisy = noisy_oracle.evaluate(best_circuit, h_qop)
+        energy_noisy = float(best_noisy.mean)
+        energy_noisy_std = float(best_noisy.std)
+        energy_noisy_stdev = float(best_noisy.stdev)
+        energy_noisy_stderr = float(best_noisy.stderr)
+    delta_noisy_minus_ideal = float(energy_noisy - best_ideal_reference)
+    delta_noisy_minus_ideal_stderr = float(energy_noisy_stderr)
+    delta_qiskit_control_minus_ideal_reference = float(best_ideal_control.mean - best_ideal_reference)
 
     payload = {
         "success": bool(best_success),
@@ -1000,16 +1180,26 @@ def _run_noisy_vqe(
         "nfev": int(best_nfev),
         "nit": int(best_nit),
         "message": str(best_message),
-        "energy_noisy": float(best_noisy.mean),
-        "energy_noisy_mean": float(best_noisy.mean),
-        "energy_noisy_std": float(best_noisy.std),
-        "energy_noisy_stdev": float(best_noisy.stdev),
-        "energy_noisy_stderr": float(best_noisy.stderr),
-        "energy_ideal_reference": float(best_ideal.mean),
-        "energy_ideal_reference_mean": float(best_ideal.mean),
-        "energy_ideal_reference_std": float(best_ideal.std),
-        "energy_ideal_reference_stdev": float(best_ideal.stdev),
-        "energy_ideal_reference_stderr": float(best_ideal.stderr),
+        "energy_noisy": float(energy_noisy),
+        "energy_noisy_mean": float(energy_noisy),
+        "energy_noisy_std": float(energy_noisy_std),
+        "energy_noisy_stdev": float(energy_noisy_stdev),
+        "energy_noisy_stderr": float(energy_noisy_stderr),
+        "energy_ideal_reference": float(best_ideal_reference),
+        "energy_ideal_reference_mean": float(best_ideal_reference),
+        "energy_ideal_reference_std": 0.0,
+        "energy_ideal_reference_stdev": 0.0,
+        "energy_ideal_reference_stderr": 0.0,
+        "energy_ideal_reference_source": "compiled_one_apply_statevector",
+        "energy_ideal_at_theta_noisy": float(best_ideal_reference),
+        "energy_qiskit_ideal_control": float(best_ideal_control.mean),
+        "energy_qiskit_ideal_control_mean": float(best_ideal_control.mean),
+        "energy_qiskit_ideal_control_std": float(best_ideal_control.std),
+        "energy_qiskit_ideal_control_stdev": float(best_ideal_control.stdev),
+        "energy_qiskit_ideal_control_stderr": float(best_ideal_control.stderr),
+        "delta_qiskit_ideal_control_minus_ideal_reference": float(
+            delta_qiskit_control_minus_ideal_reference
+        ),
         "delta_noisy_minus_ideal": float(delta_noisy_minus_ideal),
         "delta_noisy_minus_ideal_mean": float(delta_noisy_minus_ideal),
         "delta_noisy_minus_ideal_stderr": float(delta_noisy_minus_ideal_stderr),
@@ -1019,7 +1209,100 @@ def _run_noisy_vqe(
     }
     if method_key == "spsa":
         payload["spsa"] = dict(vqe_spsa_params)
+    payload["parameter_source"] = _parameter_source_meta_optimized(best_theta)
     return payload, best_theta
+
+
+def _evaluate_vqe_at_theta(
+    *,
+    args: argparse.Namespace,
+    ansatz: Any,
+    psi_ref: np.ndarray,
+    h_poly: Any,
+    h_qop: SparsePauliOp,
+    theta: np.ndarray,
+    noisy_oracle: ExpectationOracle,
+    ideal_oracle: ExpectationOracle,
+    parameter_source: dict[str, Any],
+) -> tuple[dict[str, Any], np.ndarray]:
+    t0 = time.perf_counter()
+    theta_vec = np.asarray(theta, dtype=float).reshape(-1)
+    noise_mode_key = str(args.noise_mode).strip().lower()
+    backend_key = str(args.vqe_energy_backend).strip().lower()
+    compiled_h = compile_polynomial_action(
+        h_poly,
+        tol=1e-12,
+    )
+    best_circuit = _ansatz_to_circuit(
+        ansatz,
+        theta_vec,
+        num_qubits=int(h_qop.num_qubits),
+        reference_state=psi_ref,
+    )
+    best_ideal_control = ideal_oracle.evaluate(best_circuit, h_qop)
+    psi_best = ansatz.prepare_state(theta_vec, psi_ref)
+    best_ideal_reference, _hpsi = energy_via_one_apply(np.asarray(psi_best, dtype=complex), compiled_h)
+    best_ideal_reference = float(best_ideal_reference)
+    if noise_mode_key == "ideal" and backend_key == "one_apply_compiled":
+        energy_noisy = float(best_ideal_reference)
+        energy_noisy_std = 0.0
+        energy_noisy_stdev = 0.0
+        energy_noisy_stderr = 0.0
+    else:
+        best_noisy = noisy_oracle.evaluate(best_circuit, h_qop)
+        energy_noisy = float(best_noisy.mean)
+        energy_noisy_std = float(best_noisy.std)
+        energy_noisy_stdev = float(best_noisy.stdev)
+        energy_noisy_stderr = float(best_noisy.stderr)
+    delta_noisy_minus_ideal = float(energy_noisy - best_ideal_reference)
+    payload = {
+        "success": True,
+        "method": "noisy_vqe_fixed_theta_eval",
+        "ansatz": str(args.ansatz),
+        "optimizer_method": str(args.vqe_method),
+        "objective_source": (
+            "imported_theta_compiled_one_apply_eval"
+            if noise_mode_key == "ideal" and backend_key == "one_apply_compiled"
+            else "imported_theta_evaluate_only"
+        ),
+        "energy_backend": str(args.vqe_energy_backend),
+        "reps": int(args.vqe_reps),
+        "restarts": int(args.vqe_restarts),
+        "maxiter": int(args.vqe_maxiter),
+        "num_parameters": int(theta_vec.size),
+        "best_restart": 0,
+        "nfev": 0,
+        "nit": 0,
+        "message": "evaluate_only_imported_theta",
+        "energy_noisy": float(energy_noisy),
+        "energy_noisy_mean": float(energy_noisy),
+        "energy_noisy_std": float(energy_noisy_std),
+        "energy_noisy_stdev": float(energy_noisy_stdev),
+        "energy_noisy_stderr": float(energy_noisy_stderr),
+        "energy_ideal_reference": float(best_ideal_reference),
+        "energy_ideal_reference_mean": float(best_ideal_reference),
+        "energy_ideal_reference_std": 0.0,
+        "energy_ideal_reference_stdev": 0.0,
+        "energy_ideal_reference_stderr": 0.0,
+        "energy_ideal_reference_source": "compiled_one_apply_statevector",
+        "energy_ideal_at_theta_noisy": float(best_ideal_reference),
+        "energy_qiskit_ideal_control": float(best_ideal_control.mean),
+        "energy_qiskit_ideal_control_mean": float(best_ideal_control.mean),
+        "energy_qiskit_ideal_control_std": float(best_ideal_control.std),
+        "energy_qiskit_ideal_control_stdev": float(best_ideal_control.stdev),
+        "energy_qiskit_ideal_control_stderr": float(best_ideal_control.stderr),
+        "delta_qiskit_ideal_control_minus_ideal_reference": float(
+            best_ideal_control.mean - best_ideal_reference
+        ),
+        "delta_noisy_minus_ideal": float(delta_noisy_minus_ideal),
+        "delta_noisy_minus_ideal_mean": float(delta_noisy_minus_ideal),
+        "delta_noisy_minus_ideal_stderr": float(energy_noisy_stderr),
+        "optimal_point": [float(x) for x in theta_vec.tolist()],
+        "objective_history": [],
+        "elapsed_s": float(time.perf_counter() - t0),
+        "parameter_source": dict(parameter_source),
+    }
+    return payload, theta_vec
 
 
 def _run_noisy_trotter(
@@ -1033,6 +1316,7 @@ def _run_noisy_trotter(
 ) -> list[dict[str, Any]]:
     times = np.linspace(0.0, float(args.t_final), int(args.num_times))
     rows: list[dict[str, Any]] = []
+    noisy_oracle.prime_layout(initial_circuit)
     total = max(1, int(times.size))
     stride = max(1, total // 10)
 
@@ -1315,10 +1599,22 @@ def _write_noise_validation_pdf(
     trajectory = payload.get("trajectory", [])
     backend = payload.get("backend", {})
     noise = payload.get("noise_config", {})
+    resolved_noise_spec = payload.get("resolved_noise_spec", {})
     fallback = payload.get("execution_fallback", {})
     adapt = payload.get("adapt", {})
     legacy_parity = payload.get("legacy_parity", {})
+    ground_state = payload.get("ground_state", {})
+    ground_state_fields = _ground_state_report_fields(ground_state)
+    parameter_source = vqe.get("parameter_source", {}) or {}
     final = trajectory[-1] if trajectory else {}
+    transpile_snapshot = payload.get("transpile_snapshot", {}) or {}
+    calibration_snapshot = payload.get("calibration_snapshot", {}) or {}
+    warnings_list = _string_list(payload.get("warnings", []))
+    omitted_channels = _string_list(payload.get("omitted_channels", []))
+    mode_honesty = _mode_honesty_statement(resolved_noise_spec)
+    model_family_display = str(payload.get("model", "Hubbard-Holstein")).strip() or "Hubbard-Holstein"
+    if model_family_display.lower() == "hubbard-holstein":
+        model_family_display = "Hubbard-Holstein (HH)"
     noise_caption = (
         "noise_config: "
         f"mode={noise.get('noise_mode')}, "
@@ -1331,24 +1627,43 @@ def _write_noise_validation_pdf(
         (
             "Model and regime",
             [
-                ("Model family", str(payload.get("model", "Hubbard-Holstein"))),
+                ("Model family", model_family_display),
                 ("Problem", settings.get("problem")),
                 ("Ansatz", settings.get("ansatz")),
+                ("Drive enabled", False),
                 ("L", settings.get("L")),
                 ("Boundary", settings.get("boundary")),
                 ("Ordering", settings.get("ordering")),
             ],
         ),
         (
-            "Noise and backend",
+            "Energy block",
+            _vqe_energy_block_rows(vqe, ground_state),
+        ),
+        (
+            "Provenance",
             [
                 ("Noise mode", noise.get("noise_mode")),
+                ("Executor", resolved_noise_spec.get("executor")),
+                ("Noise kind", resolved_noise_spec.get("noise_kind")),
+                ("Mode honesty", mode_honesty),
+                ("Source kind", payload.get("source_kind")),
+                ("Backend profile kind", resolved_noise_spec.get("backend_profile_kind")),
+                ("Backend identifier", backend.get("backend_name")),
+                ("Frozen snapshot path", settings.get("noise_snapshot_json")),
+                ("Resolved spec hash", payload.get("resolved_noise_spec_hash")),
+                ("Snapshot hash", payload.get("snapshot_hash")),
+                ("Layout hash", payload.get("layout_hash")),
+                ("Transpile hash", payload.get("transpile_hash")),
+                ("Noise artifact hash", payload.get("noise_artifact_hash")),
                 ("shots", noise.get("shots")),
-                ("oracle_repeats", noise.get("oracle_repeats")),
-                ("oracle_aggregate", noise.get("oracle_aggregate")),
-                ("Mitigation", noise.get("mitigation")),
-                ("Backend", backend.get("backend_name")),
-                ("Using fake backend", backend.get("using_fake_backend")),
+                ("seed", noise.get("seed")),
+                ("seed_transpiler", backend.get("details", {}).get("seed_transpiler")),
+                ("seed_simulator", backend.get("details", {}).get("seed_simulator")),
+                ("Optimizer", vqe.get("optimizer_method")),
+                ("Parameter source kind", parameter_source.get("kind")),
+                ("Parameter source path", parameter_source.get("path")),
+                ("Theta hash", parameter_source.get("theta_hash")),
             ],
         ),
         (
@@ -1360,6 +1675,61 @@ def _write_noise_validation_pdf(
                 ("omega0", settings.get("omega0")),
                 ("g_ep", settings.get("g_ep")),
                 ("n_ph_max", settings.get("n_ph_max")),
+            ],
+        ),
+        (
+            "Mapping / schedule",
+            [
+                ("Patch/layout frozen", resolved_noise_spec.get("layout_policy") in {"fixed_patch", "frozen_layout"}),
+                ("Layout policy", resolved_noise_spec.get("layout_policy")),
+                ("Schedule policy", resolved_noise_spec.get("schedule_policy")),
+                ("Physical qubits used", transpile_snapshot.get("used_physical_qubits")),
+                ("Physical edges/couplers used", transpile_snapshot.get("used_physical_edges")),
+                ("Basis gates", calibration_snapshot.get("basis_gates")),
+                ("Depth", transpile_snapshot.get("depth")),
+                ("1q count", transpile_snapshot.get("count_1q")),
+                ("2q count", transpile_snapshot.get("count_2q")),
+                ("Measurement count", transpile_snapshot.get("count_measure")),
+                ("Total scheduled duration", transpile_snapshot.get("scheduled_duration_total")),
+                ("Total idle duration", transpile_snapshot.get("idle_duration_total")),
+            ],
+        ),
+        (
+            "Limitations / policy",
+            [
+                ("Omitted channels", omitted_channels or ["none"]),
+                ("Warnings / downgrades", warnings_list or ["none"]),
+                ("Fallback occurred", fallback.get("used")),
+                ("allow_noisy_fallback enabled", settings.get("allow_noisy_fallback")),
+                (
+                    "Local-Aer statement",
+                    (
+                        "local Aer is an approximation, not hardware execution"
+                        if resolved_noise_spec.get("executor") == "aer"
+                        else "n/a"
+                    ),
+                ),
+            ],
+        ),
+        (
+            "Comparability",
+            [
+                ("Shared time grid", True),
+                ("Shared initial state source", settings.get("resolved_initial_state_source")),
+                ("Shared shot budget", noise.get("shots")),
+                ("Shared layout lock key", settings.get("layout_lock_key")),
+                (
+                    "Shared seed policy",
+                    {
+                        "seed": noise.get("seed"),
+                        "seed_transpiler": backend.get("details", {}).get("seed_transpiler"),
+                        "seed_simulator": backend.get("details", {}).get("seed_simulator"),
+                    },
+                ),
+                (
+                    "Ideal reference definition",
+                    "compiled/statevector ideal at the same noisy-optimized parameter vector; Qiskit ideal is boundary control only",
+                ),
             ],
         ),
         (
@@ -1382,16 +1752,16 @@ def _write_noise_validation_pdf(
                 ("Legacy parity enabled", not bool(legacy_parity.get("skipped", True))),
                 ("Legacy parity passed", legacy_parity.get("passed_all")),
                 ("Legacy parity time-grid match", legacy_parity.get("time_grid_match")),
+                ("Mode honesty", mode_honesty),
             ],
         ),
         (
             "VQE effect summary",
             [
-                ("Noisy energy", vqe.get("energy_noisy")),
+                *_vqe_energy_block_rows(vqe, ground_state),
                 ("Noisy energy stderr", vqe.get("energy_noisy_stderr")),
-                ("Ideal reference energy", vqe.get("energy_ideal_reference")),
-                ("Noisy-ideal delta", vqe.get("delta_noisy_minus_ideal")),
-                ("Noisy-ideal delta stderr", vqe.get("delta_noisy_minus_ideal_stderr")),
+                ("Ideal ref source", vqe.get("energy_ideal_reference_source")),
+                *ground_state_fields,
             ],
         ),
         (
@@ -1404,12 +1774,12 @@ def _write_noise_validation_pdf(
             ],
         ),
         (
-            "ADAPT summary",
+            "Limitations",
             [
-                ("Enabled", settings.get("run_adapt")),
-                ("Success", adapt.get("success")),
-                ("Depth", adapt.get("ansatz_depth")),
-                ("Stop reason", adapt.get("stop_reason")),
+                ("Omitted channels", omitted_channels or ["none"]),
+                ("Warnings", warnings_list or ["none"]),
+                ("Fallback reason", fallback.get("reason")),
+                ("allow_noisy_fallback enabled", settings.get("allow_noisy_fallback")),
             ],
         ),
     ]
@@ -1421,7 +1791,21 @@ def _write_noise_validation_pdf(
         f"ansatz: {settings.get('ansatz')}",
         f"noise_mode: {noise.get('noise_mode')}",
         noise_caption,
+        f"mode_honesty: {mode_honesty}",
         f"backend: {backend.get('backend_name')}",
+        f"executor: {resolved_noise_spec.get('executor')}",
+        f"noise_kind: {resolved_noise_spec.get('noise_kind')}",
+        f"backend_profile: {resolved_noise_spec.get('backend_profile_kind')}",
+        f"resolved_noise_spec_hash: {payload.get('resolved_noise_spec_hash')}",
+        f"snapshot_hash: {payload.get('snapshot_hash')}",
+        f"layout_hash: {payload.get('layout_hash')}",
+        f"transpile_hash: {payload.get('transpile_hash')}",
+        f"noise_artifact_hash: {payload.get('noise_artifact_hash')}",
+        f"parameter_source_kind: {parameter_source.get('kind')}",
+        f"parameter_source_path: {parameter_source.get('path')}",
+        f"theta_hash: {parameter_source.get('theta_hash')}",
+        f"omitted_channels: {omitted_channels}",
+        f"warnings: {warnings_list}",
         f"fallback_used: {fallback.get('used')}",
         f"fallback_mode: {fallback.get('mode')}",
         f"fallback_reason: {str(fallback.get('reason', ''))[:140]}",
@@ -1438,11 +1822,22 @@ def _write_noise_validation_pdf(
         f"  optimizer: {vqe.get('optimizer_method')}",
         f"  objective_source: {vqe.get('objective_source')}",
         f"  energy_backend: {vqe.get('energy_backend')}",
-        f"  noisy energy: {vqe.get('energy_noisy')}",
+        f"  E_exact_filtered: {ground_state.get('exact_energy_filtered')}",
+        f"  E_ideal_ref: {vqe.get('energy_ideal_reference')}",
+        f"  E_noisy: {vqe.get('energy_noisy')}",
         f"  noisy energy stderr: {vqe.get('energy_noisy_stderr')}",
-        f"  ideal reference energy: {vqe.get('energy_ideal_reference')}",
-        f"  noisy-ideal delta: {vqe.get('delta_noisy_minus_ideal')}",
-        f"  noisy-ideal delta stderr: {vqe.get('delta_noisy_minus_ideal_stderr')}",
+        f"  Δ_ansatz: {vqe.get('delta_ansatz')}",
+        f"  Δ_total: {vqe.get('delta_total')}",
+        f"  Δ_noise: {vqe.get('delta_noisy_minus_ideal')}",
+        f"  Δ_noise stderr: {vqe.get('delta_noisy_minus_ideal_stderr')}",
+        f"  ideal ref source: {vqe.get('energy_ideal_reference_source')}",
+        f"  parameter source kind: {parameter_source.get('kind')}",
+        f"  parameter source path: {parameter_source.get('path')}",
+        f"  qiskit ideal control: {vqe.get('energy_qiskit_ideal_control')}",
+        f"  qiskit-control minus ideal-ref: {vqe.get('delta_qiskit_ideal_control_minus_ideal_reference')}",
+        f"  exact ground-state (filtered sector): {ground_state.get('exact_energy_filtered')}",
+        f"  filtered sector: {(ground_state.get('filtered_sector', {}) or {})}",
+        f"  exact ground-state (full Hilbert): {ground_state.get('exact_energy_full_hilbert')}",
         "",
         "ADAPT (phase 2):",
         f"  enabled: {settings.get('run_adapt')}",
@@ -1452,6 +1847,15 @@ def _write_noise_validation_pdf(
         f"  stop_reason: {adapt.get('stop_reason')}",
         f"  noisy-ideal delta: {adapt.get('delta_noisy_minus_ideal')}",
         f"  noisy-ideal delta stderr: {adapt.get('delta_noisy_minus_ideal_stderr')}",
+        "",
+        "Mapping / schedule:",
+        f"  physical qubits: {transpile_snapshot.get('used_physical_qubits')}",
+        f"  physical edges: {transpile_snapshot.get('used_physical_edges')}",
+        f"  basis gates: {calibration_snapshot.get('basis_gates')}",
+        f"  depth: {transpile_snapshot.get('depth')}",
+        f"  counts (1q,2q,meas): {(transpile_snapshot.get('count_1q'), transpile_snapshot.get('count_2q'), transpile_snapshot.get('count_measure'))}",
+        f"  scheduled duration: {transpile_snapshot.get('scheduled_duration_total')}",
+        f"  idle duration: {transpile_snapshot.get('idle_duration_total')}",
         "",
         "Final trajectory point:",
         f"  energy noisy: {final.get('energy_static_trotter_noisy')}",
@@ -1472,7 +1876,8 @@ def _write_noise_validation_pdf(
             ),
             sections=manifest_sections,
             notes=[
-                "Noise/backend/fallback details are summarized up front; full audit detail appears later.",
+                "Omitted channels, downgrades, and mode honesty are intentionally front-loaded on this first page.",
+                "Canonical ideal reference = compiled/statevector path; Qiskit ideal is boundary control only.",
                 "The full executed command appears in the appendix.",
             ],
         )
@@ -1483,6 +1888,7 @@ def _write_noise_validation_pdf(
             sections=summary_sections,
             notes=[
                 noise_caption,
+                mode_honesty,
             ],
         )
         render_section_divider_page(
@@ -1623,11 +2029,16 @@ def _write_noise_validation_pdf(
 
         if vqe:
             rows = [
-                ["Noisy VQE", f"{float(vqe.get('energy_noisy', float('nan'))):.8f}"],
-                ["Noisy VQE stderr", f"{float(vqe.get('energy_noisy_stderr', float('nan'))):.3e}"],
-                ["Ideal reference", f"{float(vqe.get('energy_ideal_reference', float('nan'))):.8f}"],
-                ["Noisy-Ideal", f"{float(vqe.get('delta_noisy_minus_ideal', float('nan'))):.3e}"],
-                ["Noisy-Ideal stderr", f"{float(vqe.get('delta_noisy_minus_ideal_stderr', float('nan'))):.3e}"],
+                ["E_noisy", f"{float(vqe.get('energy_noisy', float('nan'))):.8f}"],
+                ["E_noisy stderr", f"{float(vqe.get('energy_noisy_stderr', float('nan'))):.3e}"],
+                ["E_ideal_ref", f"{float(vqe.get('energy_ideal_reference', float('nan'))):.8f}"],
+                ["Exact ground-state (filtered)", f"{float(ground_state.get('exact_energy_filtered', float('nan'))):.8f}"],
+                ["Filtered sector", str((ground_state.get('filtered_sector', {}) or {}))],
+                ["Exact ground-state (full)", f"{float(ground_state.get('exact_energy_full_hilbert', float('nan'))):.8f}"],
+                ["Δ_ansatz", f"{float(vqe.get('delta_ansatz', float('nan'))):.3e}"],
+                ["Δ_total", f"{float(vqe.get('delta_total', float('nan'))):.3e}"],
+                ["Δ_noise", f"{float(vqe.get('delta_noisy_minus_ideal', float('nan'))):.3e}"],
+                ["Qiskit ideal ctrl", f"{float(vqe.get('energy_qiskit_ideal_control', float('nan'))):.8f}"],
                 ["#params", str(vqe.get("num_parameters"))],
                 ["best restart", str(vqe.get("best_restart"))],
             ]
@@ -1645,10 +2056,11 @@ def _write_noise_validation_pdf(
         render_section_divider_page(
             pdf,
             title="Technical appendix",
-            summary="Backend fallback detail, mitigation configuration, legacy parity audit, and reproducibility information.",
+            summary="Backend fallback detail, mitigation configuration, legacy parity audit, reproducibility hashes, and mapping metadata.",
             bullets=[
                 "Detailed validation summary.",
                 "Legacy parity breakdown by observable.",
+                "Hashes, warnings, omitted channels, and mapping/schedule metadata.",
                 "Executed command.",
             ],
         )
@@ -1661,9 +2073,19 @@ def _write_noise_validation_pdf(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="HH-first noisy/hardware feasibility validation runner.")
-    p.add_argument("--problem", choices=["hh", "hubbard"], default="hh")
-    p.add_argument("--ansatz", choices=["hh_hva", "hh_hva_tw", "hh_hva_ptw", "hva", "uccsd"], default="hh_hva")
+    p = argparse.ArgumentParser(
+        description=(
+            "HH-first noisy/hardware feasibility validation runner. "
+            "Pure Hubbard is legacy support and should be used only when explicitly requested."
+        )
+    )
+    p.add_argument(
+        "--problem",
+        choices=["hh", "hubbard"],
+        default="hh",
+        help="Physics model. Default is HH; pure Hubbard is legacy/explicit-only.",
+    )
+    p.add_argument("--ansatz", choices=["hh_hva", "hh_hva_tw", "hh_hva_ptw", "hva", "uccsd"], default=None)
     p.add_argument("--L", type=int, required=True)
     p.add_argument("--t", type=float, default=1.0)
     p.add_argument("--u", type=float, default=4.0)
@@ -1675,7 +2097,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--boundary", choices=["periodic", "open"], default="periodic")
     p.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
 
-    p.add_argument("--noise-mode", choices=["ideal", "shots", "aer_noise", "runtime"], default="ideal")
+    p.add_argument(
+        "--noise-mode",
+        choices=[
+            "ideal",
+            "shots",
+            "aer_noise",
+            "runtime",
+            "backend_basic",
+            "backend_scheduled",
+            "patch_snapshot",
+            "qpu_suppressed",
+            "qpu_layer_learned",
+        ],
+        default="ideal",
+    )
+    p.add_argument("--aer-noise-kind", choices=["basic", "scheduled", "patch_snapshot"], default="scheduled")
+    p.add_argument(
+        "--backend-profile",
+        choices=["generic_seeded", "fake_snapshot", "live_backend", "frozen_snapshot_json"],
+        default=None,
+    )
+    p.add_argument("--schedule-policy", choices=["none", "asap"], default=None)
+    p.add_argument("--layout-policy", choices=["auto_then_lock", "fixed_patch", "frozen_layout"], default=None)
+    p.add_argument("--noise-snapshot-json", type=Path, default=None)
+    p.add_argument("--fixed-physical-patch", type=str, default=None)
+    p.add_argument("--layout-lock-key", type=str, default=None)
     p.add_argument("--shots", type=int, default=2048)
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--oracle-repeats", type=int, default=1)
@@ -1690,9 +2137,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dd-sequence", type=str, default=None)
     p.add_argument("--backend-name", type=str, default=None)
     p.add_argument("--use-fake-backend", action="store_true")
-    p.set_defaults(allow_aer_fallback=True)
-    p.add_argument("--allow-aer-fallback", dest="allow_aer_fallback", action="store_true")
-    p.add_argument("--no-allow-aer-fallback", dest="allow_aer_fallback", action="store_false")
+    p.set_defaults(allow_noisy_fallback=False)
+    p.add_argument(
+        "--allow-noisy-fallback",
+        "--allow-aer-fallback",
+        dest="allow_noisy_fallback",
+        action="store_true",
+    )
+    p.add_argument(
+        "--no-allow-noisy-fallback",
+        "--no-allow-aer-fallback",
+        dest="allow_noisy_fallback",
+        action="store_false",
+    )
     p.set_defaults(omp_shm_workaround=True)
     p.add_argument("--omp-shm-workaround", dest="omp_shm_workaround", action="store_true")
     p.add_argument("--no-omp-shm-workaround", dest="omp_shm_workaround", action="store_false")
@@ -1711,10 +2168,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--vqe-restarts", type=int, default=None)
     p.add_argument("--vqe-maxiter", type=int, default=None)
     p.add_argument(
+        "--vqe-parameter-source",
+        choices=["optimized_here", "imported_json"],
+        default="optimized_here",
+    )
+    p.add_argument("--vqe-parameter-json", type=Path, default=None)
+    p.add_argument(
         "--vqe-method",
         type=str,
         choices=["SLSQP", "COBYLA", "L-BFGS-B", "Powell", "Nelder-Mead", "SPSA"],
         default=None,
+        help="VQE optimizer. HH validation is SPSA-only; other methods remain legacy Hubbard-only.",
     )
     p.add_argument("--vqe-seed", type=int, default=7)
     p.add_argument(
@@ -1780,6 +2244,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = _apply_defaults_and_minimums(parse_args(argv))
+    if str(args.vqe_parameter_source) == "imported_json" and args.vqe_parameter_json is None:
+        raise ValueError("--vqe-parameter-source imported_json requires --vqe-parameter-json PATH.")
+    if str(args.vqe_parameter_source) != "imported_json" and args.vqe_parameter_json is not None:
+        raise ValueError("--vqe-parameter-json requires --vqe-parameter-source imported_json.")
     compare_observables = _parse_compare_observables(str(args.compare_observables))
     if str(args.problem).strip().lower() == "hubbard" and str(args.adapt_pool).strip().lower() == "hva":
         _ai_log(
@@ -1803,7 +2271,7 @@ def main(argv: list[str] | None = None) -> None:
 
     num_particles = _half_filled_particles(int(args.L))
     h_poly = _build_hamiltonian(args)
-    h_qop = _pauli_poly_to_sparse_pauli_op(h_poly)
+    h_qop = _shared_pauli_poly_to_sparse_pauli_op(h_poly)
     hmat = hamiltonian_matrix(h_poly)
     native_order, coeff_map_exyz = _collect_hardcoded_terms_exyz(h_poly)
     ordered_labels_exyz = sorted(native_order)
@@ -1837,10 +2305,35 @@ def main(argv: list[str] | None = None) -> None:
 
     ansatz = _build_ansatz(args, num_particles)
     psi_ref = _build_reference_state(args=args, num_particles=num_particles)
+    imported_theta: np.ndarray | None = None
+    imported_theta_meta: dict[str, Any] | None = None
+    if str(args.vqe_parameter_source) == "imported_json":
+        imported_theta, imported_theta_meta = _load_imported_vqe_parameters(
+            Path(args.vqe_parameter_json),
+            current_problem=str(args.problem),
+            current_ansatz=str(args.ansatz),
+            current_L=int(args.L),
+        )
+        expected_npar = int(getattr(ansatz, "num_parameters", 0))
+        if int(imported_theta.size) != int(expected_npar):
+            raise ValueError(
+                "Imported theta length {} does not match ansatz parameter count {}.".format(
+                    int(imported_theta.size),
+                    int(expected_npar),
+                )
+            )
     mitigation_cfg = _build_mitigation_config_from_args(args)
     symmetry_mitigation_cfg = _build_symmetry_mitigation_config_from_args(args)
     ideal_symmetry_mitigation_cfg = normalize_ideal_reference_symmetry_mitigation(
         symmetry_mitigation_cfg,
+        noise_mode=str(args.noise_mode),
+    )
+
+    effective_layout_lock_key = _effective_layout_lock_key(
+        layout_lock_key=(None if args.layout_lock_key is None else str(args.layout_lock_key)),
+        L=int(args.L),
+        problem=str(args.problem),
+        ansatz=str(args.ansatz),
         noise_mode=str(args.noise_mode),
     )
 
@@ -1852,7 +2345,15 @@ def main(argv: list[str] | None = None) -> None:
         oracle_aggregate=str(args.oracle_aggregate),
         backend_name=(None if args.backend_name is None else str(args.backend_name)),
         use_fake_backend=bool(args.use_fake_backend),
-        allow_aer_fallback=bool(args.allow_aer_fallback),
+        backend_profile=(None if args.backend_profile is None else str(args.backend_profile)),
+        aer_noise_kind=str(args.aer_noise_kind),
+        schedule_policy=(None if args.schedule_policy is None else str(args.schedule_policy)),
+        layout_policy=(None if args.layout_policy is None else str(args.layout_policy)),
+        noise_snapshot_json=(None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
+        fixed_physical_patch=(None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
+        layout_lock_key=effective_layout_lock_key,
+        allow_noisy_fallback=bool(args.allow_noisy_fallback),
+        allow_aer_fallback=bool(args.allow_noisy_fallback),
         aer_fallback_mode="sampler_shots",
         omp_shm_workaround=bool(args.omp_shm_workaround),
         mitigation=dict(mitigation_cfg),
@@ -1908,8 +2409,8 @@ def main(argv: list[str] | None = None) -> None:
             "passed_all": False,
         }
 
+    backend_info: NoiseBackendInfo | None = None
     with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
-        backend_info: NoiseBackendInfo = noisy_oracle.backend_info
         if bool(args.run_adapt):
             adapt_pool = _build_adapt_pool(
                 args=args,
@@ -1926,15 +2427,39 @@ def main(argv: list[str] | None = None) -> None:
             )
 
         if bool(args.run_vqe):
-            vqe_payload, best_theta = _run_noisy_vqe(
-                args=args,
-                ansatz=ansatz,
-                psi_ref=psi_ref,
-                h_poly=h_poly,
-                h_qop=h_qop,
-                noisy_oracle=noisy_oracle,
-                ideal_oracle=ideal_oracle,
-            )
+            if imported_theta is not None:
+                assert imported_theta_meta is not None
+                vqe_payload, best_theta = _evaluate_vqe_at_theta(
+                    args=args,
+                    ansatz=ansatz,
+                    psi_ref=psi_ref,
+                    h_poly=h_poly,
+                    h_qop=h_qop,
+                    theta=imported_theta,
+                    noisy_oracle=noisy_oracle,
+                    ideal_oracle=ideal_oracle,
+                    parameter_source=imported_theta_meta,
+                )
+            else:
+                vqe_payload, best_theta = _run_noisy_vqe(
+                    args=args,
+                    ansatz=ansatz,
+                    psi_ref=psi_ref,
+                    h_poly=h_poly,
+                    h_qop=h_qop,
+                    noisy_oracle=noisy_oracle,
+                    ideal_oracle=ideal_oracle,
+                )
+        elif imported_theta is not None:
+            best_theta = np.asarray(imported_theta, dtype=float)
+            assert imported_theta_meta is not None
+            vqe_payload = {
+                "success": False,
+                "skipped": True,
+                "reason": "run_vqe disabled; imported theta reserved for initial-state replay",
+                "parameter_source": dict(imported_theta_meta),
+                "optimal_point": [float(x) for x in best_theta.tolist()],
+            }
 
         if bool(args.run_trotter):
             init_label, init_circuit = _initial_state_selection(
@@ -1964,6 +2489,8 @@ def main(argv: list[str] | None = None) -> None:
             )
         else:
             init_label = str(args.initial_state_source)
+        backend_info = noisy_oracle.backend_info
+    assert backend_info is not None
     if legacy_ref is not None:
         legacy_parity_payload = _compute_legacy_parity(
             legacy_ref=legacy_ref,
@@ -1972,6 +2499,10 @@ def main(argv: list[str] | None = None) -> None:
             tolerance=float(args.legacy_parity_tol),
         )
     delta_uncertainty = _trajectory_delta_uncertainty(trajectory_rows)
+    if not bool(vqe_payload.get("skipped", False)) and vqe_payload.get("energy_ideal_reference", None) is not None:
+        vqe_payload["exact_energy_filtered"] = float(exact_filtered)
+        vqe_payload["delta_ansatz"] = float(vqe_payload["energy_ideal_reference"] - float(exact_filtered))
+        vqe_payload["delta_total"] = float(vqe_payload["energy_noisy"] - float(exact_filtered))
 
     payload: dict[str, Any] = {
         "pipeline": "hh_noise_hardware_validation",
@@ -2001,14 +2532,23 @@ def main(argv: list[str] | None = None) -> None:
             "suzuki_order": int(args.suzuki_order),
             "trotter_steps": int(args.trotter_steps),
             "exact_steps_multiplier": int(args.exact_steps_multiplier),
-            "allow_aer_fallback": bool(args.allow_aer_fallback),
+            "allow_noisy_fallback": bool(args.allow_noisy_fallback),
             "omp_shm_workaround": bool(args.omp_shm_workaround),
+            "aer_noise_kind": str(args.aer_noise_kind),
+            "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)),
+            "schedule_policy": (None if args.schedule_policy is None else str(args.schedule_policy)),
+            "layout_policy": (None if args.layout_policy is None else str(args.layout_policy)),
+            "layout_lock_key": effective_layout_lock_key,
+            "noise_snapshot_json": (None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
+            "fixed_physical_patch": (None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
             "mitigation": str(args.mitigation),
             "symmetry_mitigation_mode": str(args.symmetry_mitigation_mode),
             "zne_scales": (None if args.zne_scales is None else str(args.zne_scales)),
             "dd_sequence": (None if args.dd_sequence is None else str(args.dd_sequence)),
             "mitigation_config": dict(mitigation_cfg),
             "symmetry_mitigation_config": dict(symmetry_mitigation_cfg),
+            "vqe_parameter_source": str(args.vqe_parameter_source),
+            "vqe_parameter_json": (None if args.vqe_parameter_json is None else str(args.vqe_parameter_json)),
             "vqe_reps": int(args.vqe_reps),
             "vqe_restarts": int(args.vqe_restarts),
             "vqe_maxiter": int(args.vqe_maxiter),
@@ -2052,6 +2592,17 @@ def main(argv: list[str] | None = None) -> None:
         },
         "noise_config": asdict(noisy_cfg),
         "backend": asdict(backend_info),
+        "resolved_noise_spec": dict(backend_info.details.get("resolved_noise_spec", {})),
+        "resolved_noise_spec_hash": backend_info.details.get("resolved_noise_spec_hash", None),
+        "calibration_snapshot": backend_info.details.get("calibration_snapshot", None),
+        "transpile_snapshot": backend_info.details.get("transpile_snapshot", None),
+        "noise_artifact_hash": backend_info.details.get("noise_artifact_hash", None),
+        "snapshot_hash": backend_info.details.get("snapshot_hash", None),
+        "layout_hash": backend_info.details.get("layout_hash", None),
+        "transpile_hash": backend_info.details.get("transpile_hash", None),
+        "omitted_channels": list(backend_info.details.get("omitted_channels", [])),
+        "warnings": list(backend_info.details.get("warnings", [])),
+        "source_kind": backend_info.details.get("source_kind", None),
         "hamiltonian": {
             "num_qubits": int(h_qop.num_qubits),
             "num_terms": int(len(native_order)),
@@ -2084,6 +2635,11 @@ def main(argv: list[str] | None = None) -> None:
             first_key = sorted(delta_uncertainty.keys())[0]
             energy_metrics = dict(delta_uncertainty.get(first_key, {}))
         payload["summary"] = {
+            "E_exact_filtered": float(exact_filtered),
+            "E_ideal_ref": float(vqe_payload.get("energy_ideal_reference", float("nan"))),
+            "E_noisy": float(vqe_payload.get("energy_noisy", float("nan"))),
+            "delta_ansatz": float(vqe_payload.get("delta_ansatz", float("nan"))),
+            "delta_total": float(vqe_payload.get("delta_total", float("nan"))),
             "final_energy_delta_noisy_minus_ideal": float(
                 final["energy_static_trotter_delta_noisy_minus_ideal"]
             ),

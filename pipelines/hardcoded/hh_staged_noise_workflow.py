@@ -27,7 +27,17 @@ from pipelines.hardcoded import hh_staged_workflow as base_wf
 
 
 _ALLOWED_NOISY_METHODS = {"suzuki2", "cfqm4", "cfqm6"}
-_ALLOWED_NOISE_MODES = {"ideal", "shots", "aer_noise", "runtime"}
+_ALLOWED_NOISE_MODES = {
+    "ideal",
+    "shots",
+    "aer_noise",
+    "runtime",
+    "backend_basic",
+    "backend_scheduled",
+    "patch_snapshot",
+    "qpu_suppressed",
+    "qpu_layer_learned",
+}
 
 
 @dataclass(frozen=True)
@@ -42,7 +52,13 @@ class NoiseConfig:
     seed: int
     backend_name: str | None
     use_fake_backend: bool
-    allow_aer_fallback: bool
+    backend_profile: str | None
+    aer_noise_kind: str
+    schedule_policy: str | None
+    layout_policy: str | None
+    noise_snapshot_json: str | None
+    fixed_physical_patch: str | None
+    allow_noisy_fallback: bool
     omp_shm_workaround: bool
     noisy_mode_timeout_s: int
     benchmark_active_coeff_tol: float
@@ -139,7 +155,13 @@ def resolve_staged_hh_noise_config(args: Any) -> StagedHHNoiseConfig:
         seed=int(getattr(args, "noise_seed")),
         backend_name=(None if getattr(args, "backend_name", None) in {None, "", "none"} else str(getattr(args, "backend_name"))),
         use_fake_backend=bool(getattr(args, "use_fake_backend")),
-        allow_aer_fallback=bool(getattr(args, "allow_aer_fallback")),
+        backend_profile=(None if getattr(args, "backend_profile", None) in {None, "", "none"} else str(getattr(args, "backend_profile"))),
+        aer_noise_kind=str(getattr(args, "aer_noise_kind", "scheduled")),
+        schedule_policy=(None if getattr(args, "schedule_policy", None) in {None, "", "none"} else str(getattr(args, "schedule_policy"))),
+        layout_policy=(None if getattr(args, "layout_policy", None) in {None, "", "none"} else str(getattr(args, "layout_policy"))),
+        noise_snapshot_json=(None if getattr(args, "noise_snapshot_json", None) in {None, "", "none"} else str(getattr(args, "noise_snapshot_json"))),
+        fixed_physical_patch=(None if getattr(args, "fixed_physical_patch", None) in {None, "", "none"} else str(getattr(args, "fixed_physical_patch"))),
+        allow_noisy_fallback=bool(getattr(args, "allow_noisy_fallback")),
         omp_shm_workaround=bool(getattr(args, "omp_shm_workaround")),
         noisy_mode_timeout_s=int(getattr(args, "noisy_mode_timeout_s")),
         benchmark_active_coeff_tol=float(getattr(args, "benchmark_active_coeff_tol")),
@@ -192,8 +214,15 @@ def _run_single_noisy_mode(
         "symmetry_mitigation_config": dict(noise_cfg.symmetry_mitigation_config),
         "backend_name": noise_cfg.backend_name,
         "use_fake_backend": bool(noise_cfg.use_fake_backend),
-        "allow_aer_fallback": bool(noise_cfg.allow_aer_fallback),
+        "backend_profile": noise_cfg.backend_profile,
+        "aer_noise_kind": str(noise_cfg.aer_noise_kind),
+        "schedule_policy": noise_cfg.schedule_policy,
+        "layout_policy": noise_cfg.layout_policy,
+        "noise_snapshot_json": noise_cfg.noise_snapshot_json,
+        "fixed_physical_patch": noise_cfg.fixed_physical_patch,
+        "allow_noisy_fallback": bool(noise_cfg.allow_noisy_fallback),
         "omp_shm_workaround": bool(noise_cfg.omp_shm_workaround),
+        "layout_lock_key": f"staged_noise:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{str(mode)}",
         "method": str(method),
         "benchmark_active_coeff_tol": float(noise_cfg.benchmark_active_coeff_tol),
         "cfqm_coeff_drop_abs_tol": float(staged_cfg.dynamics.cfqm_coeff_drop_abs_tol),
@@ -228,8 +257,15 @@ def _run_final_audit_mode(
         "symmetry_mitigation_config": dict(noise_cfg.symmetry_mitigation_config),
         "backend_name": noise_cfg.backend_name,
         "use_fake_backend": bool(noise_cfg.use_fake_backend),
-        "allow_aer_fallback": bool(noise_cfg.allow_aer_fallback),
+        "backend_profile": noise_cfg.backend_profile,
+        "aer_noise_kind": str(noise_cfg.aer_noise_kind),
+        "schedule_policy": noise_cfg.schedule_policy,
+        "layout_policy": noise_cfg.layout_policy,
+        "noise_snapshot_json": noise_cfg.noise_snapshot_json,
+        "fixed_physical_patch": noise_cfg.fixed_physical_patch,
+        "allow_noisy_fallback": bool(noise_cfg.allow_noisy_fallback),
         "omp_shm_workaround": bool(noise_cfg.omp_shm_workaround),
+        "layout_lock_key": f"staged_noise_audit:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{str(mode)}",
     }
     return noise_report._run_noisy_audit_mode_isolated(
         kwargs=kwargs,

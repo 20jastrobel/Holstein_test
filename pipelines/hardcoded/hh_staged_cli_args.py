@@ -27,8 +27,14 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--warm-restarts", type=int, default=None)
     p.add_argument("--warm-maxiter", type=int, default=None)
     p.add_argument(
+        "--warm-ansatz",
+        choices=["hh_hva", "hh_hva_ptw"],
+        default=None,
+        help="Warm-start HH ansatz: layerwise hh_hva or sector-preserving hh_hva_ptw (default).",
+    )
+    p.add_argument(
         "--warm-method",
-        choices=["SPSA", "COBYLA", "SLSQP", "L-BFGS-B", "Powell", "Nelder-Mead"],
+        choices=["SPSA"],
         default="SPSA",
     )
     p.add_argument("--warm-seed", type=int, default=7)
@@ -60,6 +66,10 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--adapt-maxiter", type=int, default=None)
     p.add_argument("--adapt-eps-grad", type=float, default=None)
     p.add_argument("--adapt-eps-energy", type=float, default=None)
+    p.add_argument("--adapt-drop-floor", type=float, default=None)
+    p.add_argument("--adapt-drop-patience", type=int, default=None)
+    p.add_argument("--adapt-drop-min-depth", type=int, default=None)
+    p.add_argument("--adapt-grad-floor", type=float, default=None)
     p.add_argument("--adapt-seed", type=int, default=11)
     p.add_argument("--adapt-inner-optimizer", choices=["COBYLA", "SPSA"], default="SPSA")
     p.set_defaults(adapt_allow_repeats=True)
@@ -140,7 +150,7 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--final-maxiter", type=int, default=None)
     p.add_argument(
         "--final-method",
-        choices=["SPSA", "COBYLA", "SLSQP", "L-BFGS-B", "Powell", "Nelder-Mead"],
+        choices=["SPSA"],
         default="SPSA",
     )
     p.add_argument("--final-seed", type=int, default=19)
@@ -207,6 +217,16 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
 
 def add_staged_hh_noise_args(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
     p.add_argument("--noise-modes", type=str, default="ideal,shots,aer_noise")
+    p.add_argument("--aer-noise-kind", choices=["basic", "scheduled", "patch_snapshot"], default="scheduled")
+    p.add_argument(
+        "--backend-profile",
+        choices=["generic_seeded", "fake_snapshot", "live_backend", "frozen_snapshot_json"],
+        default=None,
+    )
+    p.add_argument("--schedule-policy", choices=["none", "asap"], default=None)
+    p.add_argument("--layout-policy", choices=["auto_then_lock", "fixed_patch", "frozen_layout"], default=None)
+    p.add_argument("--noise-snapshot-json", type=Path, default=None)
+    p.add_argument("--fixed-physical-patch", type=str, default=None)
     p.add_argument("--noisy-methods", type=str, default="cfqm4,suzuki2")
     p.add_argument("--benchmark-active-coeff-tol", type=float, default=1e-12)
     p.add_argument("--shots", type=int, default=2048)
@@ -223,9 +243,19 @@ def add_staged_hh_noise_args(p: argparse.ArgumentParser) -> argparse.ArgumentPar
     p.add_argument("--noise-seed", type=int, default=7)
     p.add_argument("--backend-name", type=str, default="FakeManilaV2")
     p.add_argument("--use-fake-backend", action="store_true")
-    p.set_defaults(allow_aer_fallback=True)
-    p.add_argument("--allow-aer-fallback", dest="allow_aer_fallback", action="store_true")
-    p.add_argument("--no-allow-aer-fallback", dest="allow_aer_fallback", action="store_false")
+    p.set_defaults(allow_noisy_fallback=False)
+    p.add_argument(
+        "--allow-noisy-fallback",
+        "--allow-aer-fallback",
+        dest="allow_noisy_fallback",
+        action="store_true",
+    )
+    p.add_argument(
+        "--no-allow-noisy-fallback",
+        "--no-allow-aer-fallback",
+        dest="allow_noisy_fallback",
+        action="store_false",
+    )
     p.set_defaults(omp_shm_workaround=True)
     p.add_argument("--omp-shm-workaround", dest="omp_shm_workaround", action="store_true")
     p.add_argument("--no-omp-shm-workaround", dest="omp_shm_workaround", action="store_false")

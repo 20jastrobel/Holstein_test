@@ -35,6 +35,7 @@ def test_resolve_staged_defaults_from_run_guide_formulae() -> None:
     args = parse_args(["--L", "3", "--skip-pdf"])
     cfg = resolve_staged_hh_config(args)
 
+    assert str(cfg.warm_start.ansatz_name) == "hh_hva_ptw"
     assert int(cfg.warm_start.reps) == 3
     assert int(cfg.warm_start.restarts) == 5
     assert int(cfg.warm_start.maxiter) == 4000
@@ -42,6 +43,10 @@ def test_resolve_staged_defaults_from_run_guide_formulae() -> None:
     assert int(cfg.adapt.maxiter) == 5000
     assert float(cfg.adapt.eps_grad) == pytest.approx(5e-7)
     assert float(cfg.adapt.eps_energy) == pytest.approx(1e-9)
+    assert cfg.adapt.drop_floor is None
+    assert cfg.adapt.drop_patience is None
+    assert cfg.adapt.drop_min_depth is None
+    assert cfg.adapt.grad_floor is None
     assert int(cfg.replay.reps) == 3
     assert int(cfg.replay.restarts) == 5
     assert int(cfg.replay.maxiter) == 4000
@@ -53,14 +58,58 @@ def test_resolve_staged_defaults_from_run_guide_formulae() -> None:
     assert float(cfg.gates.ecut_1) == pytest.approx(1e-1)
     assert float(cfg.gates.ecut_2) == pytest.approx(1e-4)
     assert bool(cfg.dynamics.enable_drive) is False
+    assert cfg.default_provenance["warm_ansatz"] == "workflow.warm_ansatz.default=hh_hva_ptw"
     assert cfg.default_provenance["warm_reps"] == "run_guide.ws_reps(L)=L"
     assert cfg.default_provenance["replay_continuation_mode"] == "workflow.replay_mode := adapt_continuation_mode"
+
+
+def test_warm_ansatz_override_is_resolved_and_retagged() -> None:
+    cfg_default = resolve_staged_hh_config(parse_args(["--L", "2", "--skip-pdf"]))
+    cfg_layerwise = resolve_staged_hh_config(parse_args(["--L", "2", "--warm-ansatz", "hh_hva", "--skip-pdf"]))
+
+    assert str(cfg_layerwise.warm_start.ansatz_name) == "hh_hva"
+    assert str(cfg_default.warm_start.ansatz_name) == "hh_hva_ptw"
+    assert str(cfg_layerwise.artifacts.tag) != str(cfg_default.artifacts.tag)
+    assert "warmhh_hva" in str(cfg_layerwise.artifacts.tag)
+
+
+def test_adapt_drop_policy_overrides_roundtrip() -> None:
+    cfg = resolve_staged_hh_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--adapt-drop-floor",
+                "1e-3",
+                "--adapt-drop-patience",
+                "5",
+                "--adapt-drop-min-depth",
+                "20",
+                "--adapt-grad-floor",
+                "-1",
+                "--skip-pdf",
+            ]
+        )
+    )
+
+    assert cfg.adapt.drop_floor == pytest.approx(1e-3)
+    assert cfg.adapt.drop_patience == 5
+    assert cfg.adapt.drop_min_depth == 20
+    assert cfg.adapt.grad_floor == pytest.approx(-1.0)
 
 
 def test_nondefault_sector_override_rejected_cleanly() -> None:
     args = parse_args(["--L", "2", "--sector-n-up", "2", "--skip-pdf"])
     with pytest.raises(ValueError, match="half-filled sector"):
         resolve_staged_hh_config(args)
+
+
+
+def test_staged_hh_parse_rejects_non_spsa_methods() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--L", "2", "--warm-method", "COBYLA", "--skip-pdf"])
+    with pytest.raises(SystemExit):
+        parse_args(["--L", "2", "--final-method", "COBYLA", "--skip-pdf"])
 
 
 def test_underparameterized_override_rejected_without_smoke_flag() -> None:
@@ -106,7 +155,7 @@ def test_workflow_runs_matched_family_replay_and_static_plus_drive_profiles(
         calls["warm_kwargs"] = kwargs
         return {
             "success": True,
-            "ansatz": "hh_hva_ptw",
+            "ansatz": str(kwargs["ansatz_name"]),
             "optimizer_method": str(kwargs["method"]),
             "energy": -1.00,
             "exact_filtered_energy": -1.02,
@@ -125,12 +174,12 @@ def test_workflow_runs_matched_family_replay_and_static_plus_drive_profiles(
             "continuation_mode": str(kwargs["adapt_continuation_mode"]),
             "stop_reason": "eps_grad",
             "operators": ["op_1", "op_2"],
-            "optimal_point": [0.1, 0.2],
-            "continuation": {
-                "optimizer_memory": {"cached": True},
-                "selected_generator_metadata": [{"generator_id": "g1"}],
-            },
-        }, np.array(psi_adapt, copy=True)
+                "optimal_point": [0.1, 0.2],
+                "continuation": {
+                    "optimizer_memory": {"cached": True},
+                    "selected_generator_metadata": [{"generator_id": "g1", "family_id": "paop_lf_std"}],
+                },
+            }, np.array(psi_adapt, copy=True)
 
     def _fake_write_handoff_state_bundle(**kwargs):
         calls["handoff_kwargs"] = kwargs
@@ -212,6 +261,7 @@ def test_workflow_runs_matched_family_replay_and_static_plus_drive_profiles(
     assert warm_kwargs["ansatz_name"] == "hh_hva_ptw"
     assert np.allclose(adapt_kwargs["psi_ref_override"], psi_warm)
     assert handoff_kwargs["handoff_state_kind"] == "prepared_state"
+    assert handoff_kwargs["settings_adapt_pool"] == "paop_lf_std"
     assert replay_cfg.generator_family == "match_adapt"
     assert replay_cfg.replay_continuation_mode == "phase1_v1"
     assert payload["stage_pipeline"]["conventional_replay"]["generator_family"]["requested"] == "match_adapt"

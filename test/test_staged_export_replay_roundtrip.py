@@ -235,6 +235,7 @@ class TestWriteStateBundleRoundTrip:
             adapt_operators=["op_x", "op_y"],
             adapt_optimal_point=[0.1, -0.2],
             adapt_pool_type="pool_a",
+            settings_adapt_pool="pool_a",
             continuation_mode="phase1_v1",
             continuation_scaffold={"num_parameters": 2, "post_prune": True},
             optimizer_memory={"version": "phase2_optimizer_memory_v1", "parameter_count": 2, "available": True},
@@ -298,6 +299,7 @@ class TestWriteStateBundleRoundTrip:
         assert payload["settings"]["L"] == 2
         assert payload["settings"]["sector_n_up"] == 1
         assert payload["settings"]["sector_n_dn"] == 1
+        assert payload["settings"]["adapt_pool"] == "pool_a"
 
         # Initial state
         assert "amplitudes_qn_to_q0" in payload["initial_state"]
@@ -344,6 +346,7 @@ class TestWriteStateBundleRoundTrip:
             adapt_operators=["op_x"],
             adapt_optimal_point=[0.1],
             adapt_pool_type="pool_a",
+            settings_adapt_pool="pool_a",
         )
 
         payload = json.loads(out_path.read_text(encoding="utf-8"))
@@ -356,6 +359,7 @@ class TestWriteStateBundleRoundTrip:
         fam, src = _resolve_family_from_metadata(payload)
         assert fam == "pool_a"
         assert src == "adapt_vqe.pool_type"
+        assert payload["settings"]["adapt_pool"] == "pool_a"
 
         kind, provenance = _infer_handoff_state_kind(payload)
         assert kind == "prepared_state"

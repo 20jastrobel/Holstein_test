@@ -67,6 +67,15 @@ class TestParseArgsAdaptRefSource:
         args = hp.parse_args()
         assert str(args.adapt_ref_source) == "hf"
 
+    def test_parse_rejects_non_spsa_vqe_method_for_hh(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["hubbard_pipeline.py", "--L", "2", "--problem", "hh", "--vqe-method", "COBYLA"],
+        )
+        with pytest.raises(ValueError, match="HH hardcoded pipeline is SPSA-only for --vqe-method"):
+            hp.parse_args()
+
 
 class TestAdaptRefSourceVQEPath:
     def test_internal_adapt_uses_vqe_override_when_requested(

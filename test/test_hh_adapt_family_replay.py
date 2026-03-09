@@ -79,6 +79,12 @@ def test_parse_defaults_match_adapt_and_spsa() -> None:
     assert str(args.replay_continuation_mode) == "legacy"
 
 
+
+def test_parse_rejects_non_spsa_method() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--adapt-input-json", "dummy.json", "--method", "COBYLA"])
+
+
 def test_parse_rejects_auto_replay_continuation_mode() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--adapt-input-json", "dummy.json", "--replay-continuation-mode", "auto"])
@@ -104,6 +110,24 @@ def test_resolve_family_uses_settings_adapt_pool() -> None:
     fam, src = _resolve_family_from_metadata({"settings": {"adapt_pool": "uccsd_paop_lf_full"}})
     assert fam == "uccsd_paop_lf_full"
     assert src == "settings.adapt_pool"
+
+
+def test_resolve_family_uses_nested_selected_generator_metadata() -> None:
+    fam, src = _resolve_family_from_metadata(
+        {
+            "adapt_vqe": {
+                "pool_type": "phase3_v1",
+                "continuation": {
+                    "selected_generator_metadata": [
+                        {"family_id": "paop_lf_std"},
+                        {"family_id": "paop_lf_std"},
+                    ]
+                },
+            }
+        }
+    )
+    assert fam == "paop_lf_std"
+    assert src == "adapt_vqe.continuation.selected_generator_metadata.family_id"
 
 
 def test_resolve_family_maps_legacy_pool_variant() -> None:

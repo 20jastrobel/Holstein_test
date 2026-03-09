@@ -52,6 +52,13 @@ def test_resolve_noise_defaults_and_retagged_artifacts() -> None:
     assert int(cfg.noise.shots) == 2048
     assert int(cfg.noise.oracle_repeats) == 4
     assert str(cfg.noise.oracle_aggregate) == "mean"
+    assert cfg.noise.backend_profile is None
+    assert str(cfg.noise.aer_noise_kind) == "scheduled"
+    assert cfg.noise.schedule_policy is None
+    assert cfg.noise.layout_policy is None
+    assert cfg.noise.noise_snapshot_json is None
+    assert cfg.noise.fixed_physical_patch is None
+    assert bool(cfg.noise.allow_noisy_fallback) is False
     assert cfg.noise.mitigation_config == {"mode": "none", "zne_scales": [], "dd_sequence": None}
     assert cfg.noise.symmetry_mitigation_config == {
         "mode": "off",
@@ -145,6 +152,11 @@ def test_run_noisy_profiles_uses_final_state_and_optional_audit(
                 "ideal,shots",
                 "--noisy-methods",
                 "cfqm4",
+                "--backend-profile",
+                "generic_seeded",
+                "--aer-noise-kind",
+                "scheduled",
+                "--allow-noisy-fallback",
             ]
         )
     )

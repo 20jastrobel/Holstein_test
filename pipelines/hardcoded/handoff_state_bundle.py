@@ -29,8 +29,12 @@ class HandoffStateBundleConfig:
     sector_n_dn: int
 
 
-def build_handoff_settings_manifest(cfg: HandoffStateBundleConfig) -> dict[str, Any]:
-    return {
+def build_handoff_settings_manifest(
+    cfg: HandoffStateBundleConfig,
+    *,
+    adapt_pool: str | None = None,
+) -> dict[str, Any]:
+    out = {
         "L": int(cfg.L),
         "problem": "hh",
         "t": float(cfg.t),
@@ -45,6 +49,9 @@ def build_handoff_settings_manifest(cfg: HandoffStateBundleConfig) -> dict[str, 
         "sector_n_up": int(cfg.sector_n_up),
         "sector_n_dn": int(cfg.sector_n_dn),
     }
+    if adapt_pool is not None:
+        out["adapt_pool"] = str(adapt_pool)
+    return out
 
 
 def _statevector_to_amplitudes_qn_to_q0(
@@ -79,6 +86,7 @@ def write_handoff_state_bundle(
     adapt_operators: list[str] | None = None,
     adapt_optimal_point: list[float] | None = None,
     adapt_pool_type: str | None = None,
+    settings_adapt_pool: str | None = None,
     handoff_state_kind: str | None = None,
     continuation_mode: str | None = None,
     continuation_scaffold: dict[str, Any] | None = None,
@@ -123,7 +131,7 @@ def write_handoff_state_bundle(
 
     payload: dict[str, Any] = {
         "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "settings": build_handoff_settings_manifest(cfg),
+        "settings": build_handoff_settings_manifest(cfg, adapt_pool=settings_adapt_pool),
         "adapt_vqe": adapt_vqe_block,
         "initial_state": {
             "source": str(source),

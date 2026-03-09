@@ -103,9 +103,9 @@ _HUBBARD_PARAMS: dict[int, dict[str, Any]] = {
 
 # Hubbard-Holstein minimum parameters per (L, n_ph_max)
 _HH_PARAMS: dict[tuple[int, int], dict[str, Any]] = {
-    (2, 1): {"trotter_steps": 64,  "reps": 2, "restarts": 3, "maxiter": 800,  "method": "COBYLA"},
-    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "COBYLA"},
-    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "COBYLA"},
+    (2, 1): {"trotter_steps": 64,  "reps": 2, "restarts": 3, "maxiter": 800,  "method": "SPSA"},
+    (2, 2): {"trotter_steps": 128, "reps": 3, "restarts": 4, "maxiter": 1500, "method": "SPSA"},
+    (3, 1): {"trotter_steps": 192, "reps": 2, "restarts": 4, "maxiter": 2400, "method": "SPSA"},
 }
 
 # ADAPT-VQE defaults per L
@@ -784,6 +784,11 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
     restarts = int(args.vqe_restarts) if args.vqe_restarts is not None else hub_params["restarts"]
     maxiter = int(args.vqe_maxiter) if args.vqe_maxiter is not None else hub_params["maxiter"]
     method = str(args.vqe_method) if args.vqe_method is not None else hub_params["method"]
+    if is_hh and str(method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH cross-check is SPSA-only for --vqe-method. "
+            "Use --vqe-method SPSA for HH cross-check runs."
+        )
     trotter_steps = int(args.trotter_steps) if args.trotter_steps is not None else hub_params["trotter_steps"]
     num_times = int(args.num_times) if args.num_times is not None else hub_params.get("num_times", 201)
     t_final = float(args.t_final) if args.t_final is not None else hub_params.get("t_final", 10.0)
@@ -1339,7 +1344,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--vqe-reps", type=int, default=None)
     p.add_argument("--vqe-restarts", type=int, default=None)
     p.add_argument("--vqe-maxiter", type=int, default=None)
-    p.add_argument("--vqe-method", type=str, default=None, choices=["COBYLA", "SLSQP", "L-BFGS-B"])
+    p.add_argument(
+        "--vqe-method",
+        type=str,
+        default=None,
+        choices=["COBYLA", "SLSQP", "L-BFGS-B", "SPSA"],
+        help="VQE optimizer. HH cross-check is SPSA-only; legacy Hubbard may still use other methods.",
+    )
     p.add_argument("--trotter-steps", type=int, default=None)
     p.add_argument("--num-times", type=int, default=None)
     p.add_argument("--t-final", type=float, default=None)
@@ -1348,7 +1359,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--output-dir", default=str(REPO_ROOT / "artifacts" / "cross_check"),
                    help="Output directory for JSON and PDF")
 
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if str(args.problem).strip().lower() == "hh" and args.vqe_method is not None and str(args.vqe_method).strip().upper() != "SPSA":
+        raise ValueError(
+            "HH cross-check is SPSA-only for --vqe-method. "
+            "Use --vqe-method SPSA for HH cross-check runs."
+        )
+    return args
 
 
 def main(argv: list[str] | None = None) -> None:
