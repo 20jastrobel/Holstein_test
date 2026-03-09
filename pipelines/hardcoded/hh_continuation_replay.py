@@ -156,7 +156,10 @@ def _run_phase(
         spsa_precondition_mode=(str(refresh_plan.mode) if bool(refresh_plan.enabled) else "none"),
         **kwargs,
     )
-    x_opt = np.asarray(result.x, dtype=float).reshape(-1)
+    theta_opt = getattr(result, "theta", None)
+    if theta_opt is None:
+        theta_opt = getattr(result, "x")
+    x_opt = np.asarray(theta_opt, dtype=float).reshape(-1)
     full = np.asarray(full_theta_seed, dtype=float).copy()
     for k, idx in enumerate(active_indices):
         full[idx] = float(x_opt[k])
