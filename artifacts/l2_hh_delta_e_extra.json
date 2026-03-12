@@ -1,0 +1,20 @@
+{
+  "config": {
+    "ansatz_family": "hh_full_termwise",
+    "ordering": "blocked",
+    "n_ph_max": 1,
+    "boson_encoding": "binary",
+    "reps": 2,
+    "restarts": 10,
+    "method": "SLSQP",
+    "maxiter": 1000,
+    "seed": 41
+  },
+  "num_parameters": 32,
+  "exact_energy_filtered": -0.3895531032970533,
+  "vqe_energy": -0.3895526454003845,
+  "delta_e_abs": 4.5789666880402535e-07,
+  "vqe_success": true,
+  "vqe_message": "Optimization terminated successfully",
+  "elapsed_sec": 142.14680998000017
+}

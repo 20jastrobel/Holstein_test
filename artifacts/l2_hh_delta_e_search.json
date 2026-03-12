@@ -1,0 +1,155 @@
+{
+  "fixed_physics": {
+    "L": 2,
+    "J": 1.0,
+    "U": 2.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "num_particles_half_filled": [
+      1,
+      1
+    ]
+  },
+  "best": {
+    "config": {
+      "ansatz_family": "hh_full_termwise",
+      "ordering": "blocked",
+      "n_ph_max": 1,
+      "boson_encoding": "binary",
+      "reps": 2,
+      "restarts": 6,
+      "method": "SLSQP",
+      "maxiter": 700,
+      "seed": 19
+    },
+    "num_parameters": 32,
+    "exact_energy_filtered": -0.3895531032970533,
+    "vqe_energy": -0.38954703242201555,
+    "delta_e_abs": 6.070875037733625e-06,
+    "vqe_success": true,
+    "vqe_message": "Optimization terminated successfully",
+    "elapsed_sec": 54.576056621000134
+  },
+  "all_results_ranked": [
+    {
+      "config": {
+        "ansatz_family": "hh_full_termwise",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "boson_encoding": "binary",
+        "reps": 2,
+        "restarts": 6,
+        "method": "SLSQP",
+        "maxiter": 700,
+        "seed": 19
+      },
+      "num_parameters": 32,
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": -0.38954703242201555,
+      "delta_e_abs": 6.070875037733625e-06,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 54.576056621000134
+    },
+    {
+      "config": {
+        "ansatz_family": "hh_full_termwise",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "boson_encoding": "binary",
+        "reps": 2,
+        "restarts": 4,
+        "method": "SLSQP",
+        "maxiter": 500,
+        "seed": 7
+      },
+      "num_parameters": 32,
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": -0.38954089428377037,
+      "delta_e_abs": 1.220901328291557e-05,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 27.22379154500004
+    },
+    {
+      "config": {
+        "ansatz_family": "hh_full_termwise",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "boson_encoding": "binary",
+        "reps": 1,
+        "restarts": 4,
+        "method": "SLSQP",
+        "maxiter": 500,
+        "seed": 7
+      },
+      "num_parameters": 16,
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": -0.3027755960434265,
+      "delta_e_abs": 0.08677750725362676,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 4.085067319000018
+    },
+    {
+      "config": {
+        "ansatz_family": "hh_hva",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "boson_encoding": "binary",
+        "reps": 4,
+        "restarts": 6,
+        "method": "SLSQP",
+        "maxiter": 900,
+        "seed": 17
+      },
+      "num_parameters": 16,
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": -0.012623294698046489,
+      "delta_e_abs": 0.3769298085990068,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 85.19697316899988
+    },
+    {
+      "config": {
+        "ansatz_family": "hh_hva",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "boson_encoding": "binary",
+        "reps": 3,
+        "restarts": 4,
+        "method": "SLSQP",
+        "maxiter": 700,
+        "seed": 13
+      },
+      "num_parameters": 12,
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": 0.015334409261831022,
+      "delta_e_abs": 0.40488751255888433,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 22.899179000999993
+    },
+    {
+      "config": {
+        "ansatz_family": "hh_hva",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "boson_encoding": "binary",
+        "reps": 2,
+        "restarts": 4,
+        "method": "SLSQP",
+        "maxiter": 500,
+        "seed": 11
+      },
+      "num_parameters": 8,
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": 0.3004211674922447,
+      "delta_e_abs": 0.689974270789298,
+      "vqe_success": true,
+      "vqe_message": "Optimization terminated successfully",
+      "elapsed_sec": 6.125524572000131
+    }
+  ]
+}
