@@ -15,6 +15,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -46,6 +47,9 @@ from docs.reports.qiskit_circuit_report import (
 from pipelines.hardcoded import adapt_pipeline as adapt_mod
 from pipelines.hardcoded import hh_vqe_from_adapt_family as replay_mod
 from pipelines.hardcoded import hubbard_pipeline as hc_pipeline
+
+_PREPARED_STATE = replay_mod._PREPARED_STATE
+_REFERENCE_STATE = replay_mod._REFERENCE_STATE
 from pipelines.hardcoded.handoff_state_bundle import (
     HandoffStateBundleConfig,
     write_handoff_state_bundle,
@@ -63,6 +67,7 @@ from src.quantum.vqe_latex_python_pairs import (
     HubbardHolsteinLayerwiseAnsatz,
     HubbardHolsteinPhysicalTermwiseAnsatz,
     HubbardHolsteinTermwiseAnsatz,
+    exact_ground_energy_sector_hh,
 )
 
 
@@ -221,15 +226,28 @@ class DynamicsConfig:
 
 
 @dataclass(frozen=True)
+class WarmCheckpointConfig:
+    stop_energy: float | None
+    stop_delta_abs: float | None
+    state_export_dir: Path
+    state_export_prefix: str
+    resume_from_warm_checkpoint: Path | None
+    handoff_from_warm_checkpoint: Path | None
+
+
+@dataclass(frozen=True)
 class ArtifactConfig:
     tag: str
     output_json: Path
     output_pdf: Path
     handoff_json: Path
+    warm_checkpoint_json: Path
+    warm_cutover_json: Path
     replay_output_json: Path
     replay_output_csv: Path
     replay_output_md: Path
     replay_output_log: Path
+    workflow_log: Path
     skip_pdf: bool
 
 
@@ -246,6 +264,7 @@ class StagedHHConfig:
     adapt: AdaptConfig
     replay: ReplayConfig
     dynamics: DynamicsConfig
+    warm_checkpoint: WarmCheckpointConfig
     artifacts: ArtifactConfig
     gates: GateConfig
     smoke_test_intentionally_weak: bool = False
@@ -297,6 +316,604 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_jsonable(dict(payload)), indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _append_workflow_log(cfg: StagedHHConfig, event: str, **fields: Any) -> None:
+    payload = {
+        "ts_utc": _now_utc(),
+        "event": str(event),
+        **_jsonable(fields),
+    }
+    log_path = Path(cfg.artifacts.workflow_log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _handoff_bundle_cfg(cfg: StagedHHConfig) -> HandoffStateBundleConfig:
+    return HandoffStateBundleConfig(
+        L=int(cfg.physics.L),
+        t=float(cfg.physics.t),
+        U=float(cfg.physics.u),
+        dv=float(cfg.physics.dv),
+        omega0=float(cfg.physics.omega0),
+        g_ep=float(cfg.physics.g_ep),
+        n_ph_max=int(cfg.physics.n_ph_max),
+        boson_encoding=str(cfg.physics.boson_encoding),
+        ordering=str(cfg.physics.ordering),
+        boundary=str(cfg.physics.boundary),
+        sector_n_up=int(cfg.physics.sector_n_up),
+        sector_n_dn=int(cfg.physics.sector_n_dn),
+    )
+
+
+def _warm_stop_required(cfg: StagedHHConfig) -> bool:
+    return (
+        cfg.warm_checkpoint.stop_energy is not None
+        or cfg.warm_checkpoint.stop_delta_abs is not None
+    )
+
+
+def _warm_stop_status(
+    cfg: StagedHHConfig,
+    *,
+    energy: float,
+    exact_filtered_energy: float,
+) -> dict[str, Any]:
+    delta_abs = float(abs(float(energy) - float(exact_filtered_energy)))
+    hit_energy = (
+        cfg.warm_checkpoint.stop_energy is not None
+        and float(energy) <= float(cfg.warm_checkpoint.stop_energy)
+    )
+    hit_delta = (
+        cfg.warm_checkpoint.stop_delta_abs is not None
+        and float(delta_abs) <= float(cfg.warm_checkpoint.stop_delta_abs)
+    )
+    reasons: list[str] = []
+    if bool(hit_energy):
+        reasons.append("warm_stop_energy")
+    if bool(hit_delta):
+        reasons.append("warm_stop_delta_abs")
+    return {
+        "triggered": bool(reasons),
+        "reason": ("+".join(reasons) if reasons else None),
+        "delta_abs": float(delta_abs),
+        "hit_energy": bool(hit_energy),
+        "hit_delta": bool(hit_delta),
+        "stop_energy": (
+            None if cfg.warm_checkpoint.stop_energy is None else float(cfg.warm_checkpoint.stop_energy)
+        ),
+        "stop_delta_abs": (
+            None
+            if cfg.warm_checkpoint.stop_delta_abs is None
+            else float(cfg.warm_checkpoint.stop_delta_abs)
+        ),
+    }
+
+
+def _write_warm_checkpoint_bundle(
+    cfg: StagedHHConfig,
+    *,
+    path: Path,
+    psi_state: np.ndarray,
+    energy: float,
+    exact_filtered_energy: float,
+    theta: Sequence[float] | None,
+    role: str,
+    cutoff_status: Mapping[str, Any],
+    event_meta: Mapping[str, Any] | None = None,
+    source_json: Path | None = None,
+) -> None:
+    meta = {
+        "pipeline": "hh_staged_noiseless",
+        "workflow_tag": str(cfg.artifacts.tag),
+        "stage": "warm_start_hva",
+        "checkpoint_role": str(role),
+        "warm_ansatz": str(cfg.warm_start.ansatz_name),
+        "optimizer_method": str(cfg.warm_start.method),
+        "warm_stop_energy": cutoff_status.get("stop_energy"),
+        "warm_stop_delta_abs": cutoff_status.get("stop_delta_abs"),
+        "cutoff_triggered": bool(cutoff_status.get("triggered", False)),
+        "cutoff_reason": cutoff_status.get("reason"),
+        "delta_abs": float(cutoff_status.get("delta_abs", float("nan"))),
+    }
+    if theta is not None:
+        meta["warm_optimal_point"] = [float(x) for x in theta]
+    if source_json is not None:
+        meta["source_json"] = str(source_json)
+    if isinstance(event_meta, Mapping):
+        for key in ("restart_index", "restarts_total", "nfev_so_far", "nfev_restart", "elapsed_s", "elapsed_restart_s"):
+            if key in event_meta:
+                meta[key] = _jsonable(event_meta.get(key))
+    write_handoff_state_bundle(
+        path=Path(path),
+        psi_state=np.asarray(psi_state, dtype=complex).reshape(-1),
+        cfg=_handoff_bundle_cfg(cfg),
+        source="warm_vqe",
+        exact_energy=float(exact_filtered_energy),
+        energy=float(energy),
+        delta_E_abs=float(cutoff_status.get("delta_abs", abs(float(energy) - float(exact_filtered_energy)))),
+        relative_error_abs=float(_relative_error_abs(float(energy), float(exact_filtered_energy))),
+        meta=meta,
+        handoff_state_kind="prepared_state",
+    )
+
+
+def _expected_adapt_ref_args(cfg: StagedHHConfig) -> SimpleNamespace:
+    return SimpleNamespace(
+        L=int(cfg.physics.L),
+        problem="hh",
+        ordering=str(cfg.physics.ordering),
+        boundary=str(cfg.physics.boundary),
+        t=float(cfg.physics.t),
+        u=float(cfg.physics.u),
+        dv=float(cfg.physics.dv),
+        omega0=float(cfg.physics.omega0),
+        g_ep=float(cfg.physics.g_ep),
+        n_ph_max=int(cfg.physics.n_ph_max),
+        boson_encoding=str(cfg.physics.boson_encoding),
+    )
+
+
+def _resolve_checkpoint_energy(payload: Mapping[str, Any]) -> float | None:
+    for block_name, field_name in (("adapt_vqe", "energy"), ("vqe", "energy")):
+        block = payload.get(block_name, {})
+        if not isinstance(block, Mapping):
+            continue
+        raw = block.get(field_name)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except Exception:
+            continue
+        if np.isfinite(value):
+            return float(value)
+    return None
+
+
+def _run_warm_start_stage(
+    cfg: StagedHHConfig,
+    *,
+    h_poly: Any,
+    psi_hf: np.ndarray,
+) -> tuple[dict[str, Any], np.ndarray, Path]:
+    nq_total = int(round(math.log2(int(np.asarray(psi_hf, dtype=complex).size))))
+    exact_filtered_energy: float | None = None
+    resumed_from_checkpoint = False
+    resume_seed_json: Path | None = None
+    resume_initial_point: list[float] | None = None
+    checkpoint_state: dict[str, Any] = {
+        "best_energy": float("inf"),
+        "checkpoint_json": None,
+    }
+
+    _append_workflow_log(
+        cfg,
+        "warm_stage_start",
+        stop_energy=cfg.warm_checkpoint.stop_energy,
+        stop_delta_abs=cfg.warm_checkpoint.stop_delta_abs,
+        checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
+    )
+
+    def _load_checkpoint_for_handoff(
+        checkpoint_json: Path,
+    ) -> tuple[dict[str, Any], np.ndarray, Mapping[str, Any], list[float] | None, float, float, dict[str, Any]]:
+        raw = json.loads(Path(checkpoint_json).read_text(encoding="utf-8"))
+        psi_seed, adapt_ref_meta = adapt_mod._load_adapt_initial_state(Path(checkpoint_json), int(nq_total))
+        mismatches = adapt_mod._validate_adapt_ref_metadata_for_exact_reuse(
+            adapt_settings=adapt_ref_meta.get("settings", {}),
+            args=_expected_adapt_ref_args(cfg),
+            is_hh=True,
+        )
+        if mismatches:
+            raise ValueError(
+                "warm checkpoint settings mismatch: "
+                + "; ".join(str(x) for x in mismatches)
+            )
+        exact_seed_energy = adapt_mod._resolve_exact_energy_from_payload(raw)
+        if exact_seed_energy is None:
+            raise ValueError("Warm checkpoint missing ground_state.exact_energy_filtered.")
+        seed_energy = _resolve_checkpoint_energy(raw)
+        if seed_energy is None:
+            raise ValueError("Warm checkpoint missing adapt_vqe.energy.")
+        raw_meta = raw.get("meta", {})
+        seed_theta = None
+        if isinstance(raw_meta, Mapping):
+            theta_raw = raw_meta.get("warm_optimal_point")
+            if isinstance(theta_raw, Sequence) and not isinstance(theta_raw, (str, bytes)):
+                seed_theta = [float(x) for x in theta_raw]
+        cutoff = _warm_stop_status(
+            cfg,
+            energy=float(seed_energy),
+            exact_filtered_energy=float(exact_seed_energy),
+        )
+        return (
+            raw,
+            np.asarray(psi_seed, dtype=complex).reshape(-1),
+            raw_meta if isinstance(raw_meta, Mapping) else {},
+            seed_theta,
+            float(exact_seed_energy),
+            float(seed_energy),
+            cutoff,
+        )
+
+    handoff_path = cfg.warm_checkpoint.handoff_from_warm_checkpoint
+    if handoff_path is not None:
+        handoff_json = Path(handoff_path)
+        (
+            _raw_handoff,
+            psi_handoff,
+            handoff_meta,
+            handoff_theta,
+            exact_filtered_energy,
+            warm_energy,
+            cutoff_status,
+        ) = _load_checkpoint_for_handoff(handoff_json)
+        _write_warm_checkpoint_bundle(
+            cfg,
+            path=cfg.artifacts.warm_checkpoint_json,
+            psi_state=psi_handoff,
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            theta=handoff_theta,
+            role="warm_checkpoint",
+            cutoff_status=cutoff_status,
+            event_meta=handoff_meta,
+            source_json=handoff_json,
+        )
+        _write_warm_checkpoint_bundle(
+            cfg,
+            path=cfg.artifacts.warm_cutover_json,
+            psi_state=psi_handoff,
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            theta=handoff_theta,
+            role="warm_cutover",
+            cutoff_status=cutoff_status,
+            event_meta=handoff_meta,
+            source_json=handoff_json,
+        )
+        checkpoint_state["best_energy"] = float(warm_energy)
+        checkpoint_state["checkpoint_json"] = Path(cfg.artifacts.warm_checkpoint_json)
+        warm_payload = {
+            "success": True,
+            "method": "hh_staged_warm_handoff_checkpoint",
+            "energy": float(warm_energy),
+            "ansatz": str(cfg.warm_start.ansatz_name),
+            "exact_filtered_energy": float(exact_filtered_energy),
+            "optimizer_method": str(cfg.warm_start.method),
+            "message": "warm_handoff_from_checkpoint",
+            "optimal_point": handoff_theta,
+            "checkpoint_json_latest": str(cfg.artifacts.warm_checkpoint_json),
+            "checkpoint_json_used": str(cfg.artifacts.warm_cutover_json),
+            "cutoff_triggered": bool(cutoff_status["triggered"]),
+            "cutoff_reason": cutoff_status.get("reason"),
+            "cutoff_delta_abs": float(cutoff_status["delta_abs"]),
+            "resumed_from_checkpoint": False,
+            "handoff_from_checkpoint": True,
+            "handoff_checkpoint_json": str(handoff_json),
+        }
+        _append_workflow_log(
+            cfg,
+            "warm_handoff_checkpoint_loaded",
+            checkpoint_json=str(handoff_json),
+            checkpoint_json_latest=str(cfg.artifacts.warm_checkpoint_json),
+            checkpoint_json_used=str(cfg.artifacts.warm_cutover_json),
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            delta_abs=float(cutoff_status["delta_abs"]),
+            cutoff_triggered=bool(cutoff_status["triggered"]),
+            cutoff_reason=cutoff_status.get("reason"),
+        )
+        _append_workflow_log(
+            cfg,
+            "warm_stage_complete",
+            checkpoint_json=str(cfg.artifacts.warm_cutover_json),
+            checkpoint_json_latest=str(cfg.artifacts.warm_checkpoint_json),
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            delta_abs=float(cutoff_status["delta_abs"]),
+            cutoff_triggered=bool(cutoff_status["triggered"]),
+            cutoff_reason=cutoff_status.get("reason"),
+            handoff_from_checkpoint=True,
+            handoff_checkpoint_json=str(handoff_json),
+        )
+        return warm_payload, psi_handoff, Path(cfg.artifacts.warm_cutover_json)
+
+    resume_path = cfg.warm_checkpoint.resume_from_warm_checkpoint
+    if resume_path is not None:
+        resume_json = Path(resume_path)
+        (
+            _raw_resume,
+            psi_resume,
+            raw_meta,
+            resume_theta,
+            exact_filtered_energy,
+            warm_energy,
+            cutoff_status,
+        ) = _load_checkpoint_for_handoff(resume_json)
+        cutoff_status = _warm_stop_status(
+            cfg,
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+        )
+        if resume_theta is None:
+            raise ValueError(
+                "Resume checkpoint missing meta.warm_optimal_point; cannot continue warm optimization."
+            )
+        _write_warm_checkpoint_bundle(
+            cfg,
+            path=cfg.artifacts.warm_checkpoint_json,
+            psi_state=np.asarray(psi_resume, dtype=complex).reshape(-1),
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            theta=resume_theta,
+            role="warm_checkpoint",
+            cutoff_status=cutoff_status,
+            event_meta=(raw_meta if isinstance(raw_meta, Mapping) else None),
+            source_json=resume_json,
+        )
+        checkpoint_state["best_energy"] = float(warm_energy)
+        checkpoint_state["checkpoint_json"] = Path(cfg.artifacts.warm_checkpoint_json)
+        warm_payload = {
+            "success": True,
+            "method": "hh_staged_warm_resume_checkpoint",
+            "energy": float(warm_energy),
+            "ansatz": str(cfg.warm_start.ansatz_name),
+            "exact_filtered_energy": float(exact_filtered_energy),
+            "optimizer_method": str(cfg.warm_start.method),
+            "message": "warm_resumed_from_checkpoint",
+            "optimal_point": resume_theta,
+            "checkpoint_json_latest": str(cfg.artifacts.warm_checkpoint_json),
+            "checkpoint_json_used": str(cfg.artifacts.warm_checkpoint_json),
+            "cutoff_triggered": bool(cutoff_status["triggered"]),
+            "cutoff_reason": cutoff_status.get("reason"),
+            "cutoff_delta_abs": float(cutoff_status["delta_abs"]),
+            "resumed_from_checkpoint": True,
+            "resume_checkpoint_json": str(resume_json),
+        }
+        _append_workflow_log(
+            cfg,
+            "warm_resume_checkpoint_loaded",
+            checkpoint_json=str(resume_json),
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            delta_abs=float(cutoff_status["delta_abs"]),
+            cutoff_triggered=bool(cutoff_status["triggered"]),
+            cutoff_reason=cutoff_status.get("reason"),
+        )
+        if bool(cutoff_status["triggered"]):
+            _write_warm_checkpoint_bundle(
+                cfg,
+                path=cfg.artifacts.warm_cutover_json,
+                psi_state=np.asarray(psi_resume, dtype=complex).reshape(-1),
+                energy=float(warm_energy),
+                exact_filtered_energy=float(exact_filtered_energy),
+                theta=resume_theta,
+                role="warm_cutover",
+                cutoff_status=cutoff_status,
+                event_meta=(raw_meta if isinstance(raw_meta, Mapping) else None),
+                source_json=resume_json,
+            )
+            warm_payload["checkpoint_json_used"] = str(cfg.artifacts.warm_cutover_json)
+            _append_workflow_log(
+                cfg,
+                "warm_cutoff_triggered",
+                checkpoint_json=str(cfg.artifacts.warm_cutover_json),
+                checkpoint_json_latest=str(cfg.artifacts.warm_checkpoint_json),
+                energy=float(warm_energy),
+                exact_filtered_energy=float(exact_filtered_energy),
+                delta_abs=float(cutoff_status["delta_abs"]),
+                cutoff_triggered=True,
+                cutoff_reason=cutoff_status.get("reason"),
+                resumed_from_checkpoint=True,
+                resume_checkpoint_json=str(resume_json),
+            )
+            return warm_payload, np.asarray(psi_resume, dtype=complex).reshape(-1), Path(cfg.artifacts.warm_cutover_json)
+        resumed_from_checkpoint = True
+        resume_seed_json = resume_json
+        resume_initial_point = list(resume_theta)
+        _append_workflow_log(
+            cfg,
+            "warm_resume_checkpoint_continue",
+            checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
+            resume_checkpoint_json=str(resume_json),
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            delta_abs=float(cutoff_status["delta_abs"]),
+        )
+
+    if exact_filtered_energy is None:
+        exact_filtered_energy = float(
+            exact_ground_energy_sector_hh(
+                h_poly,
+                num_sites=int(cfg.physics.L),
+                num_particles=(int(cfg.physics.sector_n_up), int(cfg.physics.sector_n_dn)),
+                n_ph_max=int(cfg.physics.n_ph_max),
+                boson_encoding=str(cfg.physics.boson_encoding),
+                indexing=str(cfg.physics.ordering),
+            )
+        )
+    
+    ansatz = _build_hh_warm_ansatz(cfg)
+
+    def _emit_checkpoint(theta_values: Sequence[float], energy_value: float, event_meta: Mapping[str, Any] | None) -> None:
+        psi_best = hc_pipeline._normalize_state(
+            np.asarray(
+                ansatz.prepare_state(np.asarray(theta_values, dtype=float), np.asarray(psi_hf, dtype=complex)),
+                dtype=complex,
+            ).reshape(-1)
+        )
+        cutoff_status = _warm_stop_status(
+            cfg,
+            energy=float(energy_value),
+            exact_filtered_energy=float(exact_filtered_energy),
+        )
+        _write_warm_checkpoint_bundle(
+            cfg,
+            path=cfg.artifacts.warm_checkpoint_json,
+            psi_state=psi_best,
+            energy=float(energy_value),
+            exact_filtered_energy=float(exact_filtered_energy),
+            theta=theta_values,
+            role="warm_checkpoint",
+            cutoff_status=cutoff_status,
+            event_meta=event_meta,
+        )
+        checkpoint_state["best_energy"] = float(energy_value)
+        checkpoint_state["checkpoint_json"] = Path(cfg.artifacts.warm_checkpoint_json)
+        _append_workflow_log(
+            cfg,
+            "warm_new_best_checkpoint",
+            checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
+            energy=float(energy_value),
+            exact_filtered_energy=float(exact_filtered_energy),
+            delta_abs=float(cutoff_status["delta_abs"]),
+            cutoff_triggered=bool(cutoff_status["triggered"]),
+            cutoff_reason=cutoff_status.get("reason"),
+            restart_index=(None if event_meta is None else event_meta.get("restart_index")),
+            nfev_so_far=(None if event_meta is None else event_meta.get("nfev_so_far")),
+        )
+
+    def _progress_observer(event: Mapping[str, Any]) -> None:
+        if str(event.get("event", "")) != "new_best":
+            return
+        raw_energy = event.get("energy_best_global")
+        theta_values = event.get("theta_restart_best", event.get("theta_current"))
+        if not isinstance(raw_energy, (int, float)):
+            return
+        if not isinstance(theta_values, Sequence) or isinstance(theta_values, (str, bytes)):
+            return
+        energy_value = float(raw_energy)
+        if not np.isfinite(energy_value):
+            return
+        if energy_value >= float(checkpoint_state["best_energy"]) - 1e-15:
+            return
+        _emit_checkpoint(theta_values, energy_value, event)
+
+    def _early_stop_checker(event: Mapping[str, Any]) -> bool:
+        raw_energy = event.get("energy_best_global")
+        if not isinstance(raw_energy, (int, float)):
+            return False
+        cutoff_status = _warm_stop_status(
+            cfg,
+            energy=float(raw_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+        )
+        return bool(cutoff_status["triggered"])
+
+    warm_payload, psi_warm = hc_pipeline._run_hardcoded_vqe(
+        num_sites=int(cfg.physics.L),
+        ordering=str(cfg.physics.ordering),
+        boundary=str(cfg.physics.boundary),
+        hopping_t=float(cfg.physics.t),
+        onsite_u=float(cfg.physics.u),
+        potential_dv=float(cfg.physics.dv),
+        h_poly=h_poly,
+        reps=int(cfg.warm_start.reps),
+        restarts=int(cfg.warm_start.restarts),
+        seed=int(cfg.warm_start.seed),
+        maxiter=int(cfg.warm_start.maxiter),
+        method=str(cfg.warm_start.method),
+        energy_backend=str(cfg.warm_start.energy_backend),
+        vqe_progress_every_s=float(cfg.warm_start.progress_every_s),
+        progress_observer=_progress_observer,
+        emit_theta_in_progress=True,
+        return_best_on_keyboard_interrupt=True,
+        early_stop_checker=(
+            _early_stop_checker if _warm_stop_required(cfg) else None
+        ),
+        initial_point=resume_initial_point,
+        ansatz_name=str(cfg.warm_start.ansatz_name),
+        spsa_a=float(cfg.warm_start.spsa_a),
+        spsa_c=float(cfg.warm_start.spsa_c),
+        spsa_alpha=float(cfg.warm_start.spsa_alpha),
+        spsa_gamma=float(cfg.warm_start.spsa_gamma),
+        spsa_A=float(cfg.warm_start.spsa_A),
+        spsa_avg_last=int(cfg.warm_start.spsa_avg_last),
+        spsa_eval_repeats=int(cfg.warm_start.spsa_eval_repeats),
+        spsa_eval_agg=str(cfg.warm_start.spsa_eval_agg),
+        problem="hh",
+        omega0=float(cfg.physics.omega0),
+        g_ep=float(cfg.physics.g_ep),
+        n_ph_max=int(cfg.physics.n_ph_max),
+        boson_encoding=str(cfg.physics.boson_encoding),
+    )
+    warm_energy = float(warm_payload.get("energy", float("nan")))
+    cutoff_status = _warm_stop_status(
+        cfg,
+        energy=float(warm_energy),
+        exact_filtered_energy=float(exact_filtered_energy),
+    )
+    theta_final = warm_payload.get("optimal_point", [])
+    if (
+        checkpoint_state["checkpoint_json"] is None
+        or float(warm_energy) < float(checkpoint_state["best_energy"]) - 1e-15
+    ):
+        if isinstance(theta_final, Sequence) and not isinstance(theta_final, (str, bytes)) and len(theta_final) > 0:
+            _emit_checkpoint(theta_final, float(warm_energy), {"event": "run_end"})
+        else:
+            _write_warm_checkpoint_bundle(
+                cfg,
+                path=cfg.artifacts.warm_checkpoint_json,
+                psi_state=np.asarray(psi_warm, dtype=complex).reshape(-1),
+                energy=float(warm_energy),
+                exact_filtered_energy=float(exact_filtered_energy),
+                theta=None,
+                role="warm_checkpoint",
+                cutoff_status=cutoff_status,
+            )
+            checkpoint_state["best_energy"] = float(warm_energy)
+            checkpoint_state["checkpoint_json"] = Path(cfg.artifacts.warm_checkpoint_json)
+    if _warm_stop_required(cfg) and not bool(cutoff_status["triggered"]):
+        _append_workflow_log(
+            cfg,
+            "warm_cutoff_not_reached_continue",
+            checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
+            energy=float(warm_energy),
+            exact_filtered_energy=float(exact_filtered_energy),
+            delta_abs=float(cutoff_status["delta_abs"]),
+            stop_energy=cfg.warm_checkpoint.stop_energy,
+            stop_delta_abs=cfg.warm_checkpoint.stop_delta_abs,
+        )
+    _write_warm_checkpoint_bundle(
+        cfg,
+        path=cfg.artifacts.warm_cutover_json,
+        psi_state=np.asarray(psi_warm, dtype=complex).reshape(-1),
+        energy=float(warm_energy),
+        exact_filtered_energy=float(exact_filtered_energy),
+        theta=(
+            [float(x) for x in theta_final]
+            if isinstance(theta_final, Sequence) and not isinstance(theta_final, (str, bytes))
+            else None
+        ),
+        role="warm_cutover",
+        cutoff_status=cutoff_status,
+        source_json=Path(cfg.artifacts.warm_checkpoint_json),
+    )
+    _append_workflow_log(
+        cfg,
+        ("warm_cutoff_triggered" if bool(cutoff_status["triggered"]) else "warm_stage_complete"),
+        checkpoint_json=str(cfg.artifacts.warm_cutover_json),
+        checkpoint_json_latest=str(cfg.artifacts.warm_checkpoint_json),
+        energy=float(warm_energy),
+        exact_filtered_energy=float(exact_filtered_energy),
+        delta_abs=float(cutoff_status["delta_abs"]),
+        cutoff_triggered=bool(cutoff_status["triggered"]),
+        cutoff_reason=cutoff_status.get("reason"),
+    )
+    warm_payload["exact_filtered_energy"] = float(exact_filtered_energy)
+    warm_payload["checkpoint_json_latest"] = str(cfg.artifacts.warm_checkpoint_json)
+    warm_payload["checkpoint_json_used"] = str(cfg.artifacts.warm_cutover_json)
+    warm_payload["cutoff_triggered"] = bool(cutoff_status["triggered"])
+    warm_payload["cutoff_reason"] = cutoff_status.get("reason")
+    warm_payload["cutoff_delta_abs"] = float(cutoff_status["delta_abs"])
+    warm_payload["resumed_from_checkpoint"] = bool(resumed_from_checkpoint)
+    warm_payload["handoff_from_checkpoint"] = False
+    if resume_seed_json is not None:
+        warm_payload["resume_checkpoint_json"] = str(resume_seed_json)
+    return warm_payload, np.asarray(psi_warm, dtype=complex).reshape(-1), Path(cfg.artifacts.warm_cutover_json)
 
 
 def _bool_flag(raw: Any) -> bool:
@@ -561,12 +1178,47 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
             default_source="artifacts/pdf/<tag>.pdf",
         )
     )
+    state_export_dir = Path(
+        _resolve_with_default(
+            name="state_export_dir",
+            raw=getattr(args, "state_export_dir", None),
+            default=REPO_ROOT / "artifacts" / "json",
+            provenance=provenance,
+            default_source="artifacts/json",
+        )
+    )
+    state_export_prefix = str(
+        _resolve_with_default(
+            name="state_export_prefix",
+            raw=getattr(args, "state_export_prefix", None),
+            default=str(tag),
+            provenance=provenance,
+            default_source="workflow.state_export_prefix := tag",
+        )
+    )
+    resume_from_warm_checkpoint = (
+        None
+        if getattr(args, "resume_from_warm_checkpoint", None) is None
+        else Path(getattr(args, "resume_from_warm_checkpoint"))
+    )
+    handoff_from_warm_checkpoint = (
+        None
+        if getattr(args, "handoff_from_warm_checkpoint", None) is None
+        else Path(getattr(args, "handoff_from_warm_checkpoint"))
+    )
+    if resume_from_warm_checkpoint is not None and handoff_from_warm_checkpoint is not None:
+        raise ValueError(
+            "Use either --resume-from-warm-checkpoint or --handoff-from-warm-checkpoint, not both."
+        )
 
     handoff_json = REPO_ROOT / "artifacts" / "json" / f"{tag}_adapt_handoff.json"
+    warm_checkpoint_json = state_export_dir / f"{state_export_prefix}_warm_checkpoint_state.json"
+    warm_cutover_json = state_export_dir / f"{state_export_prefix}_warm_cutover_state.json"
     replay_output_json = REPO_ROOT / "artifacts" / "json" / f"{tag}_replay.json"
     replay_output_csv = REPO_ROOT / "artifacts" / "json" / f"{tag}_replay.csv"
     replay_output_md = REPO_ROOT / "artifacts" / "useful" / f"L{L}" / f"{tag}_replay.md"
     replay_output_log = REPO_ROOT / "artifacts" / "logs" / f"{tag}_replay.log"
+    workflow_log = REPO_ROOT / "artifacts" / "logs" / f"{tag}.log"
 
     cfg_values = {
         "warm_reps": _resolve_with_default(
@@ -843,15 +1495,38 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         drive_time_sampling=str(getattr(args, "drive_time_sampling")),
         drive_t0=float(getattr(args, "drive_t0")),
     )
+    warm_checkpoint = WarmCheckpointConfig(
+        stop_energy=(
+            None
+            if getattr(args, "warm_stop_energy", None) is None
+            else float(getattr(args, "warm_stop_energy"))
+        ),
+        stop_delta_abs=(
+            None
+            if getattr(args, "warm_stop_delta_abs", None) is None
+            else float(getattr(args, "warm_stop_delta_abs"))
+        ),
+        state_export_dir=Path(state_export_dir),
+        state_export_prefix=str(state_export_prefix),
+        resume_from_warm_checkpoint=(
+            None if resume_from_warm_checkpoint is None else Path(resume_from_warm_checkpoint)
+        ),
+        handoff_from_warm_checkpoint=(
+            None if handoff_from_warm_checkpoint is None else Path(handoff_from_warm_checkpoint)
+        ),
+    )
     artifacts = ArtifactConfig(
         tag=str(tag),
         output_json=Path(output_json),
         output_pdf=Path(output_pdf),
         handoff_json=Path(handoff_json),
+        warm_checkpoint_json=Path(warm_checkpoint_json),
+        warm_cutover_json=Path(warm_cutover_json),
         replay_output_json=Path(replay_output_json),
         replay_output_csv=Path(replay_output_csv),
         replay_output_md=Path(replay_output_md),
         replay_output_log=Path(replay_output_log),
+        workflow_log=Path(workflow_log),
         skip_pdf=bool(getattr(args, "skip_pdf", False)),
     )
     gates = GateConfig(
@@ -880,6 +1555,7 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         adapt=adapt,
         replay=replay,
         dynamics=dynamics,
+        warm_checkpoint=warm_checkpoint,
         artifacts=artifacts,
         gates=gates,
         smoke_test_intentionally_weak=bool(getattr(args, "smoke_test_intentionally_weak", False)),
@@ -981,17 +1657,29 @@ def _handoff_continuation_meta(adapt_payload: Mapping[str, Any]) -> dict[str, An
     }
 
 
-def _infer_handoff_adapt_pool(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any]) -> str | None:
-    if cfg.adapt.pool not in {None, "", "none"}:
-        return str(cfg.adapt.pool)
-
+def _infer_handoff_adapt_pool(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
     continuation = adapt_payload.get("continuation", {})
     if not isinstance(continuation, Mapping):
         continuation = {}
 
-    record_sets: list[Any] = [
-        continuation.get("selected_generator_metadata", []),
-    ]
+    metadata_records = continuation.get("selected_generator_metadata", [])
+    if isinstance(metadata_records, Sequence) and not isinstance(metadata_records, (str, bytes)):
+        selected_families = sorted(
+            {
+                _canonical_replay_family(rec.get("family_id"))
+                for rec in metadata_records
+                if isinstance(rec, Mapping)
+            }
+        )
+        selected_families = [x for x in selected_families if x is not None]
+        if len(selected_families) == 1:
+            return selected_families[0], "continuation.selected_generator_metadata.family_id"
+        if len(selected_families) > 1:
+            # Mixed canonical families in selected generators are treated as provenance ambiguity;
+            # force fallback.
+            return None, "continuation.selected_generator_metadata.family_id(mixed)"
+
+    record_sets: list[Any] = []
     motif_library = continuation.get("motif_library", {})
     if isinstance(motif_library, Mapping):
         record_sets.append(motif_library.get("records", []))
@@ -1001,43 +1689,105 @@ def _infer_handoff_adapt_pool(cfg: StagedHHConfig, adapt_payload: Mapping[str, A
             continue
         families = sorted(
             {
-                str(rec.get("family_id")).strip().lower()
+                _canonical_replay_family(rec.get("family_id"))
                 for rec in records
-                if isinstance(rec, Mapping) and rec.get("family_id") not in {None, "", "none"}
+                if isinstance(rec, Mapping)
             }
         )
+        families = [x for x in families if x is not None]
         if len(families) == 1:
-            return families[0]
+            return str(families[0]), "continuation.motif_library.records"
 
     raw_pool = adapt_payload.get("pool_type")
-    if raw_pool not in {None, "", "none"}:
-        return str(raw_pool)
-    return None
+    raw_pool2 = _canonical_replay_family(raw_pool)
+    if raw_pool2 is not None:
+        return str(raw_pool2), "adapt_payload.pool_type"
 
+    direct_pool = _canonical_replay_family(cfg.adapt.pool)
+    if direct_pool is not None:
+        return direct_pool, "cfg.adapt.pool"
+    return None, None
+
+
+def _canonical_replay_family(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    val = str(raw).strip().lower()
+    return val if val in replay_mod.EXPLICIT_FAMILIES else None
+
+
+def _seed_policy_for_handoff_state(raw_state: str, raw_policy: Any) -> tuple[str, str]:
+    policy = str(raw_policy).strip().lower()
+    if policy not in replay_mod.REPLAY_SEED_POLICIES:
+        raise ValueError(f"Invalid replay_seed_policy '{policy}'.")
+    if policy == "auto":
+        if raw_state == _PREPARED_STATE:
+            return policy, "residual_only"
+        if raw_state == _REFERENCE_STATE:
+            return policy, "scaffold_plus_zero"
+        raise ValueError(
+            "Cannot resolve handoff replay_seed_policy='auto': expected handoff_state_kind "
+            "prepared_state or reference_state."
+        )
+    return policy, policy
+
+
+def _build_replay_contract(
+    cfg: StagedHHConfig,
+    handoff_adapt_pool: str | None,
+    handoff_adapt_pool_source: str | None = None,
+) -> dict[str, Any]:
+    handoff_state_kind = _PREPARED_STATE
+    requested = str(cfg.replay.generator_family).strip().lower()
+    fallback_family = _canonical_replay_family(cfg.replay.fallback_family)
+    if fallback_family is None:
+        raise ValueError(f"Invalid fallback_family '{cfg.replay.fallback_family}' in replay config.")
+
+    if requested == "match_adapt":
+        resolved = handoff_adapt_pool or fallback_family
+        source = handoff_adapt_pool_source if handoff_adapt_pool is not None else "fallback_family"
+        fallback_used = handoff_adapt_pool is None
+        requested_field = "match_adapt"
+    else:
+        requested_canon = _canonical_replay_family(requested)
+        if requested_canon is None:
+            raise ValueError(f"Invalid replay generator_family '{requested}' in config.")
+        resolved = requested_canon
+        source = "cli.generator_family"
+        fallback_used = False
+        requested_field = requested_canon
+
+    requested_seed_policy, resolved_seed_policy = _seed_policy_for_handoff_state(
+        handoff_state_kind,
+        cfg.replay.replay_seed_policy,
+    )
+
+    return {
+        "contract_version": int(replay_mod.REPLAY_CONTRACT_VERSION),
+        "generator_family": {
+            "requested": requested_field,
+            "resolved": resolved,
+            "resolution_source": source,
+            "fallback_family": fallback_family,
+            "fallback_used": bool(fallback_used),
+        },
+        "seed_policy_requested": str(requested_seed_policy),
+        "seed_policy_resolved": str(resolved_seed_policy),
+        "handoff_state_kind": _PREPARED_STATE,
+        "provenance_source": "explicit",
+        "continuation_mode": str(cfg.replay.continuation_mode),
+        "contract_seed_hint": "built-in_staged_writer",
+    }
 
 def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], psi_adapt: np.ndarray) -> None:
     exact_energy = float(adapt_payload.get("exact_gs_energy", float("nan")))
     energy = float(adapt_payload.get("energy", float("nan")))
     continuation_meta = _handoff_continuation_meta(adapt_payload)
-    handoff_adapt_pool = _infer_handoff_adapt_pool(cfg, adapt_payload)
-    handoff_cfg = HandoffStateBundleConfig(
-        L=int(cfg.physics.L),
-        t=float(cfg.physics.t),
-        U=float(cfg.physics.u),
-        dv=float(cfg.physics.dv),
-        omega0=float(cfg.physics.omega0),
-        g_ep=float(cfg.physics.g_ep),
-        n_ph_max=int(cfg.physics.n_ph_max),
-        boson_encoding=str(cfg.physics.boson_encoding),
-        ordering=str(cfg.physics.ordering),
-        boundary=str(cfg.physics.boundary),
-        sector_n_up=int(cfg.physics.sector_n_up),
-        sector_n_dn=int(cfg.physics.sector_n_dn),
-    )
+    handoff_adapt_pool, handoff_adapt_pool_source = _infer_handoff_adapt_pool(cfg, adapt_payload)
     write_handoff_state_bundle(
         path=cfg.artifacts.handoff_json,
         psi_state=np.asarray(psi_adapt, dtype=complex).reshape(-1),
-        cfg=handoff_cfg,
+        cfg=_handoff_bundle_cfg(cfg),
         source="adapt_vqe",
         exact_energy=float(exact_energy),
         energy=float(energy),
@@ -1055,6 +1805,11 @@ def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], 
         handoff_state_kind="prepared_state",
         continuation_mode=str(continuation_meta.get("continuation_mode", cfg.adapt.continuation_mode)),
         continuation_scaffold=continuation_meta.get("continuation_scaffold"),
+        replay_contract=_build_replay_contract(
+            cfg,
+            handoff_adapt_pool=handoff_adapt_pool,
+            handoff_adapt_pool_source=handoff_adapt_pool_source,
+        ),
         optimizer_memory=continuation_meta.get("optimizer_memory"),
         selected_generator_metadata=continuation_meta.get("selected_generator_metadata"),
         generator_split_events=continuation_meta.get("generator_split_events"),
@@ -1069,7 +1824,7 @@ def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], 
             "fallback_family": str(cfg.replay.fallback_family),
             "replay_seed_policy": str(cfg.replay.replay_seed_policy),
             "replay_continuation_mode": str(cfg.replay.continuation_mode),
-        },
+        }
     )
 
 
@@ -1155,36 +1910,28 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
     h_poly, hmat, ordered_labels_exyz, coeff_map_exyz, psi_hf = _build_hh_context(cfg)
     adapt_diagnostics: dict[str, Any] = {}
     replay_diagnostics: dict[str, Any] = {}
+    _append_workflow_log(
+        cfg,
+        "stage_pipeline_start",
+        tag=str(cfg.artifacts.tag),
+        output_json=str(cfg.artifacts.output_json),
+        warm_checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
+        warm_cutover_json=str(cfg.artifacts.warm_cutover_json),
+    )
 
-    warm_payload, psi_warm = hc_pipeline._run_hardcoded_vqe(
-        num_sites=int(cfg.physics.L),
-        ordering=str(cfg.physics.ordering),
-        boundary=str(cfg.physics.boundary),
-        hopping_t=float(cfg.physics.t),
-        onsite_u=float(cfg.physics.u),
-        potential_dv=float(cfg.physics.dv),
+    warm_payload, psi_warm, warm_seed_json = _run_warm_start_stage(
+        cfg,
         h_poly=h_poly,
-        reps=int(cfg.warm_start.reps),
-        restarts=int(cfg.warm_start.restarts),
-        seed=int(cfg.warm_start.seed),
-        maxiter=int(cfg.warm_start.maxiter),
-        method=str(cfg.warm_start.method),
-        energy_backend=str(cfg.warm_start.energy_backend),
-        vqe_progress_every_s=float(cfg.warm_start.progress_every_s),
-        ansatz_name=str(cfg.warm_start.ansatz_name),
-        spsa_a=float(cfg.warm_start.spsa_a),
-        spsa_c=float(cfg.warm_start.spsa_c),
-        spsa_alpha=float(cfg.warm_start.spsa_alpha),
-        spsa_gamma=float(cfg.warm_start.spsa_gamma),
-        spsa_A=float(cfg.warm_start.spsa_A),
-        spsa_avg_last=int(cfg.warm_start.spsa_avg_last),
-        spsa_eval_repeats=int(cfg.warm_start.spsa_eval_repeats),
-        spsa_eval_agg=str(cfg.warm_start.spsa_eval_agg),
-        problem="hh",
-        omega0=float(cfg.physics.omega0),
-        g_ep=float(cfg.physics.g_ep),
-        n_ph_max=int(cfg.physics.n_ph_max),
-        boson_encoding=str(cfg.physics.boson_encoding),
+        psi_hf=np.asarray(psi_hf, dtype=complex).reshape(-1),
+    )
+    _append_workflow_log(
+        cfg,
+        "adapt_seed_checkpoint_selected",
+        checkpoint_json=str(warm_seed_json),
+        energy=float(warm_payload.get("energy", float("nan"))),
+        exact_filtered_energy=float(warm_payload.get("exact_filtered_energy", float("nan"))),
+        cutoff_triggered=bool(warm_payload.get("cutoff_triggered", False)),
+        cutoff_reason=warm_payload.get("cutoff_reason"),
     )
 
     adapt_payload, psi_adapt = adapt_mod._run_hardcoded_adapt_vqe(
@@ -1230,7 +1977,7 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         paop_prune_eps=float(cfg.adapt.paop_prune_eps),
         paop_normalization=str(cfg.adapt.paop_normalization),
         disable_hh_seed=bool(cfg.adapt.disable_hh_seed),
-        psi_ref_override=np.asarray(psi_warm, dtype=complex).reshape(-1),
+        adapt_ref_json=Path(warm_seed_json),
         adapt_reopt_policy=str(cfg.adapt.reopt_policy),
         adapt_window_size=int(cfg.adapt.window_size),
         adapt_window_topk=int(cfg.adapt.window_topk),
@@ -1255,6 +2002,15 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         phase3_lifetime_cost_mode=str(cfg.adapt.phase3_lifetime_cost_mode),
         phase3_runtime_split_mode=str(cfg.adapt.phase3_runtime_split_mode),
         diagnostics_out=adapt_diagnostics,
+    )
+    adapt_payload["adapt_ref_json"] = str(warm_seed_json)
+    adapt_payload["initial_state_source"] = "adapt_ref_json"
+    _append_workflow_log(
+        cfg,
+        "adapt_seed_checkpoint_used",
+        checkpoint_json=str(warm_seed_json),
+        adapt_ref_base_depth=adapt_payload.get("adapt_ref_base_depth"),
+        exact_gs_energy=adapt_payload.get("exact_gs_energy"),
     )
 
     _write_adapt_handoff(cfg, adapt_payload, np.asarray(psi_adapt, dtype=complex).reshape(-1))
@@ -1867,6 +2623,15 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
             "restarts": int(cfg.warm_start.restarts),
             "maxiter": int(cfg.warm_start.maxiter),
             "message": str(stage_result.warm_payload.get("message", "")),
+            "checkpoint_json_latest": str(
+                stage_result.warm_payload.get("checkpoint_json_latest", cfg.artifacts.warm_checkpoint_json)
+            ),
+            "checkpoint_json_used": str(
+                stage_result.warm_payload.get("checkpoint_json_used", cfg.artifacts.warm_cutover_json)
+            ),
+            "cutoff_triggered": bool(stage_result.warm_payload.get("cutoff_triggered", False)),
+            "cutoff_reason": stage_result.warm_payload.get("cutoff_reason"),
+            "resumed_from_checkpoint": bool(stage_result.warm_payload.get("resumed_from_checkpoint", False)),
         },
         "adapt_vqe": {
             "energy": float(adapt_energy),
@@ -1877,6 +2642,10 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
             "continuation_mode": str(stage_result.adapt_payload.get("continuation_mode", cfg.adapt.continuation_mode)),
             "stop_reason": str(stage_result.adapt_payload.get("stop_reason", "")),
             "handoff_json": str(cfg.artifacts.handoff_json),
+            "adapt_ref_json": str(
+                stage_result.adapt_payload.get("adapt_ref_json", stage_result.warm_payload.get("checkpoint_json_used", ""))
+            ),
+            "initial_state_source": str(stage_result.adapt_payload.get("initial_state_source", "adapt_ref_json")),
         },
         "conventional_replay": {
             "energy": float(final_energy),
@@ -1949,11 +2718,14 @@ def _payload_artifacts(cfg: StagedHHConfig) -> dict[str, Any]:
             "output_pdf": str(cfg.artifacts.output_pdf),
         },
         "intermediate": {
+            "warm_checkpoint_json": str(cfg.artifacts.warm_checkpoint_json),
+            "warm_cutover_json": str(cfg.artifacts.warm_cutover_json),
             "adapt_handoff_json": str(cfg.artifacts.handoff_json),
             "replay_output_json": str(cfg.artifacts.replay_output_json),
             "replay_output_csv": str(cfg.artifacts.replay_output_csv),
             "replay_output_md": str(cfg.artifacts.replay_output_md),
             "replay_output_log": str(cfg.artifacts.replay_output_log),
+            "workflow_log": str(cfg.artifacts.workflow_log),
         },
     }
 
@@ -2138,10 +2910,21 @@ def run_staged_hh_noiseless(cfg: StagedHHConfig, *, run_command: str | None = No
     cfg.artifacts.output_json.parent.mkdir(parents=True, exist_ok=True)
     cfg.artifacts.output_pdf.parent.mkdir(parents=True, exist_ok=True)
     cfg.artifacts.handoff_json.parent.mkdir(parents=True, exist_ok=True)
+    cfg.artifacts.warm_checkpoint_json.parent.mkdir(parents=True, exist_ok=True)
+    cfg.artifacts.warm_cutover_json.parent.mkdir(parents=True, exist_ok=True)
     cfg.artifacts.replay_output_json.parent.mkdir(parents=True, exist_ok=True)
     cfg.artifacts.replay_output_csv.parent.mkdir(parents=True, exist_ok=True)
     cfg.artifacts.replay_output_md.parent.mkdir(parents=True, exist_ok=True)
     cfg.artifacts.replay_output_log.parent.mkdir(parents=True, exist_ok=True)
+    cfg.artifacts.workflow_log.parent.mkdir(parents=True, exist_ok=True)
+    _append_workflow_log(
+        cfg,
+        "workflow_run_start",
+        command=str(run_command_str),
+        output_json=str(cfg.artifacts.output_json),
+        warm_checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
+        warm_cutover_json=str(cfg.artifacts.warm_cutover_json),
+    )
 
     stage_result = run_stage_pipeline(cfg)
     dynamics_noiseless = run_noiseless_profiles(stage_result, cfg)
@@ -2152,6 +2935,20 @@ def run_staged_hh_noiseless(cfg: StagedHHConfig, *, run_command: str | None = No
         run_command=run_command_str,
     )
     _write_json(cfg.artifacts.output_json, payload)
+    _append_workflow_log(
+        cfg,
+        "workflow_json_written",
+        output_json=str(cfg.artifacts.output_json),
+        replay_json=str(cfg.artifacts.replay_output_json),
+        ecut_2_pass=bool(payload.get("stage_pipeline", {}).get("conventional_replay", {}).get("ecut_2", {}).get("pass", False)),
+    )
     if not bool(cfg.artifacts.skip_pdf):
         write_staged_hh_pdf(payload, cfg, run_command_str)
+    _append_workflow_log(
+        cfg,
+        "workflow_run_complete",
+        output_json=str(cfg.artifacts.output_json),
+        replay_json=str(cfg.artifacts.replay_output_json),
+        adapt_handoff_json=str(cfg.artifacts.handoff_json),
+    )
     return payload

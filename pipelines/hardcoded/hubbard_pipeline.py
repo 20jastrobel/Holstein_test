@@ -678,6 +678,11 @@ def _run_hardcoded_vqe(
     method: str,
     energy_backend: str,
     vqe_progress_every_s: float = 60.0,
+    progress_observer: Any | None = None,
+    emit_theta_in_progress: bool = False,
+    return_best_on_keyboard_interrupt: bool = False,
+    early_stop_checker: Any | None = None,
+    initial_point: Sequence[float] | np.ndarray | None = None,
     ansatz_name: str,
     spsa_a: float = 0.2,
     spsa_c: float = 0.1,
@@ -819,6 +824,8 @@ def _run_hardcoded_vqe(
         "run_start": "hardcoded_vqe_run_start",
         "restart_start": "hardcoded_vqe_restart_start",
         "heartbeat": "hardcoded_vqe_heartbeat",
+        "early_stop_triggered": "hardcoded_vqe_early_stop_triggered",
+        "run_interrupted": "hardcoded_vqe_run_interrupted",
         "restart_end": "hardcoded_vqe_restart_end",
         "run_end": "hardcoded_vqe_run_end",
     }
@@ -826,10 +833,14 @@ def _run_hardcoded_vqe(
     def _vqe_progress_logger(payload: dict[str, Any]) -> None:
         raw_event = str(payload.get("event", ""))
         mapped_event = progress_event_map.get(raw_event)
-        if mapped_event is None:
-            return
-        fields = {k: v for k, v in payload.items() if k != "event"}
-        _ai_log(mapped_event, **fields)
+        if mapped_event is not None:
+            fields = {k: v for k, v in payload.items() if k != "event"}
+            _ai_log(mapped_event, **fields)
+        if progress_observer is not None:
+            try:
+                progress_observer(dict(payload))
+            except Exception:
+                pass
 
     result = ns["vqe_minimize"](
         h_poly,
@@ -838,6 +849,7 @@ def _run_hardcoded_vqe(
         restarts=int(restarts),
         seed=int(seed),
         maxiter=int(maxiter),
+        initial_point=initial_point,
         method=str(method),
         energy_backend=str(energy_backend),
         spsa_a=float(spsa_a),
@@ -851,6 +863,9 @@ def _run_hardcoded_vqe(
         progress_logger=_vqe_progress_logger,
         progress_every_s=float(vqe_progress_every_s),
         progress_label="hardcoded_vqe",
+        emit_theta_in_progress=bool(emit_theta_in_progress),
+        return_best_on_keyboard_interrupt=bool(return_best_on_keyboard_interrupt),
+        early_stop_checker=early_stop_checker,
     )
 
     theta = np.asarray(result.theta, dtype=float)
@@ -980,7 +995,7 @@ def _run_internal_adapt_paop(
     adapt_window_topk: int = 0,
     adapt_full_refit_every: int = 0,
     adapt_final_full_refit: bool = True,
-    adapt_continuation_mode: str = "legacy",
+    adapt_continuation_mode: str = "phase3_v1",
     phase1_lambda_F: float = 1.0,
     phase1_lambda_compile: float = 0.05,
     phase1_lambda_measure: float = 0.02,
@@ -2595,7 +2610,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--t", type=float, default=1.0, help="Hopping coefficient.")
     parser.add_argument("--u", type=float, default=4.0, help="Onsite interaction U.")
     parser.add_argument("--dv", type=float, default=0.0, help="Uniform local potential term v (Hv = -v n).")
-    parser.add_argument("--boundary", choices=["periodic", "open"], default="periodic")
+    parser.add_argument("--boundary", choices=["periodic", "open"], default="open")
 
     # --- problem type: Hubbard vs Hubbard-Holstein ---
     parser.add_argument(
@@ -2821,8 +2836,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--adapt-continuation-mode",
         choices=["legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
-        default="legacy",
-        help="Continuation mode for internal ADAPT branch (default: legacy). phase1_v1 is staged HH continuation; phase2_v1 adds shortlist/full scoring; phase3_v1 adds generator/motif/symmetry/rescue metadata.",
+        default="phase3_v1",
+        help="Continuation mode for internal ADAPT branch (default: phase3_v1). phase1_v1 is staged HH continuation; phase2_v1 adds shortlist/full scoring; phase3_v1 adds generator/motif/symmetry/rescue metadata.",
     )
     parser.add_argument(
         "--adapt-ref-source",

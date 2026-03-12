@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
-from typing import Any
+from typing import Any, Mapping
 
 from pipelines.exact_bench.noise_model_spec import (
     CalibrationGateRecord,
@@ -16,8 +16,13 @@ from pipelines.exact_bench.noise_model_spec import (
     CalibrationSnapshot,
     calibration_snapshot_to_dict,
     canonical_calibration_snapshot_payload,
+    jsonable_noise_value,
     stable_noise_hash,
 )
+
+_HOLSTEIN_BUNDLE_KEY = "holstein_bundle"
+_LAYOUT_LOCKS_KEY = "layout_locks"
+_BUNDLE_SCHEMA_VERSION = 1
 
 
 
@@ -135,6 +140,14 @@ def _qubit_records(backend: Any, num_qubits: int) -> list[CalibrationQubitRecord
         props = backend.properties()
     except Exception:
         props = None
+    target = getattr(backend, "target", None)
+    target_qubit_props = list(getattr(target, "qubit_properties", []) or []) if target is not None else []
+    target_measure_props = {}
+    if target is not None:
+        try:
+            target_measure_props = dict(target["measure"])
+        except Exception:
+            target_measure_props = {}
     out: list[CalibrationQubitRecord] = []
     for q in range(int(num_qubits)):
         qprops = {}
@@ -143,16 +156,18 @@ def _qubit_records(backend: Any, num_qubits: int) -> list[CalibrationQubitRecord
                 qprops = dict(props.qubit_property(int(q)))
             except Exception:
                 qprops = {}
+        target_qprops = target_qubit_props[int(q)] if int(q) < len(target_qubit_props) else None
+        measure_props = target_measure_props.get((int(q),), None)
         out.append(
             CalibrationQubitRecord(
                 physical_qubit=int(q),
-                T1_s=_safe_float(qprops.get("T1", None)),
-                T2_s=_safe_float(qprops.get("T2", None)),
-                readout_error=_safe_float(qprops.get("readout_error", None)),
-                readout_p01=_safe_float(qprops.get("prob_meas0_prep1", None)),
-                readout_p10=_safe_float(qprops.get("prob_meas1_prep0", None)),
-                measure_duration_s=_safe_float(qprops.get("readout_length", None)),
-                frequency=_safe_float(qprops.get("frequency", None)),
+                T1_s=_safe_float(qprops.get("T1", getattr(target_qprops, "t1", None))),
+                T2_s=_safe_float(qprops.get("T2", getattr(target_qprops, "t2", None))),
+                readout_error=_safe_float(qprops.get("readout_error", getattr(measure_props, "error", None))),
+                readout_p01=_safe_float(qprops.get("prob_meas0_prep1", getattr(measure_props, "prob_meas0_prep1", None))),
+                readout_p10=_safe_float(qprops.get("prob_meas1_prep0", getattr(measure_props, "prob_meas1_prep0", None))),
+                measure_duration_s=_safe_float(qprops.get("readout_length", getattr(measure_props, "duration", None))),
+                frequency=_safe_float(qprops.get("frequency", getattr(target_qprops, "frequency", None))),
             )
         )
     return out
@@ -165,30 +180,51 @@ def _gate_records(backend: Any) -> list[CalibrationGateRecord]:
         props = backend.properties()
     except Exception:
         props = None
-    if props is None or getattr(props, "gates", None) is None:
-        return []
     out: list[CalibrationGateRecord] = []
-    for gate_rec in list(props.gates):
-        name = str(getattr(gate_rec, "gate", getattr(gate_rec, "name", "unknown")))
-        qubits = [int(q) for q in list(getattr(gate_rec, "qubits", []))]
-        err = None
-        dur = None
-        try:
-            err = _safe_float(props.gate_error(name, qubits if len(qubits) != 1 else int(qubits[0])))
-        except Exception:
+    if props is not None and getattr(props, "gates", None) is not None:
+        for gate_rec in list(props.gates):
+            name = str(getattr(gate_rec, "gate", getattr(gate_rec, "name", "unknown")))
+            qubits = [int(q) for q in list(getattr(gate_rec, "qubits", []))]
             err = None
-        try:
-            dur = _safe_float(props.gate_length(name, qubits if len(qubits) != 1 else int(qubits[0])))
-        except Exception:
             dur = None
-        out.append(
-            CalibrationGateRecord(
-                gate_name=name,
-                qubits=qubits,
-                error=err,
-                duration_s=dur,
+            try:
+                err = _safe_float(props.gate_error(name, qubits if len(qubits) != 1 else int(qubits[0])))
+            except Exception:
+                err = None
+            try:
+                dur = _safe_float(props.gate_length(name, qubits if len(qubits) != 1 else int(qubits[0])))
+            except Exception:
+                dur = None
+            out.append(
+                CalibrationGateRecord(
+                    gate_name=name,
+                    qubits=qubits,
+                    error=err,
+                    duration_s=dur,
+                )
             )
-        )
+        if out:
+            return out
+    target = getattr(backend, "target", None)
+    if target is None:
+        return []
+    for gate_name in list(getattr(target, "operation_names", []) or []):
+        if str(gate_name) in {"measure", "delay", "reset", "barrier"}:
+            continue
+        try:
+            properties_map = dict(target[str(gate_name)])
+        except Exception:
+            continue
+        for qargs, props_rec in list(properties_map.items()):
+            qubits = [int(q) for q in list(qargs or [])]
+            out.append(
+                CalibrationGateRecord(
+                    gate_name=str(gate_name),
+                    qubits=qubits,
+                    error=_safe_float(getattr(props_rec, "error", None)),
+                    duration_s=_safe_float(getattr(props_rec, "duration", None)),
+                )
+            )
     return out
 
 
@@ -275,16 +311,86 @@ def _snapshot_from_dict(payload: dict[str, Any]) -> CalibrationSnapshot:
 
 
 
-def load_calibration_snapshot(path: str | Path) -> CalibrationSnapshot:
+def _load_snapshot_payload(path: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("Frozen calibration snapshot JSON must contain a top-level object.")
+    return dict(payload)
+
+
+
+def _normalize_snapshot_bundle(raw: Any) -> dict[str, Any]:
+    payload = dict(raw) if isinstance(raw, Mapping) else {}
+    out: dict[str, Any] = {
+        "schema_version": int(payload.get("schema_version", _BUNDLE_SCHEMA_VERSION)),
+        _LAYOUT_LOCKS_KEY: {},
+    }
+    layout_locks = payload.get(_LAYOUT_LOCKS_KEY, {})
+    if isinstance(layout_locks, Mapping):
+        for key, value in sorted(layout_locks.items(), key=lambda item: str(item[0])):
+            if isinstance(value, Mapping):
+                out[_LAYOUT_LOCKS_KEY][str(key)] = jsonable_noise_value(dict(value))
+    for key, value in sorted(payload.items(), key=lambda item: str(item[0])):
+        if str(key) in {"schema_version", _LAYOUT_LOCKS_KEY}:
+            continue
+        out[str(key)] = jsonable_noise_value(value)
+    return out
+
+
+
+def load_snapshot_bundle(path: str | Path) -> dict[str, Any]:
+    payload = _load_snapshot_payload(path)
+    return _normalize_snapshot_bundle(payload.get(_HOLSTEIN_BUNDLE_KEY, {}))
+
+
+
+def load_snapshot_layout_lock(path: str | Path, lock_key: str) -> dict[str, Any] | None:
+    bundle = load_snapshot_bundle(path)
+    record = bundle.get(_LAYOUT_LOCKS_KEY, {}).get(str(lock_key))
+    if not isinstance(record, Mapping):
+        return None
+    return dict(record)
+
+
+
+def write_snapshot_layout_lock(
+    path: str | Path,
+    snapshot: CalibrationSnapshot,
+    *,
+    lock_key: str,
+    layout_lock: Mapping[str, Any],
+) -> None:
+    bundle = load_snapshot_bundle(path) if Path(path).exists() else _normalize_snapshot_bundle({})
+    layout_locks = dict(bundle.get(_LAYOUT_LOCKS_KEY, {}))
+    layout_locks[str(lock_key)] = jsonable_noise_value(dict(layout_lock))
+    bundle[_LAYOUT_LOCKS_KEY] = layout_locks
+    write_calibration_snapshot(path, snapshot, bundle=bundle)
+
+
+
+def load_calibration_snapshot(path: str | Path) -> CalibrationSnapshot:
+    payload = _load_snapshot_payload(path)
     return _snapshot_from_dict(dict(payload))
 
 
 
-def write_calibration_snapshot(path: str | Path, snapshot: CalibrationSnapshot) -> None:
+def write_calibration_snapshot(
+    path: str | Path,
+    snapshot: CalibrationSnapshot,
+    *,
+    bundle: Mapping[str, Any] | None = None,
+) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    preserved_bundle = (
+        load_snapshot_bundle(out_path)
+        if bundle is None and out_path.exists()
+        else _normalize_snapshot_bundle(bundle)
+    )
+    payload = dict(calibration_snapshot_to_dict(snapshot))
+    if preserved_bundle.get(_LAYOUT_LOCKS_KEY):
+        payload[_HOLSTEIN_BUNDLE_KEY] = preserved_bundle
     out_path.write_text(
-        json.dumps(calibration_snapshot_to_dict(snapshot), indent=2, sort_keys=True),
+        json.dumps(payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )

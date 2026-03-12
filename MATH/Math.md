@@ -1,7 +1,7 @@
 ---
 title: "Hubbard-Holstein Mathematical Implementation (Current Linear Substitution-First Form)"
 author: "Jake Skyler Strobel (repo-grounded revision)"
-date: "March 9, 2026"
+date: "March 11, 2026"
 geometry: margin=0.8in
 fontsize: 10pt
 ---
@@ -109,6 +109,8 @@ Whenever a formula depends on the surface, the surface is named locally.
 - `pipelines/hardcoded/hh_continuation_stage_control.py`
 - `pipelines/hardcoded/hh_continuation_scoring.py`
 - `pipelines/hardcoded/handoff_state_bundle.py`
+- `pipelines/exact_bench/cross_check_suite.py`
+- `pipelines/exact_bench/hh_noise_hardware_validation.py`
 
 # 2. Ordering, Indexing, and Register Layout
 
@@ -1055,7 +1057,111 @@ after optionally dropping identity terms and sorting the Pauli words determinist
 
 ## 8.6 Exact sector energy target
 
-The exact HH target used by the hardcoded VQE surfaces is a sector-filtered exact energy, not an unrestricted full-Hilbert minimum. This is what `exact_ground_energy_sector_hh(...)` and the ED basis logic provide.
+The exact HH target used by the hardcoded VQE surfaces is a sector-filtered exact energy, not an unrestricted full-Hilbert minimum. Only the fermionic particle numbers are fixed; the phonon qubits are left unconstrained. This is what `exact_ground_energy_sector_hh(...)` and the ED basis logic provide.
+
+Write the total Hilbert space as
+$$
+\mathcal H = \mathcal H_{\mathrm{ferm}} \otimes \mathcal H_{\mathrm{ph}},
+$$
+with qubit layout
+$$
+[\,2L\ \text{fermion qubits}\mid L\cdot q_{\mathrm{pb}}\ \text{phonon qubits}\,].
+$$
+
+Let $\mathcal I_\alpha$ and $\mathcal I_\beta$ denote the fermion-qubit index sets for spin-up and spin-down. In the two supported orderings,
+$$
+\mathcal I_\alpha =
+\begin{cases}
+\{0,\dots,L-1\}, & \texttt{blocked},\\
+\{0,2,\dots,2L-2\}, & \texttt{interleaved},
+\end{cases}
+\qquad
+\mathcal I_\beta =
+\begin{cases}
+\{L,\dots,2L-1\}, & \texttt{blocked},\\
+\{1,3,\dots,2L-1\}, & \texttt{interleaved}.
+\end{cases}
+$$
+
+Using the qubit number operator
+$$
+\hat n_q = \frac{I-Z_q}{2},
+$$
+define the fermion-number operators
+$$
+\hat N_\alpha = \sum_{q\in\mathcal I_\alpha}\hat n_q,
+\qquad
+\hat N_\beta = \sum_{q\in\mathcal I_\beta}\hat n_q.
+$$
+
+For target counts $(N_\alpha,N_\beta)$, the HH sector is
+$$
+\mathcal H_{N_\alpha,N_\beta}
+=
+\left\{\,|\psi\rangle\in\mathcal H:
+\hat N_\alpha|\psi\rangle=N_\alpha|\psi\rangle,\ 
+\hat N_\beta|\psi\rangle=N_\beta|\psi\rangle
+\,\right\},
+$$
+with no restriction on the phonon occupation.
+
+Equivalently, in the computational basis $|f,p\rangle$ with fermion bits
+$f=(f_q)$ and phonon bits $p$, the projector onto this sector is
+$$
+\hat\Pi_{N_\alpha,N_\beta}
+=
+\sum_{f,p}
+\delta_{\sum_{q\in\mathcal I_\alpha} f_q,\;N_\alpha}
+\,
+\delta_{\sum_{q\in\mathcal I_\beta} f_q,\;N_\beta}
+\,
+|f,p\rangle\langle f,p|.
+$$
+
+So for an arbitrary state
+$$
+|\psi\rangle=\sum_{f,p} c_{f,p}|f,p\rangle,
+$$
+the sector-filtered component is
+$$
+\hat\Pi_{N_\alpha,N_\beta}|\psi\rangle
+=
+\sum_{f,p}
+\delta_{\sum_{q\in\mathcal I_\alpha} f_q,\;N_\alpha}
+\,
+\delta_{\sum_{q\in\mathcal I_\beta} f_q,\;N_\beta}
+\,
+c_{f,p}|f,p\rangle.
+$$
+
+If normalization is needed, use
+$$
+|\psi_{N_\alpha,N_\beta}\rangle
+=
+\frac{\hat\Pi_{N_\alpha,N_\beta}|\psi\rangle}
+{\sqrt{\langle\psi|\hat\Pi_{N_\alpha,N_\beta}|\psi\rangle}}.
+$$
+
+The exact sector energy target is then the lowest eigenvalue of the projected Hamiltonian,
+$$
+E_0^{(N_\alpha,N_\beta)}
+=
+\min_{\substack{|\psi\rangle\in\mathcal H_{N_\alpha,N_\beta}\\ \langle\psi|\psi\rangle=1}}
+\langle\psi|\hat H|\psi\rangle
+=
+\lambda_{\min}\!\left(\hat\Pi_{N_\alpha,N_\beta}\hat H\hat\Pi_{N_\alpha,N_\beta}\right).
+$$
+
+In matrix form, the implementation builds the full Hamiltonian matrix $M$,
+keeps only the basis indices satisfying the two fermion-count constraints,
+forms the submatrix
+$$
+M_{\mathrm{sector}} = M[\mathcal B_{N_\alpha,N_\beta},\mathcal B_{N_\alpha,N_\beta}],
+$$
+and returns
+$$
+E_0^{(N_\alpha,N_\beta)}=\lambda_{\min}(M_{\mathrm{sector}}).
+$$
 
 Implemented surfaces:
 
@@ -1119,6 +1225,27 @@ This is more expressive, but the split single-Pauli factors need not preserve th
 
 The physical-termwise HH ansatz keeps one parameter per physical generator before Pauli splitting.
 
+Its Hamiltonian contract is
+$$
+\hat H_{\mathrm{HH}}(t)=\hat H_t+\hat H_U+\hat H_{\mathrm{ph}}+\hat H_g+\hat H_{\mathrm{drive}}(t),
+$$
+with
+$$
+\hat H_t=-J\sum_{\langle i,j\rangle,\sigma}\left(\hat c_{i\sigma}^{\dagger}\hat c_{j\sigma}+\hat c_{j\sigma}^{\dagger}\hat c_{i\sigma}\right),
+$$
+$$
+\hat H_U=U\sum_i\hat n_{i\uparrow}\hat n_{i\downarrow},
+$$
+$$
+\hat H_{\mathrm{ph}}=\omega_0\sum_i\left(\hat n_{b,i}+\frac12\right),
+$$
+$$
+\hat H_g=g\sum_i \hat x_i\bigl(\hat n_i-\mathbb 1\bigr),\qquad \hat n_i=\hat n_{i\uparrow}+\hat n_{i\downarrow},\ \hat x_i=b_i+b_i^{\dagger},
+$$
+$$
+\hat H_{\mathrm{drive}}(t)=\sum_{i,\sigma}\bigl(v_i(t)-v_{0,i}\bigr)\hat n_{i\sigma}.
+$$
+
 For one layer,
 $$
 \hat U_{\mathrm{ptw}}^{(\ell)}=
@@ -1141,6 +1268,8 @@ $$
 $$
 \hat H_{i\sigma}^{(v)}=-v_i\hat n_{i\sigma}.
 $$
+
+In the implemented HH PTW path (`HubbardHolsteinPhysicalTermwiseAnsatz`), generator selection is done on physical sectors (`H_t`, `H_U`, `H_{\mathrm{ph}}`, `H_g`, optional `H_{\mathrm{drive}}`), then each sector is instantiated through the same `hubbard_latex_python_pairs.py` builders that immediately materialize mapped Pauli polynomials via `hubbard_*_term`, `jw_number_operator`, `boson_*` helpers. That means selection is **before Pauli-term splitting**, but each selected generator is already in mapped Pauli form by construction.
 
 This ansatz is sector-preserving in fermion space because each physical generator preserves fermion number before Pauli splitting.
 
@@ -1186,12 +1315,29 @@ $$
 =(1-\bar n)I-\frac{1}{2}(Z_{p_{i\uparrow}}+Z_{p_{i\downarrow}}).
 $$
 
-### 10.1.2 Phonon momentum-like primitive
+At half filling $N_e=L$, $\bar n=1$, so
+$$
+\tilde n_i=-\frac{1}{2}(Z_{p_{i\uparrow}}+Z_{p_{i\downarrow}}).
+$$
+This is therefore the default algebra used in HH runs when `num_particles` is set to half filling.
 
-The PAOP `P_i` primitive is
+### 10.1.2 Phonon primitives \(P_i\) and \(x_i\)
+
+The momentum-like primitive is
 $$
 P_i=i(\hat b_i^{\dagger}-\hat b_i).
 $$
+
+The displacement primitive is
+$$
+x_i=\hat b_i+\hat b_i^\dagger.
+$$
+
+In code, these are built from phonon ladder operators on the site’s phonon register inside
+`src/quantum/operator_pools/polaron_paop.py`:
+
+- `p_i(site) = i*(b_i^† - b_i)` gives \(P_i\),
+- `x_i(site)` multiplies `boson_displacement_operator(..., which="x")` so \(x_i=b_i+b_i^\dagger\).
 
 ### 10.1.3 Doublon primitive
 
@@ -1278,6 +1424,12 @@ $$
 $$
 with the distance gate `\operatorname{dist}(i,j)\le R`.
 
+The concrete operator labels emitted by the builder are
+- `paop_cloud_p(site=i->phonon=j)`,
+- `paop_cloud_x(site=i->phonon=j)`.
+
+For `paop_full`/`paop_lf_full`, effective radius is forced to at least 1 (`--paop-r=0` maps to nearest-neighbor cloud support).
+
 ### 10.2.7 Doublon-translation channels
 
 The implemented doublon-translation channels are
@@ -1286,6 +1438,10 @@ $$
 \qquad
 \mathcal O_{\mathrm{dbl\_x},i\to j}=\hat d_i x_j.
 $$
+
+The concrete labels are
+- `paop_dbl_p(site=i->phonon=j)`,
+- `paop_dbl_x(site=i->phonon=j)`.
 
 ## 10.3 Pool-family map
 
@@ -1358,17 +1514,23 @@ S_{\mathrm{simple}}
 +\lambda_F F
 -\lambda_{\mathrm{compile}} C_{\mathrm{proxy}}
 -\lambda_{\mathrm{measure}}(G_{\mathrm{new}}+S_{\mathrm{new}}+R_{\mathrm{reuse}})
--\lambda_{\mathrm{leak}}L.
+-\lambda_{\mathrm{leak}}\ell.
 $$
 
 Here
 
-- `F` is the metric proxy,
+- `F` is the current metric proxy. In the phase-2/phase-3 shortlist path it is the tangent norm proxy `F_metric`; before that upgrade it defaults to the phase-1 proxy already stored on the candidate feature,
 - `C_proxy` is the compiled-position cost proxy,
-- `G_new` is new measurement groups,
-- `S_new` is new shots,
-- `R_reuse` is grouped-reuse count cost,
-- `L` is the leakage penalty.
+- `G_new` is the number of newly introduced measurement-group keys under the grouped-label reuse audit,
+- `S_new` is the associated nominal shot proxy. In the current statevector pipeline this remains a measurement-burden accounting scalar, not a device-only hardware counter,
+- `R_reuse` is the grouped-reuse cache-miss burden. In the current implementation it is stored separately even when it numerically tracks `G_new`,
+- `\ell` is the leakage penalty. Here this is not measured hardware leakage; it is the static `leakage_risk` attached to the generator symmetry metadata in `pipelines/hardcoded/hh_continuation_symmetry.py`.
+
+For the currently implemented family defaults in `build_symmetry_spec`,
+
+- `paop`, `paop_*`, `uccsd`, `hva`, and `core` receive `\ell=0`,
+- `residual`, `full_meta`, and `full_hamiltonian` receive `\ell=0.1`,
+- uncategorized families fall back to `\ell=0.2`.
 
 ### 10.6.2 Trust-region drop proxy
 
@@ -1388,16 +1550,34 @@ g_{\mathrm{lcb}}\alpha_{\max}-\frac{1}{2}h_{\mathrm{eff}}\alpha_{\max}^2,
 \end{cases}
 $$
 
+The implemented effective curvature proxy is
+$$
+h_{\mathrm{eff}}=
+\begin{cases}
+\lambda_F F, & \hat h \text{ is unavailable},\\
+\max\{0,\hat h\}, & \hat h \text{ is available but } b \text{ or } H_{\mathrm{window}} \text{ is unavailable},\\
+\max\{0,\hat h-b^{\top}(H_{\mathrm{window}}+\lambda_H I)^{-1}b\},
+& \text{otherwise.}
+\end{cases}
+$$
+
+Here
+
+- `\hat h` is stored as `h_hat` and defaults to the current `F_metric`,
+- `b` is stored as `b_hat` and contains overlaps between the candidate tangent and the active-window tangents,
+- `H_window` is stored as `H_window` and is the Gram matrix of active-window tangents,
+- when optimizer-memory preconditioner data is present, the code adds a diagonal regularizer to `H_window` before solving the Schur-style correction.
+
 ### 10.6.3 `full_v2`
 
 The implemented full score is
 $$
 S_{\mathrm{full}}
 =
-\exp(-\eta_L L)
-\,\mathrm{novelty}^{\gamma_N}
+\exp(-\eta_L \ell)
+\,\nu^{\gamma_N}
 \,\frac{\Delta E_{\mathrm{TR}}}{K}
-+w_{\mathrm{motif}}\,B_{\mathrm{motif}},
++w_{\mathrm{motif}}\,m,
 $$
 with
 $$
@@ -1409,6 +1589,57 @@ K=
 +w_P\frac{P_{\mathrm{opt}}}{P_{\mathrm{ref}}}
 +w_c\frac{R_{\mathrm{reuse}}}{R_{\mathrm{ref}}}
 +w_{\mathrm{life}}\,K_{\mathrm{life}}.
+$$
+
+The novelty factor is the implemented tangent-space novelty oracle
+$$
+\nu
+=
+\mathrm{clip}_{[0,1]}
+\left(
+1-\frac{b^{\top}(H_{\mathrm{window}}+\varepsilon_{\mathrm{nov}}I)^{-1}b}{F}
+\right).
+$$
+
+So `\nu` is not merely “a term has not been used yet.” It is high when the candidate tangent points outside the span of the current active-window tangents, and it drops toward `0` when the candidate is largely redundant with that span. If the active window is empty, the implementation sets `\nu=1`.
+
+The motif bonus `m` is also metadata-based. The code matches the current generator against stored motif records by
+
+- `family_id`,
+- `template_id`,
+- `support_site_offsets`,
+- boundary behavior.
+
+So the implemented motif transfer rewards generators that match previously useful HH continuation motifs. It is not a literal string-completion rule such as “`XY` appeared before, therefore prefer `Z` next.”
+
+The burden terms in `K` are the currently implemented proxies:
+
+- `D` is the depth-cost proxy,
+- `G_new` is new grouped-measurement burden,
+- `S_new` is the nominal shot burden,
+- `P_opt = |\texttt{refit\_window\_indices}|` is the active local reoptimization dimension, so it can vary with insertion position and window policy,
+- `R_reuse` is the grouped-reuse burden.
+
+When lifetime costing is enabled, the code uses
+$$
+K_{\mathrm{life}}
+=
+N_{\mathrm{rem}}
+\left(
+\frac{D}{D_{\mathrm{ref}}}
+\;+\;
+\frac{G_{\mathrm{new}}}{G_{\mathrm{ref}}}
+\;+\;
+\frac{S_{\mathrm{new}}}{S_{\mathrm{ref}}}
+\;+\;
+\frac{R_{\mathrm{reuse}}}{R_{\mathrm{ref}}}
+\;+\;
+\frac{P_{\mathrm{opt}}}{P_{\mathrm{ref}}}
+\right),
+$$
+where `N_rem` is the remaining-evaluations proxy. In the implemented `remaining_depth` mode,
+$$
+N_{\mathrm{rem}}=d_{\max}-d+1.
 $$
 
 This is the implemented “useful predicted drop divided by burden” surface, not a future plan.
@@ -1548,6 +1779,290 @@ t_n+c_j\Delta t,
 $$
 not at left, midpoint, or right rule points chosen by a legacy sampler flag.
 
+Code anchor: `pipelines/hardcoded/hubbard_pipeline.py`
+
+## 12.4 Reference propagator versus reported trajectory propagator
+
+The hardcoded pipeline now uses an explicit split between
+
+1. the **reported trajectory propagator** selected by `--propagator`, and
+2. the **reference / exact branch propagator** used for fidelity and exact-observable comparison.
+
+Write
+$$
+N_{\mathrm{macro}}=\texttt{trotter\_steps},
+\qquad
+M_{\mathrm{ref}}=\max\{1,\texttt{exact\_steps\_multiplier}\},
+\qquad
+N_{\mathrm{ref}}=M_{\mathrm{ref}}N_{\mathrm{macro}}.
+$$
+
+### 12.4.1 Static reference branch
+
+If the drive is disabled, the reference branch is the exact eigendecomposition evolution
+$$
+\hat H_{\mathrm{static}}=V\Lambda V^{\dagger},
+\qquad
+|\psi_{\mathrm{ref}}(t)\rangle
+=
+V e^{-i\Lambda t}V^{\dagger}|\psi(0)\rangle.
+$$
+
+### 12.4.2 Drive-enabled reference branch
+
+If the drive is enabled, the reference branch is no longer built from one static eigendecomposition. The code switches to a piecewise-constant exact reference,
+$$
+|\psi_{\mathrm{ref}}(t)\rangle
+=
+\hat U_{\mathrm{piecewise}}^{(\mathrm{ref})}(t)|\psi(0)\rangle,
+$$
+with
+$$
+\hat U_{\mathrm{piecewise}}^{(\mathrm{ref})}(t)
+\approx
+\prod_{r=0}^{N_{\mathrm{ref}}-1}
+\exp\!\left[-i\,\Delta t_{\mathrm{ref}}\,\hat H\!\left(t_r^{\star}\right)\right],
+\qquad
+\Delta t_{\mathrm{ref}}=\frac{t}{N_{\mathrm{ref}}},
+$$
+where `t_r^*` follows the selected time-sampling rule for the piecewise reference path.
+
+So the implemented refinement law is explicit:
+$$
+N_{\mathrm{ref}}=\texttt{exact\_steps\_multiplier}\times \texttt{trotter\_steps}.
+$$
+
+This multiplier changes the reference path only. It does **not** change the macro-step count of `cfqm4` or `cfqm6`.
+
+Code anchor: `pipelines/hardcoded/hubbard_pipeline.py`
+
+## 12.5 CFQM macro-step mathematics
+
+For CFQM propagation the hardcoded pipeline loads a scheme
+$$
+\{(a_m,c_m)\}_{m=1}^{M}
+$$
+from `get_cfqm_scheme(...)` and validates it with `validate_scheme(...)`.
+
+For one macro-step of size `\Delta t`, the implemented CFQM mathematical surface is
+$$
+\hat U_{\mathrm{CFQM}}(\Delta t;t_n)
+\approx
+\prod_{m=1}^{M}
+\exp\!\left[
+-i\,a_m\Delta t\,\hat H(t_n+c_m\Delta t)
+\right].
+$$
+
+The exposed scheme ids are
+$$
+\texttt{cfqm4}\equiv \texttt{CF4:2},
+\qquad
+\texttt{cfqm6}\equiv \texttt{CF6:5Opt}.
+$$
+
+The stage exponential backend is then chosen from
+$$
+\texttt{cfqm\_stage\_exp}\in
+\{\texttt{expm\_multiply\_sparse},\ \texttt{dense\_expm},\ \texttt{pauli\_suzuki2}\}.
+$$
+
+The code also states two runtime semantics directly:
+
+- midpoint/left/right sampling is ignored on CFQM paths because the sample nodes are the fixed `c_m`;
+- `pauli_suzuki2` changes the stage exponential implementation and therefore collapses the overall method to a second-order inner product-formula realization.
+
+Code anchors:
+
+- `src/quantum/time_propagation/cfqm_schemes.py`
+- `src/quantum/time_propagation/cfqm_propagator.py`
+- `pipelines/hardcoded/hubbard_pipeline.py`
+
+## 12.6 Filtered exact manifold and subspace fidelity
+
+The hardcoded pipeline does not compare a propagated trial state only against a single exact vector. It constructs a filtered exact manifold at `t=0` by selecting every exact state in the target sector whose energy satisfies
+$$
+E\le E_0+\varepsilon_{\mathrm{subspace}},
+\qquad
+\varepsilon_{\mathrm{subspace}}=\texttt{fidelity\_subspace\_energy\_tol}.
+$$
+
+If the resulting orthonormal basis at `t=0` is
+$$
+V_0=[|v_1(0)\rangle,\dots,|v_r(0)\rangle],
+$$
+then each basis vector is propagated by the same reference propagator used for the exact branch, producing
+$$
+V(t)=[|v_1(t)\rangle,\dots,|v_r(t)\rangle].
+$$
+
+After re-orthonormalization the time-dependent projector is
+$$
+\hat P_{\mathrm{gs,filtered}}(t)=V(t)V(t)^{\dagger}.
+$$
+
+The reported projected fidelities are therefore
+$$
+F_{\mathrm{legacy}}(t)
+=
+\langle \psi_{\mathrm{legacy,trot}}(t)|
+\hat P_{\mathrm{gs,filtered}}(t)
+|\psi_{\mathrm{legacy,trot}}(t)\rangle,
+$$
+$$
+F_{\mathrm{paop}}(t)
+=
+\langle \psi_{\mathrm{paop,trot}}(t)|
+\hat P_{\mathrm{gs,filtered}}(t)
+|\psi_{\mathrm{paop,trot}}(t)\rangle,
+$$
+$$
+F_{\mathrm{hva}}(t)
+=
+\langle \psi_{\mathrm{hva,trot}}(t)|
+\hat P_{\mathrm{gs,filtered}}(t)
+|\psi_{\mathrm{hva,trot}}(t)\rangle.
+$$
+
+The compatibility key `fidelity` follows the currently selected legacy branch, while the branch-resolved keys
+
+- `fidelity_paop_trotter`,
+- `fidelity_hva_trotter`
+
+remain explicit in the payload.
+
+Code anchor: `pipelines/hardcoded/hubbard_pipeline.py`
+
+## 12.7 Branch-resolved observable contracts
+
+The hardcoded pipeline now propagates several explicit branch states instead of only one ansatz branch:
+
+1. filtered exact-sector ground-state reference,
+2. exact propagation from the PAOP / ADAPT handoff state,
+3. Trotter or CFQM propagation from the PAOP / ADAPT handoff state,
+4. exact propagation from the hardcoded VQE branch,
+5. Trotter or CFQM propagation from the hardcoded VQE branch.
+
+Write these as
+$$
+|\psi_{\mathrm{gs,exact}}(t)\rangle,\ 
+|\psi_{\mathrm{paop,exact}}(t)\rangle,\ 
+|\psi_{\mathrm{paop,prop}}(t)\rangle,\ 
+|\psi_{\mathrm{hva,exact}}(t)\rangle,\ 
+|\psi_{\mathrm{hva,prop}}(t)\rangle.
+$$
+
+The static-energy observable on any branch `b` is
+$$
+E_{\mathrm{static}}^{(b)}(t)
+=
+\langle \psi_b(t)|\hat H_{\mathrm{static}}|\psi_b(t)\rangle.
+$$
+
+If the drive is enabled, the total instantaneous energy on branch `b` is
+$$
+E_{\mathrm{total}}^{(b)}(t)
+=
+\left\langle \psi_b(t)\left|
+\hat H_{\mathrm{static}}
++\hat H_{\mathrm{drive}}(t_{\mathrm{drive}})
+\right|\psi_b(t)\right\rangle,
+\qquad
+t_{\mathrm{drive}}=\texttt{drive\_t0}+t.
+$$
+
+The site-resolved densities and doublon observables are evaluated branchwise as
+$$
+n_{i\uparrow}^{(b)}(t)=\langle \psi_b(t)|\hat n_{i\uparrow}|\psi_b(t)\rangle,
+\qquad
+n_{i\downarrow}^{(b)}(t)=\langle \psi_b(t)|\hat n_{i\downarrow}|\psi_b(t)\rangle,
+$$
+$$
+n_i^{(b)}(t)=n_{i\uparrow}^{(b)}(t)+n_{i\downarrow}^{(b)}(t),
+\qquad
+D^{(b)}(t)=\sum_i\langle \psi_b(t)|\hat n_{i\uparrow}\hat n_{i\downarrow}|\psi_b(t)\rangle.
+$$
+
+When the drive is disabled, the code path reduces to
+$$
+E_{\mathrm{total}}^{(b)}(t)=E_{\mathrm{static}}^{(b)}(t).
+$$
+
+Code anchor: `pipelines/hardcoded/hubbard_pipeline.py`
+
+## 12.8 `adapt_json` import and handoff contract
+
+The hardcoded pipeline exposes an explicit import surface
+$$
+\texttt{initial\_state\_source}=\texttt{adapt\_json},
+$$
+with the required input path
+$$
+\texttt{adapt\_input\_json}.
+$$
+
+The imported statevector is the amplitude payload written by the handoff bundle path, so the mathematical initial condition is
+$$
+|\psi_{\mathrm{paop}}(0)\rangle = |\psi_{\mathrm{imported\ adapt}}(0)\rangle.
+$$
+
+The hardcoded pipeline also performs a physics-setting comparison between the current run arguments and the imported JSON metadata. If the mismatch set is
+$$
+\mathcal M
+=
+\{\text{field}\mid \text{current setting} \neq \text{imported setting}\},
+$$
+then:
+
+- if `adapt_strict_match = true` and `\mathcal M\neq \varnothing`, execution stops with an error;
+- if `adapt_strict_match = false`, the mismatches are retained as provenance and the import continues.
+
+The imported-handoff payload therefore has two simultaneous meanings:
+
+1. it defines the propagated PAOP branch initial state,
+2. it defines an auditable metadata match or mismatch contract through fields such as
+   - `metadata_match_passed`,
+   - `metadata_mismatches`,
+   - `pool_type`,
+   - `ansatz_depth`,
+   - `energy`,
+   - `abs_delta_e`.
+
+Code anchors:
+
+- `pipelines/hardcoded/hubbard_pipeline.py`
+- `pipelines/hardcoded/handoff_state_bundle.py`
+
+## 12.9 Exposed phase-3 continuation surfaces
+
+The hardcoded pipeline now exposes several continuation-era control surfaces even when this manuscript does not upgrade them into stronger mathematical claims than the code presently supports.
+
+The exposed continuation-mode surface is
+$$
+\texttt{adapt\_continuation\_mode}\in
+\{\texttt{legacy},\texttt{phase1\_v1},\texttt{phase2\_v1},\texttt{phase3\_v1}\}.
+$$
+
+The exposed symmetry-mitigation mode names are
+$$
+\texttt{phase3\_symmetry\_mitigation\_mode}\in
+\{\texttt{off},\texttt{verify\_only},\texttt{postselect\_diag\_v1},\texttt{projector\_renorm\_v1}\}.
+$$
+
+The exposed runtime split surface is
+$$
+\texttt{phase3\_runtime\_split\_mode}\in
+\{\texttt{off},\texttt{shortlist\_pauli\_children\_v1}\}.
+$$
+
+Additional phase-3-adjacent control surfaces include
+
+- `phase3_motif_source_json`,
+- `phase3_enable_rescue`,
+- `phase3_lifetime_cost_mode`.
+
+This manuscript therefore treats those names as **implemented runtime surfaces**. It does **not** promote every broader continuation-theory claim from the design notes into a present-tense statement unless a code anchor is present in the main implementation.
+
 Implemented surfaces:
 
 - `src/quantum/drives_time_potential.py`
@@ -1627,7 +2142,392 @@ The mathematical meaning of the replay payload is straightforward:
 
 The raw staged ADAPT CLI already exposes phase-3 symmetry mode names, but on that raw path they are still primarily metadata/telemetry hooks. This manuscript therefore states the continuation/symmetry payload as an implemented data contract without overstating raw staged-ADAPT enforcement beyond what the code currently does.
 
-# 14. Final Primitive-Closed Summary
+# 14. Cross-Check Suite and Exact-Benchmark Contracts
+
+## 14.1 Trial matrix by problem family
+
+Code anchor: `pipelines/exact_bench/cross_check_suite.py`
+
+The cross-check suite implements an exact-benchmark matrix over ansatz families and ADAPT modes.
+
+For pure Hubbard the implemented trial set is
+$$
+\mathcal T_{\mathrm{Hub}}
+=
+\{
+\text{HVA-Layerwise},
+\text{UCCSD-Layerwise},
+\text{ADAPT(UCCSD)},
+\text{ADAPT(full\_H)}
+\}.
+$$
+
+For Hubbard-Holstein the implemented trial set is
+$$
+\mathcal T_{\mathrm{HH}}
+=
+\{
+\text{HH-Termwise},
+\text{HH-Layerwise},
+\text{ADAPT(full\_H)}
+\}.
+$$
+
+Each trial uses the same Hamiltonian instance for the chosen problem and then compares its variational energy against the same sector-filtered exact reference.
+
+## 14.2 Auto-scaled parameter resolution
+
+Code anchor: `pipelines/exact_bench/cross_check_suite.py`
+
+The suite resolves its runtime parameters by an explicit override-or-table rule. If `x` is a configurable parameter such as
+
+- `vqe_reps`,
+- `vqe_restarts`,
+- `vqe_maxiter`,
+- `vqe_method`,
+- `trotter_steps`,
+- `num_times`,
+- `t_final`,
+
+then the resolved value is
+$$
+x_{\mathrm{resolved}}
+=
+\begin{cases}
+x_{\mathrm{CLI}}, & x_{\mathrm{CLI}}\neq \varnothing,\\
+x_{\mathrm{table}}, & x_{\mathrm{CLI}}=\varnothing.
+\end{cases}
+$$
+
+For HH runs the suite also enforces the method contract
+$$
+\texttt{vqe\_method}=\texttt{SPSA},
+$$
+so HH cross-checks do not silently drop onto legacy deterministic optimizer settings.
+
+The three table sources are separated in code:
+
+- Hubbard trajectory / VQE defaults from `_get_hubbard_params(L)`,
+- HH enrichment from `_get_hh_params(L,n_{\mathrm{ph,max}})`,
+- ADAPT defaults from `_get_adapt_params(L)`.
+
+## 14.3 Exact target and shared reference-state construction
+
+Code anchor: `pipelines/exact_bench/cross_check_suite.py`
+
+The cross-check suite constructs one Hamiltonian matrix
+$$
+\hat H \longrightarrow H_{\mathrm{mat}},
+$$
+then computes the exact sector-filtered target
+$$
+E_{\mathrm{exact,filtered}}
+=
+\min_{\psi\in \mathcal S_{\mathrm{sector}}}
+\langle \psi|\hat H|\psi\rangle.
+$$
+
+For HH, the common reference state is
+$$
+|\psi_{\mathrm{ref}}^{\mathrm{HH}}\rangle
+=
+|\mathrm{vac}_{\mathrm{ph}}\rangle\otimes|\Phi_{\mathrm{HF}}\rangle.
+$$
+
+For pure Hubbard, the common reference state is the HF basis state
+$$
+|\psi_{\mathrm{ref}}^{\mathrm{Hub}}\rangle
+=
+|\Phi_{\mathrm{HF}}\rangle.
+$$
+
+So every variational trial begins from the same physical reference within a given problem instance, and only the ansatz family or ADAPT pool changes.
+
+## 14.4 Per-trial energy and trajectory semantics
+
+Code anchor: `pipelines/exact_bench/cross_check_suite.py`
+
+If trial `\tau` returns variational state `|\psi_{\tau}\rangle`, then its benchmark energy gap is
+$$
+\Delta E_{\tau}
+=
+E_{\tau}-E_{\mathrm{exact,filtered}},
+\qquad
+|\Delta E_{\tau}|=\texttt{delta\_E\_abs}.
+$$
+
+After VQE or ADAPT state preparation, every trial is propagated on the same common grid:
+$$
+t_n\in \mathrm{linspace}(0,t_{\mathrm{final}},N_t),
+\qquad
+N_t=\texttt{num\_times}.
+$$
+
+The propagated trajectory of each trial then stores the same observable families:
+
+- projected fidelity,
+- exact and Trotter energy,
+- site-0 spin occupations,
+- total doublon.
+
+So the trajectory comparison is controlled: the ansatz family changes, but the Hamiltonian, reference target, and propagation grid do not.
+
+## 14.5 JSON and PDF artifact contracts
+
+Code anchor: `pipelines/exact_bench/cross_check_suite.py`
+
+The machine-readable payload begins with
+$$
+\{
+\texttt{cross\_check\_suite}: \texttt{true},
+\texttt{parameters}: \cdots,
+\texttt{exact\_ground\_energy}: E_{\mathrm{exact,filtered}},
+\texttt{trials}: [\cdots]
+\}.
+$$
+
+For each trial, the summary contract includes
+
+- `energy`,
+- `exact_energy`,
+- `delta_e`,
+- `delta_E_abs`,
+- `num_parameters`,
+- `nfev`,
+- `runtime_s`,
+- ADAPT depth and stop-reason fields when the method kind is ADAPT.
+
+The PDF contract is not only a raw command dump. It contains
+
+1. a parameter manifest,
+2. an executive summary,
+3. a scoreboard table,
+4. per-trial trajectory pages,
+5. overlay appendix pages,
+6. the executed command page.
+
+So the cross-check suite is mathematically a multi-trial map
+$$
+\tau\mapsto
+\left(
+E_{\tau},
+\Delta E_{\tau},
+\{\mathcal O_{\tau}(t_n)\}_{n=0}^{N_t-1}
+\right),
+$$
+with a fixed exact target and fixed time grid.
+
+Implemented surfaces:
+
+- `pipelines/exact_bench/cross_check_suite.py`
+
+# 15. Noise Validation, Symmetry-Mitigation, and Legacy-Parity Contracts
+
+## 15.1 Filtered versus full exact targets
+
+Code anchor: `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+The noise-validation path stores two distinct exact energies:
+$$
+E_{\mathrm{exact,filtered}}
+=
+\min_{\psi\in \mathcal S_{\mathrm{sector}}}\langle \psi|\hat H|\psi\rangle,
+\qquad
+E_{\mathrm{exact,full}}
+=
+\min \mathrm{spec}(H_{\mathrm{mat}}).
+$$
+
+The filtered energy is the primary VQE comparison target in HH validation, while the full-Hilbert minimum is retained separately as provenance.
+
+## 15.2 Noisy-minus-ideal observable deltas
+
+Code anchor: `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+For each trajectory observable `\mathcal O(t)` on the validation grid, the payload records a noisy value, an ideal value, and a difference field
+$$
+\Delta \mathcal O(t)
+=
+\mathcal O_{\mathrm{noisy}}(t)-\mathcal O_{\mathrm{ideal}}(t).
+$$
+
+In particular the validation runner explicitly stores
+$$
+\Delta E_{\mathrm{static}}(t)
+=
+E_{\mathrm{static,trotter}}^{\mathrm{noisy}}(t)
+-
+E_{\mathrm{static,trotter}}^{\mathrm{ideal}}(t),
+$$
+$$
+\Delta D(t)
+=
+D_{\mathrm{trotter}}^{\mathrm{noisy}}(t)
+-
+D_{\mathrm{trotter}}^{\mathrm{ideal}}(t),
+$$
+with companion stderr fields carried in the payload and plotted as uncertainty bands in the PDF.
+
+At the VQE level the same noisy-minus-ideal logic is retained:
+$$
+\Delta E_{\mathrm{noise}}
+=
+E_{\mathrm{noisy}}-E_{\mathrm{ideal\ reference}}.
+$$
+
+## 15.3 Legacy parity gate
+
+Code anchor: `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+The legacy parity helper compares the new ideal trajectory against a locked legacy reference trajectory.
+
+For an observable `\mathcal O` on grid points `t_n`, the code computes
+$$
+\delta_{\mathcal O}^{\max}
+=
+\max_n
+\left|
+\mathcal O_{\mathrm{new,ideal}}(t_n)
+-
+\mathcal O_{\mathrm{legacy}}(t_n)
+\right|,
+$$
+$$
+\delta_{\mathcal O}^{\mathrm{mean}}
+=
+\frac{1}{N_t}\sum_n
+\left|
+\mathcal O_{\mathrm{new,ideal}}(t_n)
+-
+\mathcal O_{\mathrm{legacy}}(t_n)
+\right|,
+$$
+$$
+\delta_{\mathcal O}^{\mathrm{final}}
+=
+\left|
+\mathcal O_{\mathrm{new,ideal}}(t_{N_t-1})
+-
+\mathcal O_{\mathrm{legacy}}(t_{N_t-1})
+\right|.
+$$
+
+The pass condition is conjunctive:
+$$
+\texttt{passed}_{\mathcal O}
+\iff
+\bigl(\texttt{time\_grid\_match}=\mathrm{true}\bigr)
+\land
+\bigl(\delta_{\mathcal O}^{\max}\le \texttt{tolerance}\bigr).
+$$
+
+The global verdict is
+$$
+\texttt{passed\_all}
+\iff
+\texttt{time\_grid\_match}
+\land
+\bigwedge_{\mathcal O\in\mathcal O_{\mathrm{cmp}}}
+\texttt{passed}_{\mathcal O}.
+$$
+
+This is stricter than a pointwise visual comparison: an unequal time grid already fails the parity contract.
+
+## 15.4 Same-anchor paired comparison semantics
+
+Code anchor: `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+The paired-anchor validation path evaluates one common workload / observable pair across several execution modes while retaining shared-anchor evidence.
+
+Abstractly it evaluates a fixed tuple
+$$
+\bigl(\hat U,\hat O,\text{lock family}\bigr)
+$$
+across several mode labels `m`, producing rows
+$$
+r_m=
+\left(
+\text{mode}_m,\,
+\text{executor}_m,\,
+\text{noise kind}_m,\,
+\mu_m,\,
+\sigma_m,\,
+\text{layout/provenance hashes}_m
+\right).
+$$
+
+The comparability payload then records whether these rows share anchor evidence such as
+
+- backend identity,
+- snapshot hash,
+- layout hash,
+- used physical qubits,
+- used physical edges,
+- circuit-structure hash,
+- runtime-execution-bundle relationships.
+
+So the same-anchor block is mathematically a controlled multi-mode comparison of one fixed workload rather than a loose comparison of different circuits.
+
+## 15.5 Implemented symmetry-mitigation mode surface
+
+Code anchor: `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+The validation runner exposes the symmetry-mitigation mode names
+$$
+\texttt{symmetry\_mitigation\_mode}\in
+\{
+\texttt{off},
+\texttt{verify\_only},
+\texttt{postselect\_diag\_v1},
+\texttt{projector\_renorm\_v1}
+\}.
+$$
+
+These modes are normalized into the noisy-oracle configuration and, separately, into the ideal-reference symmetry-mitigation configuration.
+
+This manuscript therefore states the implemented contract conservatively:
+
+1. the mode names are live runtime inputs,
+2. the chosen mode is retained in the validation provenance,
+3. the PDF and JSON surfaces report the mitigation configuration,
+4. the main-body mathematics here does not claim more internal estimator algebra than the code surfaces explicitly expose in this audit.
+
+## 15.6 Manifest and provenance hashes
+
+Code anchor: `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+The validation payload tracks provenance through explicit hash and lock fields rather than only through human-readable text.
+
+The recorded identifiers include
+
+- `resolved_noise_spec_hash`,
+- `snapshot_hash`,
+- `layout_hash`,
+- `transpile_hash`,
+- `circuit_structure_hash`,
+- `noise_artifact_hash`,
+- `layout_anchor_source`,
+- `runtime_execution_bundle`.
+
+So the validation artifact is mathematically a tuple
+$$
+\mathcal V=
+\bigl(
+\text{settings},
+\text{filtered/full exact targets},
+\text{noisy/ideal observables},
+\text{legacy parity verdict},
+\text{paired-anchor evidence},
+\text{provenance hashes}
+\bigr),
+$$
+not just a trajectory dump.
+
+Implemented surfaces:
+
+- `pipelines/exact_bench/hh_noise_hardware_validation.py`
+
+# 16. Final Primitive-Closed Summary
 
 The full repository-aligned substitution chain is now linear and closed:
 
@@ -1641,6 +2541,43 @@ The full repository-aligned substitution chain is now linear and closed:
 8. propagate those operators into the statevector primitives,
 9. build the current hardcoded HH ansatz families from those same operators,
 10. build PAOP and staged continuation objects from those same explicit primitives,
-11. serialize the resulting continuation and state handoff with the implemented payload contract.
+11. define the reported propagator, reference branch, filtered exact manifold, and branch-resolved observables on top of those same operators,
+12. serialize the resulting continuation and state handoff with the implemented payload contract,
+13. benchmark multiple conventional and ADAPT trial families against the same sector-filtered exact target on a common propagation grid,
+14. validate noisy, ideal, and legacy trajectories with explicit parity gates and provenance hashes.
 
-This is exactly the manuscript shape the current repository supports: linear, substitution-first, and implementation-backed, without a prospective future layer.
+This is exactly the manuscript shape the current repository supports: linear, substitution-first, implementation-backed, and extended through the current propagation, benchmark, and validation contracts without promoting speculative future design claims into the main body.
+
+# Appendix A. Spec-only or not-located surfaces kept out of the main body
+
+This appendix records material that appears in `MATH/IMPLEMENT_SOON.md` or `MATH/IMPLEMENT_NEXT.md` but is **not** promoted into the main manuscript as an implemented claim unless a direct code anchor was located in the scoped audit above.
+
+## A.1 Broader continuation-theory items
+
+The two implementation-spec documents describe a broader continuation architecture, including items such as
+
+- larger live selective macro-splitting frameworks,
+- richer motif transfer and multi-source tiling,
+- broader active symmetry-mitigation architecture,
+- extended replay / rescue / continuation scoring theory.
+
+Status in this manuscript:
+
+- these ideas are **not** used as main-body source material;
+- only runtime surfaces actually located in code, such as exposed mode names and handoff payloads, are promoted into present-tense chapters above.
+
+## A.2 Amplitude-comparison compare path
+
+The drive-amplitude comparison compare-pipeline path is documented in `pipelines/run_guide.md`, including PDF and metrics-artifact descriptions.
+
+Status in this audit:
+
+- **not located in current scoped code search** across the inspected `pipelines/hardcoded/`, `pipelines/exact_bench/`, and `src/quantum/` surfaces;
+- therefore it remains appendix-only here and is not stated as a present-tense implemented contract in the main manuscript.
+
+## A.3 Appendix rule
+
+The operational rule for this manuscript is therefore:
+
+1. main body = code-backed present-tense mathematics and payload/report contracts,
+2. appendix = spec-only, design-note, or not-located material that should not be mistaken for implemented behavior in this checkout.

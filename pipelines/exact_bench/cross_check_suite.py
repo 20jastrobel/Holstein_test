@@ -1331,7 +1331,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--U", type=float, default=4.0, help="Onsite repulsion")
     p.add_argument("--dv", type=float, default=0.0, help="Staggered potential")
     p.add_argument("--ordering", default="interleaved", choices=["interleaved", "blocked"])
-    p.add_argument("--boundary", default="periodic", choices=["periodic", "open"])
+    p.add_argument("--boundary", default="open", choices=["periodic", "open"])
     p.add_argument("--seed", type=int, default=42, help="RNG seed")
 
     # HH-specific

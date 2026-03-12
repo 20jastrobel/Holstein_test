@@ -37,10 +37,17 @@ _ALLOWED_MITIGATION_BUNDLES = {
     "readout_only",
     "light_counts",
     "runtime_suppressed",
+    "runtime_layer_learned",
     "report_heavy",
 }
 _ALLOWED_LAYOUT_POLICIES = {"auto_then_lock", "fixed_patch", "frozen_layout"}
 _ALLOWED_SCHEDULE_POLICIES = {"none", "asap"}
+_ALLOWED_RUNTIME_TWIRLING_STRATEGIES = {
+    "active",
+    "active-circuit",
+    "active-accum",
+    "all",
+}
 
 
 def _get_value(raw: Any, key: str, default: Any = None) -> Any:
@@ -98,6 +105,77 @@ def _canonical_str_list(raw: Any) -> list[str]:
     if raw is None or raw == "" or raw == () or raw == []:
         return []
     return sorted(str(v) for v in list(raw))
+
+
+def _mitigation_has_layer_noise_model(raw_mitigation: Any) -> bool:
+    if isinstance(raw_mitigation, Mapping):
+        return (
+            raw_mitigation.get("layer_noise_model", None) is not None
+            or raw_mitigation.get(
+                "layer_noise_model_json",
+                raw_mitigation.get("layerNoiseModelJson", None),
+            )
+            not in {None, "", "none"}
+        )
+    return False
+
+
+def normalize_runtime_twirling_config(raw: Any) -> dict[str, Any]:
+    nested = _get_value(raw, "runtime_twirling", None)
+    nested_empty = nested is None or nested == "" or nested == () or nested == []
+    source = raw if nested_empty else nested
+
+    enable_gates = bool(
+        _get_value(
+            source,
+            "enable_gates",
+            _get_value(raw, "runtime_enable_gate_twirling", False),
+        )
+    )
+    enable_measure = bool(
+        _get_value(
+            source,
+            "enable_measure",
+            _get_value(raw, "runtime_enable_measure_twirling", False),
+        )
+    )
+    num_randomizations_raw = _get_value(
+        source,
+        "num_randomizations",
+        _get_value(raw, "runtime_twirling_num_randomizations", None),
+    )
+    strategy_raw = _get_value(
+        source,
+        "strategy",
+        _get_value(raw, "runtime_twirling_strategy", None),
+    )
+
+    num_randomizations = (
+        None if num_randomizations_raw in {None, "", "none"} else int(num_randomizations_raw)
+    )
+    strategy = None if strategy_raw in {None, "", "none"} else str(strategy_raw).strip().lower()
+
+    if num_randomizations is not None and int(num_randomizations) <= 0:
+        raise ValueError("runtime twirling num_randomizations must be >= 1.")
+    if strategy is not None and strategy not in _ALLOWED_RUNTIME_TWIRLING_STRATEGIES:
+        raise ValueError(
+            "Unsupported runtime twirling strategy {!r}; expected one of {}.".format(
+                strategy, sorted(_ALLOWED_RUNTIME_TWIRLING_STRATEGIES)
+            )
+        )
+    if (num_randomizations is not None or strategy is not None) and not (
+        enable_gates or enable_measure
+    ):
+        raise ValueError(
+            "runtime twirling parameters require gate or measure twirling to be enabled."
+        )
+
+    return {
+        "enable_gates": bool(enable_gates),
+        "enable_measure": bool(enable_measure),
+        "num_randomizations": num_randomizations,
+        "strategy": strategy,
+    }
 
 
 @dataclass(frozen=True)
@@ -195,6 +273,8 @@ class NoiseArtifact:
     mapped_observable: Any | None = None
     circuit_structure_hash: str | None = None
     layout_hash: str | None = None
+    fixed_couplers_status: dict[str, Any] | None = None
+    patch_selection_summary: dict[str, Any] | None = None
 
 
 
@@ -305,21 +385,37 @@ def noise_artifact_metadata(artifact: NoiseArtifact) -> dict[str, Any]:
         "noise_artifact_hash": str(artifact.noise_artifact_hash),
         "circuit_structure_hash": artifact.circuit_structure_hash,
         "layout_hash": artifact.layout_hash,
+        "fixed_couplers_status": jsonable_noise_value(artifact.fixed_couplers_status),
+        "patch_selection_summary": jsonable_noise_value(artifact.patch_selection_summary),
     }
 
 
 
-def _normalize_mitigation_bundle(raw_mitigation: Any, executor: str, noise_kind: str) -> str:
+def _normalize_mitigation_bundle(
+    raw_mitigation: Any,
+    executor: str,
+    noise_kind: str,
+    runtime_twirling: Mapping[str, Any] | None = None,
+) -> str:
     mode = "none"
     if isinstance(raw_mitigation, Mapping):
         mode = str(raw_mitigation.get("mode", raw_mitigation.get("mitigation", "none"))).strip().lower() or "none"
     elif raw_mitigation is not None:
         mode = str(raw_mitigation).strip().lower() or "none"
+    runtime_twirling_enabled = bool(
+        isinstance(runtime_twirling, Mapping)
+        and (
+            bool(runtime_twirling.get("enable_gates", False))
+            or bool(runtime_twirling.get("enable_measure", False))
+        )
+    )
 
     if executor == "statevector":
         return "none"
     if executor == "runtime_qpu":
-        return "runtime_suppressed" if mode in {"zne", "dd", "readout"} else "none"
+        if noise_kind == "qpu_layer_learned":
+            return "runtime_layer_learned" if mode == "zne" else "none"
+        return "runtime_suppressed" if mode in {"zne", "dd", "readout"} or runtime_twirling_enabled else "none"
     if noise_kind == "shots_only":
         return "none"
     if mode == "readout":
@@ -352,6 +448,12 @@ def normalize_to_resolved_noise_spec(raw: Any) -> ResolvedNoiseSpec:
     shots_raw = _get_value(raw, "shots", None)
     shots = None if shots_raw is None else int(shots_raw)
     layout_lock_key = _get_value(raw, "layout_lock_key", None)
+    mitigation_raw = _get_value(raw, "mitigation", "none")
+    layer_noise_model_supplied = _mitigation_has_layer_noise_model(mitigation_raw)
+    runtime_twirling = normalize_runtime_twirling_config(raw)
+    runtime_twirling_enabled = bool(
+        runtime_twirling.get("enable_gates", False) or runtime_twirling.get("enable_measure", False)
+    )
 
     if requested_mode == "ideal":
         executor = "statevector"
@@ -377,14 +479,17 @@ def normalize_to_resolved_noise_spec(raw: Any) -> ResolvedNoiseSpec:
         noise_kind = "patch_snapshot"
     elif requested_mode == "runtime":
         executor = "runtime_qpu"
-        mitigation_raw = _get_value(raw, "mitigation", "none")
         if isinstance(mitigation_raw, Mapping):
             mitigation_mode = str(
                 mitigation_raw.get("mode", mitigation_raw.get("mitigation", "none"))
             ).strip().lower()
         else:
             mitigation_mode = str(mitigation_raw).strip().lower()
-        noise_kind = "qpu_suppressed" if mitigation_mode in {"zne", "dd", "readout"} else "qpu_raw"
+        noise_kind = (
+            "qpu_suppressed"
+            if mitigation_mode in {"zne", "dd", "readout"} or runtime_twirling_enabled
+            else "qpu_raw"
+        )
     elif requested_mode in {"qpu_raw", "qpu_suppressed", "qpu_layer_learned"}:
         executor = "runtime_qpu"
         noise_kind = str(requested_mode)
@@ -419,7 +524,12 @@ def normalize_to_resolved_noise_spec(raw: Any) -> ResolvedNoiseSpec:
         _get_value(raw, "schedule_policy", None)
         or ("asap" if noise_kind == "backend_scheduled" else "none")
     ).strip().lower()
-    mitigation_bundle = _normalize_mitigation_bundle(_get_value(raw, "mitigation", "none"), executor, noise_kind)
+    mitigation_bundle = _normalize_mitigation_bundle(
+        mitigation_raw,
+        executor,
+        noise_kind,
+        runtime_twirling=runtime_twirling,
+    )
 
     spec = ResolvedNoiseSpec(
         executor=str(executor),
@@ -440,6 +550,8 @@ def normalize_to_resolved_noise_spec(raw: Any) -> ResolvedNoiseSpec:
             "requested_noise_mode": str(requested_mode),
             "backend_name": (None if _get_value(raw, "backend_name", None) in {None, "", "none"} else str(_get_value(raw, "backend_name"))),
             "layout_lock_key": (None if layout_lock_key in {None, "", "none"} else str(layout_lock_key)),
+            "runtime_twirling": dict(runtime_twirling),
+            "layer_noise_model_supplied": bool(layer_noise_model_supplied),
         },
     )
 
@@ -468,6 +580,26 @@ def normalize_to_resolved_noise_spec(raw: Any) -> ResolvedNoiseSpec:
         raise ValueError("backend_profile_kind='frozen_snapshot_json' requires noise_snapshot_json/snapshot_path.")
     if spec.executor == "runtime_qpu" and spec.backend_profile_kind != "live_backend":
         raise ValueError("runtime_qpu mode requires backend_profile_kind='live_backend'.")
+    if requested_mode == "qpu_raw" and spec.mitigation_bundle != "none":
+        raise ValueError(
+            "qpu_raw requires mitigation='none' and runtime twirling disabled so the normalized runtime bundle remains raw."
+        )
+    if requested_mode == "qpu_suppressed" and spec.mitigation_bundle != "runtime_suppressed":
+        raise ValueError(
+            "qpu_suppressed requires mitigation {readout,zne,dd} or runtime twirling so the normalized runtime bundle is runtime_suppressed."
+        )
+    if layer_noise_model_supplied and requested_mode != "qpu_layer_learned":
+        raise ValueError(
+            "layer_noise_model / layer_noise_model_json are only supported on noise_mode='qpu_layer_learned' in the current runtime path."
+        )
+    if requested_mode == "qpu_layer_learned" and spec.mitigation_bundle != "runtime_layer_learned":
+        raise ValueError(
+            "qpu_layer_learned requires mitigation='zne' so the normalized runtime bundle is runtime_layer_learned."
+        )
+    if requested_mode == "qpu_layer_learned" and runtime_twirling_enabled:
+        raise ValueError(
+            "qpu_layer_learned uses the runtime layer-noise-backed PEA path and does not accept explicit runtime twirling settings."
+        )
     if spec.noise_kind == "shots_only":
         if spec.shots is None or int(spec.shots) <= 0:
             raise ValueError("shots_only requires shots > 0.")
@@ -481,6 +613,18 @@ def normalize_to_resolved_noise_spec(raw: Any) -> ResolvedNoiseSpec:
         raise ValueError("patch_snapshot requires layout_policy='frozen_layout'.")
     if spec.fixed_couplers is not None and spec.fixed_physical_patch is None:
         raise ValueError("fixed_couplers requires fixed_physical_patch to be specified.")
+    if spec.fixed_couplers is not None and spec.fixed_physical_patch is not None:
+        patch_set = {int(q) for q in list(spec.fixed_physical_patch)}
+        invalid_edges = [
+            [int(edge[0]), int(edge[1])]
+            for edge in list(spec.fixed_couplers)
+            if int(edge[0]) not in patch_set or int(edge[1]) not in patch_set
+        ]
+        if invalid_edges:
+            raise ValueError(
+                "fixed_couplers must lie within fixed_physical_patch; invalid edges="
+                f"{invalid_edges} patch={list(spec.fixed_physical_patch)}."
+            )
     return spec
 
 

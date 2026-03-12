@@ -16,7 +16,7 @@ import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -82,6 +82,8 @@ from pipelines.exact_bench.noise_oracle_runtime import (
     ExpectationOracle,
     NoiseBackendInfo,
     OracleConfig,
+    OracleExecutionRecord,
+    OracleEstimate,
     _ansatz_to_circuit,
     _doublon_site_qop,
     _number_operator_qop,
@@ -89,8 +91,11 @@ from pipelines.exact_bench.noise_oracle_runtime import (
     normalize_ideal_reference_symmetry_mitigation,
     normalize_mitigation_config,
     normalize_symmetry_mitigation_config,
+    oracle_execution_dict,
 )
+from pipelines.exact_bench.hh_noise_robustness_seq_report import _layout_lock_mode_token
 from pipelines.exact_bench.noise_model_spec import stable_noise_hash
+from pipelines.exact_bench.noise_model_spec import normalize_runtime_twirling_config
 
 
 def _ai_log(event: str, **fields: Any) -> None:
@@ -180,6 +185,24 @@ def _build_mitigation_config_from_args(args: argparse.Namespace) -> dict[str, An
             "mode": str(args.mitigation),
             "zne_scales": args.zne_scales,
             "dd_sequence": args.dd_sequence,
+            "layer_noise_model_json": args.runtime_layer_noise_model_json,
+        }
+    )
+
+
+def _build_runtime_twirling_config_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    return normalize_runtime_twirling_config(
+        {
+            "enable_gates": bool(args.runtime_enable_gate_twirling),
+            "enable_measure": bool(args.runtime_enable_measure_twirling),
+            "num_randomizations": (
+                None
+                if args.runtime_twirling_num_randomizations is None
+                else int(args.runtime_twirling_num_randomizations)
+            ),
+            "strategy": (
+                None if args.runtime_twirling_strategy is None else str(args.runtime_twirling_strategy)
+            ),
         }
     )
 
@@ -199,14 +222,17 @@ def _build_symmetry_mitigation_config_from_args(args: argparse.Namespace) -> dic
 
 def _mitigation_caption(
     cfg: dict[str, Any] | None,
+    runtime_twirling_cfg: dict[str, Any] | None = None,
     symmetry_cfg: dict[str, Any] | None = None,
 ) -> str:
     data = cfg or {}
+    twirling = runtime_twirling_cfg or {}
     sym = symmetry_cfg or {}
     return (
         f"mitigation={data.get('mode', 'none')}, "
         f"zne_scales={data.get('zne_scales', [])}, "
         f"dd_sequence={data.get('dd_sequence', None)}, "
+        f"runtime_twirling={twirling}, "
         f"symmetry={sym.get('mode', 'off')}"
     )
 
@@ -245,6 +271,14 @@ def _mode_honesty_statement(resolved_noise_spec: dict[str, Any] | None) -> str:
         return "backend_basic: debug/smoke approximation, not for headline scientific claims"
     if noise_kind == "backend_scheduled":
         return "backend_scheduled: schedule-aware local approximation"
+    if noise_kind == "patch_snapshot":
+        return "patch_snapshot: patch-frozen local replay from a persisted layout anchor"
+    if noise_kind == "qpu_raw":
+        return "runtime raw: runtime-submitted ISA/layout with mitigation explicitly disabled"
+    if noise_kind == "qpu_suppressed":
+        return "runtime suppressed: runtime-submitted ISA/layout with an explicit suppression bundle"
+    if noise_kind == "qpu_layer_learned":
+        return "runtime layer-learned: runtime-submitted ISA/layout with PEA-backed ZNE and Runtime-managed or externally supplied layer-noise data"
     if executor == "runtime_qpu":
         return "runtime: hardware-facing execution"
     return f"{noise_kind or executor}: local approximate noise mode"
@@ -292,7 +326,411 @@ def _effective_layout_lock_key(
 ) -> str:
     if layout_lock_key is not None:
         return str(layout_lock_key)
-    return f"validation:L{int(L)}:{str(problem)}:{str(ansatz)}:{str(noise_mode)}"
+    return (
+        f"validation:L{int(L)}:{str(problem)}:{str(ansatz)}:"
+        f"{_layout_lock_mode_token(str(noise_mode))}"
+    )
+
+
+def _build_noisy_oracle_config(
+    *,
+    args: argparse.Namespace,
+    noise_mode: str,
+    mitigation_cfg: dict[str, Any],
+    runtime_twirling_cfg: dict[str, Any],
+    symmetry_mitigation_cfg: dict[str, Any],
+    layout_lock_key: str,
+) -> OracleConfig:
+    return OracleConfig(
+        noise_mode=str(noise_mode),
+        shots=int(args.shots),
+        seed=int(args.seed),
+        oracle_repeats=int(args.oracle_repeats),
+        oracle_aggregate=str(args.oracle_aggregate),
+        backend_name=(None if args.backend_name is None else str(args.backend_name)),
+        use_fake_backend=bool(args.use_fake_backend),
+        backend_profile=(None if args.backend_profile is None else str(args.backend_profile)),
+        aer_noise_kind=str(args.aer_noise_kind),
+        schedule_policy=(None if args.schedule_policy is None else str(args.schedule_policy)),
+        layout_policy=(None if args.layout_policy is None else str(args.layout_policy)),
+        noise_snapshot_json=(None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
+        fixed_physical_patch=(None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
+        layout_lock_key=str(layout_lock_key),
+        allow_noisy_fallback=bool(args.allow_noisy_fallback),
+        allow_aer_fallback=bool(args.allow_noisy_fallback),
+        aer_fallback_mode="sampler_shots",
+        omp_shm_workaround=bool(args.omp_shm_workaround),
+        mitigation=dict(mitigation_cfg),
+        runtime_twirling=dict(runtime_twirling_cfg),
+        symmetry_mitigation=dict(symmetry_mitigation_cfg),
+    )
+
+
+def _paired_anchor_local_mode(args: argparse.Namespace) -> str:
+    requested = str(args.noise_mode).strip().lower()
+    if requested in {"backend_scheduled", "patch_snapshot"}:
+        return str(requested)
+    if str(args.layout_policy or "").strip().lower() == "frozen_layout":
+        return "patch_snapshot"
+    return "backend_scheduled"
+
+
+def _paired_anchor_layout_lock_key(args: argparse.Namespace) -> str:
+    local_mode = _paired_anchor_local_mode(args)
+    return _effective_layout_lock_key(
+        layout_lock_key=(None if args.layout_lock_key is None else str(args.layout_lock_key)),
+        L=int(args.L),
+        problem=str(args.problem),
+        ansatz=str(args.ansatz),
+        noise_mode=str(local_mode),
+    )
+
+
+def _paired_anchor_runtime_mitigation_cfg(args: argparse.Namespace) -> dict[str, Any]:
+    mitigation_cfg = _build_mitigation_config_from_args(args)
+    mitigation_mode = str(mitigation_cfg.get("mode", "none"))
+    runtime_twirling_cfg = _build_runtime_twirling_config_from_args(args)
+    twirling_enabled = bool(
+        runtime_twirling_cfg.get("enable_gates", False)
+        or runtime_twirling_cfg.get("enable_measure", False)
+    )
+    if mitigation_mode not in {"readout", "zne", "dd"} and not twirling_enabled:
+        raise ValueError(
+            "--paired-anchor-validation requires mitigation in {readout,zne,dd} or runtime twirling so qpu_suppressed is truthfully defined."
+        )
+    filtered = dict(mitigation_cfg)
+    filtered.pop("layer_noise_model", None)
+    filtered.pop("layer_noise_model_json", None)
+    filtered.pop("layerNoiseModelJson", None)
+    return filtered
+
+
+def _paired_anchor_runtime_twirling_cfg(args: argparse.Namespace) -> dict[str, Any]:
+    return _build_runtime_twirling_config_from_args(args)
+
+
+def _paired_anchor_none_runtime_twirling_cfg() -> dict[str, Any]:
+    return {
+        "enable_gates": False,
+        "enable_measure": False,
+        "num_randomizations": None,
+        "strategy": None,
+    }
+
+
+def _paired_anchor_none_mitigation_cfg() -> dict[str, Any]:
+    return {"mode": "none", "zne_scales": [], "dd_sequence": None}
+
+
+def _paired_anchor_runtime_label(mode: str) -> str:
+    return "runtime_raw" if str(mode) == "qpu_raw" else "runtime_suppressed"
+
+
+def _paired_anchor_workload(
+    *,
+    args: argparse.Namespace,
+    ansatz: Any,
+    psi_ref: np.ndarray,
+    hmat: np.ndarray,
+    h_qop: SparsePauliOp,
+    best_theta: np.ndarray | None,
+    adapt_ops: list[AnsatzTerm] | None,
+    adapt_theta: np.ndarray | None,
+) -> tuple[dict[str, Any], QuantumCircuit, SparsePauliOp]:
+    if best_theta is not None:
+        circuit = _ansatz_to_circuit(
+            ansatz,
+            np.asarray(best_theta, dtype=float),
+            num_qubits=int(h_qop.num_qubits),
+            reference_state=psi_ref,
+        )
+        return (
+            {
+                "workload_kind": "vqe_theta_circuit",
+                "workload_label": "best_theta_energy",
+                "initial_state_source": "vqe_theta",
+                "observable_label": "hamiltonian_energy",
+            },
+            circuit,
+            h_qop,
+        )
+    init_label, init_circuit = _initial_state_selection(
+        args=args,
+        ansatz=ansatz,
+        psi_ref=psi_ref,
+        hmat=np.asarray(hmat, dtype=complex),
+        best_theta=best_theta,
+        adapt_ops=adapt_ops,
+        adapt_theta=adapt_theta,
+    )
+    return (
+        {
+            "workload_kind": "initial_state_circuit",
+            "workload_label": f"initial_state:{str(init_label)}",
+            "initial_state_source": str(init_label),
+            "observable_label": "hamiltonian_energy",
+        },
+        init_circuit,
+        h_qop,
+    )
+
+
+def _paired_anchor_row(
+    *,
+    label: str,
+    cfg: OracleConfig,
+    estimate: OracleEstimate,
+    backend_info: NoiseBackendInfo,
+    execution: OracleExecutionRecord | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    execution_payload = oracle_execution_dict(execution, backend_info=backend_info)
+    resolved_noise_spec = dict(execution_payload.get("resolved_noise_spec", {}) or {})
+    runtime_bundle = execution_payload.get("runtime_execution_bundle", None)
+    provenance_summary = dict(execution_payload.get("provenance_summary", {}) or {})
+    return {
+        "label": str(label),
+        "noise_mode": str(cfg.noise_mode),
+        "executor": resolved_noise_spec.get("executor"),
+        "resolved_noise_kind": resolved_noise_spec.get("noise_kind"),
+        "backend_name": execution_payload.get("backend_name", backend_info.backend_name),
+        "layout_lock_key": cfg.layout_lock_key,
+        "lock_family_token": _layout_lock_mode_token(str(cfg.noise_mode)),
+        "layout_hash": execution_payload.get("layout_hash", None),
+        "transpile_hash": execution_payload.get("transpile_hash", None),
+        "snapshot_hash": execution_payload.get("snapshot_hash", None),
+        "used_physical_qubits": list(execution_payload.get("used_physical_qubits", [])),
+        "used_physical_edges": list(execution_payload.get("used_physical_edges", [])),
+        "circuit_structure_hash": execution_payload.get("circuit_structure_hash", None),
+        "layout_anchor_source": execution_payload.get("layout_anchor_source", None),
+        "runtime_execution_bundle": (None if runtime_bundle is None else dict(runtime_bundle)),
+        "provenance_classification": provenance_summary.get("classification", None),
+        "fixed_couplers_status": execution_payload.get("fixed_couplers_status", None),
+        "source_kind": execution_payload.get("source_kind", None),
+        "estimate_mean": float(estimate.mean),
+        "estimate_stderr": float(estimate.stderr),
+    }
+
+
+def _comparison_signature(value: Any) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _rows_share_value(rows: list[dict[str, Any]], key: str) -> bool:
+    if not rows:
+        return False
+    signatures = [_comparison_signature(row.get(key, None)) for row in rows]
+    if any(sig is None for sig in signatures):
+        return False
+    return len(set(signatures)) == 1
+
+
+def _row_lookup(rows: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
+    for row in rows:
+        if str(row.get("label")) == str(label):
+            return row
+    return None
+
+
+def _rows_share_fields(rows: list[dict[str, Any]], fields: list[str]) -> bool:
+    return bool(rows) and all(_rows_share_value(rows, field) for field in list(fields))
+
+
+def _evidence_status(
+    rows: list[dict[str, Any]],
+    *,
+    required_fields: list[str],
+    full_fields: list[str],
+) -> str:
+    if not _rows_share_fields(rows, list(required_fields)):
+        return "not_evidenced"
+    if _rows_share_fields(rows, list(full_fields)):
+        return "fully_evidenced"
+    return "partially_evidenced"
+
+
+def _paired_anchor_comparability(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    runtime_pair = [
+        row
+        for row in rows
+        if str(row.get("label")) in {"runtime_raw", "runtime_suppressed"}
+    ]
+    local_row = next(
+        (
+            row
+            for row in rows
+            if str(row.get("label")) not in {"runtime_raw", "runtime_suppressed"}
+        ),
+        None,
+    )
+    raw_row = _row_lookup(runtime_pair, "runtime_raw")
+    suppressed_row = _row_lookup(runtime_pair, "runtime_suppressed")
+    runtime_pair_same_submission_status = _evidence_status(
+        runtime_pair,
+        required_fields=[
+            "layout_hash",
+            "transpile_hash",
+            "used_physical_qubits",
+            "used_physical_edges",
+            "circuit_structure_hash",
+        ],
+        full_fields=[
+            "layout_lock_key",
+            "lock_family_token",
+            "backend_name",
+            "snapshot_hash",
+            "layout_hash",
+            "transpile_hash",
+            "used_physical_qubits",
+            "used_physical_edges",
+            "circuit_structure_hash",
+        ],
+    )
+    runtime_pair_bundle_differs = (
+        raw_row is not None
+        and suppressed_row is not None
+        and _comparison_signature(raw_row.get("runtime_execution_bundle", None))
+        != _comparison_signature(suppressed_row.get("runtime_execution_bundle", None))
+    )
+    local_vs_runtime_same_anchor_status = "not_evidenced"
+    if local_row is not None and raw_row is not None:
+        local_vs_runtime_same_anchor_status = _evidence_status(
+            [local_row, raw_row],
+            required_fields=[
+                "layout_hash",
+                "used_physical_qubits",
+                "used_physical_edges",
+                "circuit_structure_hash",
+            ],
+            full_fields=[
+                "layout_lock_key",
+                "lock_family_token",
+                "backend_name",
+                "snapshot_hash",
+                "layout_hash",
+                "used_physical_qubits",
+                "used_physical_edges",
+                "circuit_structure_hash",
+            ],
+        )
+    exact_anchor_identity_status = _evidence_status(
+        rows,
+        required_fields=[
+            "layout_hash",
+            "used_physical_qubits",
+            "used_physical_edges",
+            "circuit_structure_hash",
+        ],
+        full_fields=[
+            "layout_lock_key",
+            "lock_family_token",
+            "backend_name",
+            "snapshot_hash",
+            "layout_hash",
+            "used_physical_qubits",
+            "used_physical_edges",
+            "circuit_structure_hash",
+        ],
+    )
+    return {
+        "same_lock_context": _rows_share_fields(rows, ["layout_lock_key", "lock_family_token"]),
+        "same_backend_name": _rows_share_value(rows, "backend_name"),
+        "same_snapshot_hash": _rows_share_value(rows, "snapshot_hash"),
+        "same_layout_hash": _rows_share_value(rows, "layout_hash"),
+        "same_transpile_hash": _rows_share_value(rows, "transpile_hash"),
+        "same_used_physical_qubits": _rows_share_value(rows, "used_physical_qubits"),
+        "same_used_physical_edges": _rows_share_value(rows, "used_physical_edges"),
+        "same_circuit_structure_hash": _rows_share_value(rows, "circuit_structure_hash"),
+        "local_vs_runtime_same_anchor_evidence_status": str(local_vs_runtime_same_anchor_status),
+        "runtime_pair_same_submitted_evidence_status": str(runtime_pair_same_submission_status),
+        "exact_anchor_identity_evidence_status": str(exact_anchor_identity_status),
+        "local_vs_runtime_same_anchor_provenance": bool(
+            local_vs_runtime_same_anchor_status == "fully_evidenced"
+        ),
+        "runtime_pair_same_submitted_provenance": bool(
+            runtime_pair_same_submission_status == "fully_evidenced"
+        ),
+        "runtime_execution_bundle_differs": bool(runtime_pair_bundle_differs),
+        "runtime_pair_differs_only_in_execution_bundle": bool(
+            runtime_pair_same_submission_status == "fully_evidenced" and runtime_pair_bundle_differs
+        ),
+        "exact_anchor_identity_across_rows": bool(exact_anchor_identity_status == "fully_evidenced"),
+    }
+
+
+def _run_paired_anchor_validation(
+    *,
+    args: argparse.Namespace,
+    circuit: QuantumCircuit,
+    observable: SparsePauliOp,
+) -> dict[str, Any]:
+    if args.backend_name is None:
+        raise ValueError(
+            "--paired-anchor-validation requires --backend-name so qpu_raw/qpu_suppressed can target the same runtime backend."
+        )
+    local_mode = _paired_anchor_local_mode(args)
+    if local_mode == "patch_snapshot" and args.noise_snapshot_json is None:
+        raise ValueError(
+            "--paired-anchor-validation with frozen_layout requires --noise-snapshot-json so patch_snapshot replay has a calibration snapshot."
+        )
+    layout_lock_key = _paired_anchor_layout_lock_key(args)
+    runtime_mitigation_cfg = _paired_anchor_runtime_mitigation_cfg(args)
+    runtime_twirling_cfg = _paired_anchor_runtime_twirling_cfg(args)
+    symmetry_mitigation_cfg = _build_symmetry_mitigation_config_from_args(args)
+    rows: list[dict[str, Any]] = []
+    mode_specs = [
+        (
+            str(local_mode),
+            _paired_anchor_none_mitigation_cfg(),
+            _paired_anchor_none_runtime_twirling_cfg(),
+            "local_patch_anchor",
+        ),
+        (
+            "qpu_raw",
+            _paired_anchor_none_mitigation_cfg(),
+            _paired_anchor_none_runtime_twirling_cfg(),
+            _paired_anchor_runtime_label("qpu_raw"),
+        ),
+        (
+            "qpu_suppressed",
+            runtime_mitigation_cfg,
+            runtime_twirling_cfg,
+            _paired_anchor_runtime_label("qpu_suppressed"),
+        ),
+    ]
+    for noise_mode, mitigation_cfg, mode_runtime_twirling_cfg, label in mode_specs:
+        cfg = _build_noisy_oracle_config(
+            args=args,
+            noise_mode=str(noise_mode),
+            mitigation_cfg=dict(mitigation_cfg),
+            runtime_twirling_cfg=dict(mode_runtime_twirling_cfg),
+            symmetry_mitigation_cfg=dict(symmetry_mitigation_cfg),
+            layout_lock_key=str(layout_lock_key),
+        )
+        with ExpectationOracle(cfg) as oracle:
+            result = oracle.evaluate_result(circuit, observable)
+            rows.append(
+                _paired_anchor_row(
+                    label=str(label),
+                    cfg=cfg,
+                    estimate=result.estimate,
+                    backend_info=oracle.backend_info,
+                    execution=result.execution,
+                )
+            )
+    return {
+        "enabled": True,
+        "executed": True,
+        "reason": "",
+        "layout_lock_key": str(layout_lock_key),
+        "lock_family_token": _layout_lock_mode_token(str(local_mode)),
+        "local_mode": str(local_mode),
+        "runtime_suppression_mitigation": dict(runtime_mitigation_cfg),
+        "runtime_twirling_config": dict(runtime_twirling_cfg),
+        "rows": rows,
+        "comparability": _paired_anchor_comparability(rows),
+    }
 
 
 def _load_imported_vqe_parameters(
@@ -1603,7 +2041,9 @@ def _write_noise_validation_pdf(
     fallback = payload.get("execution_fallback", {})
     adapt = payload.get("adapt", {})
     legacy_parity = payload.get("legacy_parity", {})
+    paired_anchor = payload.get("paired_anchor_validation", {}) or {}
     ground_state = payload.get("ground_state", {})
+    provenance_summary = dict(payload.get("provenance_summary", {}) or {})
     ground_state_fields = _ground_state_report_fields(ground_state)
     parameter_source = vqe.get("parameter_source", {}) or {}
     final = trajectory[-1] if trajectory else {}
@@ -1621,7 +2061,7 @@ def _write_noise_validation_pdf(
         f"shots={noise.get('shots')}, "
         f"oracle_repeats={noise.get('oracle_repeats')}, "
         f"oracle_aggregate={noise.get('oracle_aggregate')}, "
-        f"{_mitigation_caption(noise.get('mitigation', {}), noise.get('symmetry_mitigation', {}))}"
+        f"{_mitigation_caption(noise.get('mitigation', {}), noise.get('runtime_twirling', {}), noise.get('symmetry_mitigation', {}))}"
     )
     manifest_sections: list[tuple[str, list[tuple[str, Any]]]] = [
         (
@@ -1650,12 +2090,22 @@ def _write_noise_validation_pdf(
                 ("Source kind", payload.get("source_kind")),
                 ("Backend profile kind", resolved_noise_spec.get("backend_profile_kind")),
                 ("Backend identifier", backend.get("backend_name")),
+                ("Provenance class", provenance_summary.get("classification")),
                 ("Frozen snapshot path", settings.get("noise_snapshot_json")),
                 ("Resolved spec hash", payload.get("resolved_noise_spec_hash")),
                 ("Snapshot hash", payload.get("snapshot_hash")),
                 ("Layout hash", payload.get("layout_hash")),
                 ("Transpile hash", payload.get("transpile_hash")),
+                ("Circuit structure hash", payload.get("circuit_structure_hash")),
                 ("Noise artifact hash", payload.get("noise_artifact_hash")),
+                ("Layout anchor source", payload.get("layout_anchor_source")),
+                ("Layout anchor reused", provenance_summary.get("layout_anchor_reused")),
+                ("Uses backend snapshot", provenance_summary.get("uses_backend_snapshot")),
+                ("Snapshot-backed local replay", provenance_summary.get("local_replay")),
+                ("Patch-frozen local replay", provenance_summary.get("patch_frozen_replay")),
+                ("Runtime submission recorded", provenance_summary.get("runtime_submission_recorded")),
+                ("Runtime execution bundle", payload.get("runtime_execution_bundle")),
+                ("Fixed couplers status", payload.get("fixed_couplers_status")),
                 ("shots", noise.get("shots")),
                 ("seed", noise.get("seed")),
                 ("seed_transpiler", backend.get("details", {}).get("seed_transpiler")),
@@ -1680,8 +2130,9 @@ def _write_noise_validation_pdf(
         (
             "Mapping / schedule",
             [
-                ("Patch/layout frozen", resolved_noise_spec.get("layout_policy") in {"fixed_patch", "frozen_layout"}),
                 ("Layout policy", resolved_noise_spec.get("layout_policy")),
+                ("Patch-frozen replay executed", provenance_summary.get("patch_frozen_replay")),
+                ("Layout anchor source", payload.get("layout_anchor_source")),
                 ("Schedule policy", resolved_noise_spec.get("schedule_policy")),
                 ("Physical qubits used", transpile_snapshot.get("used_physical_qubits")),
                 ("Physical edges/couplers used", transpile_snapshot.get("used_physical_edges")),
@@ -1742,6 +2193,55 @@ def _write_noise_validation_pdf(
             ],
         ),
     ]
+    paired_rows = list(paired_anchor.get("rows", []) or [])
+    paired_cmp = dict(paired_anchor.get("comparability", {}) or {})
+    if bool(paired_anchor.get("enabled", False)):
+        manifest_sections.append(
+            (
+                "Same-anchor paired comparison",
+                [
+                    ("Enabled", paired_anchor.get("enabled")),
+                    ("Executed", paired_anchor.get("executed")),
+                    ("Reason", paired_anchor.get("reason")),
+                    ("Workload", paired_anchor.get("workload_label")),
+                    ("Observable", paired_anchor.get("observable_label")),
+                    ("Local patch-bearing mode", paired_anchor.get("local_mode")),
+                    ("Shared lock key", paired_anchor.get("layout_lock_key")),
+                    ("Shared lock-family token", paired_anchor.get("lock_family_token")),
+                    ("Same backend name", paired_cmp.get("same_backend_name")),
+                    ("Same snapshot hash", paired_cmp.get("same_snapshot_hash")),
+                    ("Same layout hash", paired_cmp.get("same_layout_hash")),
+                    (
+                        "Same physical qubits/edges",
+                        {
+                            "qubits": paired_cmp.get("same_used_physical_qubits"),
+                            "edges": paired_cmp.get("same_used_physical_edges"),
+                        },
+                    ),
+                    (
+                        "Recorded identity evidence",
+                        {
+                            "circuit_structure_hash": paired_cmp.get("same_circuit_structure_hash"),
+                            "local_vs_runtime_anchor_status": paired_cmp.get("local_vs_runtime_same_anchor_evidence_status"),
+                            "runtime_pair_submission_status": paired_cmp.get("runtime_pair_same_submitted_evidence_status"),
+                            "exact_anchor_identity_status": paired_cmp.get("exact_anchor_identity_evidence_status"),
+                        },
+                    ),
+                    (
+                        "Runtime execution bundle differs",
+                        paired_cmp.get("runtime_execution_bundle_differs"),
+                    ),
+                    (
+                        "Runtime raw vs suppressed differs only in execution bundle",
+                        paired_cmp.get("runtime_pair_differs_only_in_execution_bundle"),
+                    ),
+                    (
+                        "Fixed couplers status",
+                        [row.get("fixed_couplers_status") for row in paired_rows],
+                    ),
+                ],
+            )
+        )
 
     summary_sections: list[tuple[str, list[tuple[str, Any]]]] = [
         (
@@ -1783,6 +2283,44 @@ def _write_noise_validation_pdf(
             ],
         ),
     ]
+    if bool(paired_anchor.get("enabled", False)):
+        summary_sections.append(
+            (
+                "Same-anchor paired verdict",
+                [
+                    ("Executed", paired_anchor.get("executed")),
+                    ("Workload", paired_anchor.get("workload_label")),
+                    ("Local mode", paired_anchor.get("local_mode")),
+                    ("Shared lock key", paired_anchor.get("layout_lock_key")),
+                    ("Same backend name", paired_cmp.get("same_backend_name")),
+                    ("Same layout hash", paired_cmp.get("same_layout_hash")),
+                    (
+                        "Local-vs-runtime same anchor evidence status",
+                        paired_cmp.get("local_vs_runtime_same_anchor_evidence_status"),
+                    ),
+                    (
+                        "Local-vs-runtime same anchor fully evidenced",
+                        paired_cmp.get("local_vs_runtime_same_anchor_provenance"),
+                    ),
+                    (
+                        "Runtime raw-vs-suppressed same submitted evidence status",
+                        paired_cmp.get("runtime_pair_same_submitted_evidence_status"),
+                    ),
+                    (
+                        "Runtime raw-vs-suppressed same submitted fully evidenced",
+                        paired_cmp.get("runtime_pair_same_submitted_provenance"),
+                    ),
+                    (
+                        "Runtime execution bundle differs",
+                        paired_cmp.get("runtime_execution_bundle_differs"),
+                    ),
+                    (
+                        "Runtime raw-vs-suppressed differs only in bundle",
+                        paired_cmp.get("runtime_pair_differs_only_in_execution_bundle"),
+                    ),
+                ],
+            )
+        )
 
     detail_lines = [
         "HH/Hubbard Noise Validation Summary",
@@ -1801,6 +2339,10 @@ def _write_noise_validation_pdf(
         f"layout_hash: {payload.get('layout_hash')}",
         f"transpile_hash: {payload.get('transpile_hash')}",
         f"noise_artifact_hash: {payload.get('noise_artifact_hash')}",
+        f"provenance_class: {provenance_summary.get('classification')}",
+        f"layout_anchor_source: {payload.get('layout_anchor_source')}",
+        f"runtime_execution_bundle: {payload.get('runtime_execution_bundle')}",
+        f"fixed_couplers_status: {payload.get('fixed_couplers_status')}",
         f"parameter_source_kind: {parameter_source.get('kind')}",
         f"parameter_source_path: {parameter_source.get('path')}",
         f"theta_hash: {parameter_source.get('theta_hash')}",
@@ -1856,6 +2398,28 @@ def _write_noise_validation_pdf(
         f"  counts (1q,2q,meas): {(transpile_snapshot.get('count_1q'), transpile_snapshot.get('count_2q'), transpile_snapshot.get('count_measure'))}",
         f"  scheduled duration: {transpile_snapshot.get('scheduled_duration_total')}",
         f"  idle duration: {transpile_snapshot.get('idle_duration_total')}",
+        "",
+        "Same-anchor paired comparison:",
+        f"  enabled: {paired_anchor.get('enabled')}",
+        f"  executed: {paired_anchor.get('executed')}",
+        f"  reason: {paired_anchor.get('reason')}",
+        f"  workload: {paired_anchor.get('workload_label')}",
+        f"  observable: {paired_anchor.get('observable_label')}",
+        f"  local mode: {paired_anchor.get('local_mode')}",
+        f"  shared lock key: {paired_anchor.get('layout_lock_key')}",
+        f"  shared lock-family token: {paired_anchor.get('lock_family_token')}",
+        f"  same backend name: {paired_cmp.get('same_backend_name')}",
+        f"  same snapshot hash: {paired_cmp.get('same_snapshot_hash')}",
+        f"  same layout hash: {paired_cmp.get('same_layout_hash')}",
+        f"  same used qubits: {paired_cmp.get('same_used_physical_qubits')}",
+        f"  same used edges: {paired_cmp.get('same_used_physical_edges')}",
+        f"  same circuit structure hash: {paired_cmp.get('same_circuit_structure_hash')}",
+        f"  local-vs-runtime same anchor evidence status: {paired_cmp.get('local_vs_runtime_same_anchor_evidence_status')}",
+        f"  local-vs-runtime same anchor fully evidenced: {paired_cmp.get('local_vs_runtime_same_anchor_provenance')}",
+        f"  runtime pair same submitted evidence status: {paired_cmp.get('runtime_pair_same_submitted_evidence_status')}",
+        f"  runtime pair same submitted fully evidenced: {paired_cmp.get('runtime_pair_same_submitted_provenance')}",
+        f"  runtime execution bundle differs: {paired_cmp.get('runtime_execution_bundle_differs')}",
+        f"  runtime pair differs only in execution bundle: {paired_cmp.get('runtime_pair_differs_only_in_execution_bundle')}",
         "",
         "Final trajectory point:",
         f"  energy noisy: {final.get('energy_static_trotter_noisy')}",
@@ -1948,6 +2512,32 @@ def _write_noise_validation_pdf(
                     f"  {obs}: max={rec.get('max_abs_delta')} "
                     f"mean={rec.get('mean_abs_delta')} final={rec.get('final_abs_delta')} "
                     f"passed={rec.get('passed')}"
+                )
+        if paired_rows:
+            detail_lines.append("")
+            detail_lines.append("Same-anchor per-mode rows:")
+            for row in paired_rows:
+                detail_lines.extend(
+                    [
+                        (
+                            "  {label}: mode={mode} executor={executor} noise_kind={noise_kind} "
+                            "mean={mean} stderr={stderr}".format(
+                                label=row.get("label"),
+                                mode=row.get("noise_mode"),
+                                executor=row.get("executor"),
+                                noise_kind=row.get("resolved_noise_kind"),
+                                mean=row.get("estimate_mean"),
+                                stderr=row.get("estimate_stderr"),
+                            )
+                        ),
+                        f"    layout_hash={row.get('layout_hash')} transpile_hash={row.get('transpile_hash')}",
+                        f"    qubits={row.get('used_physical_qubits')} edges={row.get('used_physical_edges')}",
+                        f"    circuit_structure_hash={row.get('circuit_structure_hash')}",
+                        f"    provenance_classification={row.get('provenance_classification')}",
+                        f"    layout_anchor_source={row.get('layout_anchor_source')}",
+                        f"    runtime_execution_bundle={row.get('runtime_execution_bundle')}",
+                        f"    fixed_couplers_status={row.get('fixed_couplers_status')}",
+                    ]
                 )
 
         if trajectory:
@@ -2094,7 +2684,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--g-ep", type=float, default=0.5)
     p.add_argument("--n-ph-max", type=int, default=1)
     p.add_argument("--boson-encoding", choices=["binary"], default="binary")
-    p.add_argument("--boundary", choices=["periodic", "open"], default="periodic")
+    p.add_argument("--boundary", choices=["periodic", "open"], default="open")
     p.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
 
     p.add_argument(
@@ -2128,6 +2718,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--oracle-repeats", type=int, default=1)
     p.add_argument("--oracle-aggregate", choices=["mean", "median"], default="mean")
     p.add_argument("--mitigation", choices=["none", "readout", "zne", "dd"], default="none")
+    p.add_argument(
+        "--runtime-layer-noise-model-json",
+        type=Path,
+        default=None,
+        help=(
+            "RuntimeEncoder JSON file containing a NoiseLearnerResult or Sequence[LayerError]. "
+            "Runtime-only; currently used only with noise_mode='qpu_layer_learned'."
+        ),
+    )
+    p.add_argument("--runtime-enable-gate-twirling", action="store_true")
+    p.add_argument("--runtime-enable-measure-twirling", action="store_true")
+    p.add_argument("--runtime-twirling-num-randomizations", type=int, default=None)
+    p.add_argument(
+        "--runtime-twirling-strategy",
+        choices=["active", "active-circuit", "active-accum", "all"],
+        default=None,
+    )
     p.add_argument(
         "--symmetry-mitigation-mode",
         choices=["off", "verify_only", "postselect_diag_v1", "projector_renorm_v1"],
@@ -2238,6 +2845,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         default="energy_static_trotter,doublon_trotter",
     )
+    p.add_argument(
+        "--paired-anchor-validation",
+        action="store_true",
+        help=(
+            "Run a same-anchor comparison block for one local patch-bearing mode plus "
+            "qpu_raw and qpu_suppressed using the shared lock-family context."
+        ),
+    )
     p.add_argument("--skip-pdf", action="store_true")
     return p.parse_args(argv)
 
@@ -2323,6 +2938,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
     mitigation_cfg = _build_mitigation_config_from_args(args)
+    runtime_twirling_cfg = _build_runtime_twirling_config_from_args(args)
     symmetry_mitigation_cfg = _build_symmetry_mitigation_config_from_args(args)
     ideal_symmetry_mitigation_cfg = normalize_ideal_reference_symmetry_mitigation(
         symmetry_mitigation_cfg,
@@ -2337,27 +2953,13 @@ def main(argv: list[str] | None = None) -> None:
         noise_mode=str(args.noise_mode),
     )
 
-    noisy_cfg = OracleConfig(
+    noisy_cfg = _build_noisy_oracle_config(
+        args=args,
         noise_mode=str(args.noise_mode),
-        shots=int(args.shots),
-        seed=int(args.seed),
-        oracle_repeats=int(args.oracle_repeats),
-        oracle_aggregate=str(args.oracle_aggregate),
-        backend_name=(None if args.backend_name is None else str(args.backend_name)),
-        use_fake_backend=bool(args.use_fake_backend),
-        backend_profile=(None if args.backend_profile is None else str(args.backend_profile)),
-        aer_noise_kind=str(args.aer_noise_kind),
-        schedule_policy=(None if args.schedule_policy is None else str(args.schedule_policy)),
-        layout_policy=(None if args.layout_policy is None else str(args.layout_policy)),
-        noise_snapshot_json=(None if args.noise_snapshot_json is None else str(args.noise_snapshot_json)),
-        fixed_physical_patch=(None if args.fixed_physical_patch is None else str(args.fixed_physical_patch)),
-        layout_lock_key=effective_layout_lock_key,
-        allow_noisy_fallback=bool(args.allow_noisy_fallback),
-        allow_aer_fallback=bool(args.allow_noisy_fallback),
-        aer_fallback_mode="sampler_shots",
-        omp_shm_workaround=bool(args.omp_shm_workaround),
-        mitigation=dict(mitigation_cfg),
-        symmetry_mitigation=dict(symmetry_mitigation_cfg),
+        mitigation_cfg=dict(mitigation_cfg),
+        runtime_twirling_cfg=dict(runtime_twirling_cfg),
+        symmetry_mitigation_cfg=dict(symmetry_mitigation_cfg),
+        layout_lock_key=str(effective_layout_lock_key),
     )
     ideal_cfg = OracleConfig(
         noise_mode="ideal",
@@ -2396,6 +2998,26 @@ def main(argv: list[str] | None = None) -> None:
         "per_observable": {},
         "passed_all": False,
     }
+    paired_anchor_payload: dict[str, Any] = {
+        "enabled": bool(args.paired_anchor_validation),
+        "executed": False,
+        "reason": (
+            ""
+            if bool(args.paired_anchor_validation)
+            else "paired_anchor_validation disabled"
+        ),
+        "layout_lock_key": None,
+        "lock_family_token": None,
+        "local_mode": None,
+        "workload_kind": None,
+        "workload_label": None,
+        "initial_state_source": None,
+        "observable_label": None,
+        "runtime_suppression_mitigation": None,
+        "runtime_twirling_config": None,
+        "rows": [],
+        "comparability": {},
+    }
     if args.legacy_reference_json is not None:
         legacy_ref = _load_legacy_trajectory(Path(args.legacy_reference_json), compare_observables)
         legacy_parity_payload = {
@@ -2410,6 +3032,7 @@ def main(argv: list[str] | None = None) -> None:
         }
 
     backend_info: NoiseBackendInfo | None = None
+    oracle_execution: dict[str, Any] = {}
     with ExpectationOracle(noisy_cfg) as noisy_oracle, ExpectationOracle(ideal_cfg) as ideal_oracle:
         if bool(args.run_adapt):
             adapt_pool = _build_adapt_pool(
@@ -2490,6 +3113,7 @@ def main(argv: list[str] | None = None) -> None:
         else:
             init_label = str(args.initial_state_source)
         backend_info = noisy_oracle.backend_info
+        oracle_execution = noisy_oracle.current_execution.to_dict()
     assert backend_info is not None
     if legacy_ref is not None:
         legacy_parity_payload = _compute_legacy_parity(
@@ -2498,6 +3122,23 @@ def main(argv: list[str] | None = None) -> None:
             observables=compare_observables,
             tolerance=float(args.legacy_parity_tol),
         )
+    if bool(args.paired_anchor_validation):
+        workload_meta, compare_circuit, compare_observable = _paired_anchor_workload(
+            args=args,
+            ansatz=ansatz,
+            psi_ref=psi_ref,
+            hmat=np.asarray(hmat, dtype=complex),
+            h_qop=h_qop,
+            best_theta=best_theta,
+            adapt_ops=selected_adapt_ops,
+            adapt_theta=selected_adapt_theta,
+        )
+        paired_anchor_payload = _run_paired_anchor_validation(
+            args=args,
+            circuit=compare_circuit,
+            observable=compare_observable,
+        )
+        paired_anchor_payload.update(dict(workload_meta))
     delta_uncertainty = _trajectory_delta_uncertainty(trajectory_rows)
     if not bool(vqe_payload.get("skipped", False)) and vqe_payload.get("energy_ideal_reference", None) is not None:
         vqe_payload["exact_energy_filtered"] = float(exact_filtered)
@@ -2546,6 +3187,7 @@ def main(argv: list[str] | None = None) -> None:
             "zne_scales": (None if args.zne_scales is None else str(args.zne_scales)),
             "dd_sequence": (None if args.dd_sequence is None else str(args.dd_sequence)),
             "mitigation_config": dict(mitigation_cfg),
+            "runtime_twirling_config": dict(runtime_twirling_cfg),
             "symmetry_mitigation_config": dict(symmetry_mitigation_cfg),
             "vqe_parameter_source": str(args.vqe_parameter_source),
             "vqe_parameter_json": (None if args.vqe_parameter_json is None else str(args.vqe_parameter_json)),
@@ -2589,20 +3231,27 @@ def main(argv: list[str] | None = None) -> None:
             "output_compare_plot": (
                 None if args.output_compare_plot is None else str(args.output_compare_plot)
             ),
+            "paired_anchor_validation": bool(args.paired_anchor_validation),
         },
         "noise_config": asdict(noisy_cfg),
         "backend": asdict(backend_info),
-        "resolved_noise_spec": dict(backend_info.details.get("resolved_noise_spec", {})),
-        "resolved_noise_spec_hash": backend_info.details.get("resolved_noise_spec_hash", None),
-        "calibration_snapshot": backend_info.details.get("calibration_snapshot", None),
-        "transpile_snapshot": backend_info.details.get("transpile_snapshot", None),
-        "noise_artifact_hash": backend_info.details.get("noise_artifact_hash", None),
-        "snapshot_hash": backend_info.details.get("snapshot_hash", None),
-        "layout_hash": backend_info.details.get("layout_hash", None),
-        "transpile_hash": backend_info.details.get("transpile_hash", None),
-        "omitted_channels": list(backend_info.details.get("omitted_channels", [])),
-        "warnings": list(backend_info.details.get("warnings", [])),
-        "source_kind": backend_info.details.get("source_kind", None),
+        "oracle_execution": dict(oracle_execution),
+        "resolved_noise_spec": dict(oracle_execution.get("resolved_noise_spec", {})),
+        "resolved_noise_spec_hash": oracle_execution.get("resolved_noise_spec_hash", None),
+        "calibration_snapshot": oracle_execution.get("calibration_snapshot", None),
+        "transpile_snapshot": oracle_execution.get("transpile_snapshot", None),
+        "noise_artifact_hash": oracle_execution.get("noise_artifact_hash", None),
+        "snapshot_hash": oracle_execution.get("snapshot_hash", None),
+        "layout_hash": oracle_execution.get("layout_hash", None),
+        "transpile_hash": oracle_execution.get("transpile_hash", None),
+        "circuit_structure_hash": oracle_execution.get("circuit_structure_hash", None),
+        "layout_anchor_source": oracle_execution.get("layout_anchor_source", None),
+        "runtime_execution_bundle": oracle_execution.get("runtime_execution_bundle", None),
+        "fixed_couplers_status": oracle_execution.get("fixed_couplers_status", None),
+        "provenance_summary": oracle_execution.get("provenance_summary", None),
+        "omitted_channels": list(oracle_execution.get("omitted_channels", [])),
+        "warnings": list(oracle_execution.get("warnings", [])),
+        "source_kind": oracle_execution.get("source_kind", None),
         "hamiltonian": {
             "num_qubits": int(h_qop.num_qubits),
             "num_terms": int(len(native_order)),
@@ -2617,14 +3266,18 @@ def main(argv: list[str] | None = None) -> None:
         "trajectory": trajectory_rows,
         "delta_uncertainty": delta_uncertainty,
         "execution_fallback": {
-            "used": bool(backend_info.details.get("fallback_used", False)),
-            "mode": backend_info.details.get("fallback_mode"),
-            "reason": backend_info.details.get("fallback_reason", ""),
-            "aer_failed": bool(backend_info.details.get("aer_failed", False)),
-            "mitigation": dict(backend_info.details.get("mitigation", {})),
-            "symmetry_mitigation": dict(backend_info.details.get("symmetry_mitigation", {})),
+            "used": bool(oracle_execution.get("fallback_used", False)),
+            "mode": oracle_execution.get("fallback_mode"),
+            "reason": oracle_execution.get("fallback_reason", ""),
+            "aer_failed": bool(oracle_execution.get("aer_failed", False)),
+            "mitigation": dict(oracle_execution.get("mitigation", {})),
+            "symmetry_mitigation": dict(
+                oracle_execution.get("symmetry_mitigation_result")
+                or oracle_execution.get("symmetry_mitigation_config", {})
+            ),
         },
         "legacy_parity": legacy_parity_payload,
+        "paired_anchor_validation": paired_anchor_payload,
     }
 
     if trajectory_rows:

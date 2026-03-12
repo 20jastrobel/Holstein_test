@@ -1828,6 +1828,36 @@ def vqe_minimize(
             now = time.perf_counter()
             energy_best_global = float(min(best_energy, restart_best))
 
+            if (
+                progress_logger is not None
+                and restart_best_theta is not None
+                and abs(float(e_val) - float(restart_best)) <= 1e-15
+            ):
+                _emit_progress(
+                    "new_best",
+                    restart_index=int(r + 1),
+                    restarts_total=int(restarts),
+                    elapsed_s=float(now - run_t0),
+                    elapsed_restart_s=float(now - restart_t0),
+                    nfev_restart=int(restart_nfev),
+                    nfev_so_far=int(total_nfev + restart_nfev),
+                    energy_current=float(restart_last),
+                    energy_restart_best=float(restart_best),
+                    energy_best_global=float(energy_best_global),
+                    theta_current=(
+                        [float(v) for v in np.asarray(restart_last_theta, dtype=float).tolist()]
+                        if (bool(emit_theta_in_progress) and restart_last_theta is not None)
+                        else None
+                    ),
+                    theta_restart_best=(
+                        [float(v) for v in np.asarray(restart_best_theta, dtype=float).tolist()]
+                        if bool(emit_theta_in_progress)
+                        else None
+                    ),
+                    method=str(method),
+                    maxiter=int(maxiter),
+                )
+
             if early_stop_checker is not None:
                 checker_payload: Dict[str, Any] = {
                     "event": "objective_step",

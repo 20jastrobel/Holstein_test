@@ -15,6 +15,7 @@ from pipelines.hardcoded.hh_vqe_from_adapt_family import (
     _build_replay_seed_theta_policy,
     _build_replay_terms_from_adapt_labels,
     _extract_adapt_operator_theta_sequence,
+    _extract_replay_contract,
     _infer_handoff_state_kind,
 )
 from src.quantum.hubbard_latex_python_pairs import build_hubbard_holstein_hamiltonian
@@ -201,7 +202,97 @@ def test_build_replay_seed_theta_tiled_and_npar_matches_adapt_depth_times_reps()
     assert int(seed.size) == int(ansatz.num_parameters)
 
 
-# ── Replay contract version / constant tests ────────────────────────────
+# ── Replay contract parser tests ───────────────────────────────────────────
+
+def test_replay_contract_parses_match_adapt_mapping() -> None:
+    contract_payload = {
+        "continuation": {
+            "replay_contract": {
+                "contract_version": 2,
+                "generator_family": {
+                    "requested": "match_adapt",
+                    "resolved": "paop_lf_std",
+                    "resolution_source": "selected_generator_metadata.family_id",
+                    "fallback_family": "full_meta",
+                    "fallback_used": False,
+                },
+                "seed_policy_requested": "auto",
+                "seed_policy_resolved": "residual_only",
+                "handoff_state_kind": "prepared_state",
+                "continuation_mode": "phase1_v1",
+                "provenance_source": "test",
+            }
+        }
+    }
+    contract = _extract_replay_contract(contract_payload)
+    assert contract is not None
+    assert contract["generator_family"]["requested"] == "match_adapt"
+    assert contract["generator_family"]["resolved"] == "paop_lf_std"
+    assert contract["generator_family"]["fallback_family"] == "full_meta"
+    assert contract["seed_policy_requested"] == "auto"
+    assert contract["seed_policy_resolved"] == "residual_only"
+    assert contract["handoff_state_kind"] == "prepared_state"
+
+
+def test_replay_contract_parses_map_with_resolved_only() -> None:
+    contract_payload = {
+        "continuation": {
+            "replay_contract": {
+                "contract_version": 2,
+                "generator_family": {
+                    "resolved": "paop_lf_std",
+                },
+                "seed_policy_requested": "auto",
+                "seed_policy_resolved": "residual_only",
+                "handoff_state_kind": "prepared_state",
+                "continuation_mode": "legacy",
+            }
+        }
+    }
+    contract = _extract_replay_contract(contract_payload)
+    assert contract is not None
+    assert contract["generator_family"]["requested"] == "match_adapt"
+    assert contract["generator_family"]["resolved"] == "paop_lf_std"
+
+
+def test_replay_contract_rejects_fallback_used_without_fallback_family() -> None:
+    with pytest.raises(ValueError, match="fallback_used requires fallback_family"):
+        _extract_replay_contract(
+            {
+                "continuation": {
+                    "replay_contract": {
+                        "contract_version": 2,
+                        "generator_family": {
+                            "requested": "match_adapt",
+                            "resolved": "paop_lf_std",
+                            "fallback_used": True,
+                        },
+                        "seed_policy_requested": "auto",
+                        "seed_policy_resolved": "residual_only",
+                        "handoff_state_kind": "prepared_state",
+                        "continuation_mode": "phase1_v1",
+                    }
+                }
+            }
+        )
+
+
+def test_replay_contract_rejects_malformed() -> None:
+    with pytest.raises(ValueError, match="generator_family"):
+        _extract_replay_contract(
+            {
+                "continuation": {
+                    "replay_contract": {
+                        "contract_version": 2,
+                        "generator_family": "not_a_family",
+                        "seed_policy_requested": "auto",
+                        "seed_policy_resolved": "residual_only",
+                        "handoff_state_kind": "prepared_state",
+                    }
+                }
+            }
+        )
+
 
 def test_replay_contract_version_is_2() -> None:
     assert REPLAY_CONTRACT_VERSION == 2

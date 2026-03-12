@@ -1,6 +1,14 @@
 # Holstein_test
 
-Canonical repository onboarding document.
+This path is the canonical repository onboarding document.
+
+## Active checkout snapshot (2026-03-09)
+
+This README reflects the active non-archived toolchain in this repository:
+
+- `pipelines/hardcoded/hubbard_pipeline.py`, `pipelines/hardcoded/adapt_pipeline.py`, `pipelines/shell/run_drive_accurate.sh`
+- `pipelines/hardcoded/hh_vqe_from_adapt_family.py`, `pipelines/exact_bench/cross_check_suite.py`, `pipelines/exact_bench/hh_noise_hardware_validation.py`
+- `archive/` compare/qiskit baseline runners are not present in this checkout; historical snippets are preserved for provenance only.
 
 This repo implements Hubbard-Holstein (HH) simulation workflows with
 Jordan-Wigner operator construction, binary or unary bosonic encoding, blocked or periodic boundary conditions, with hardcoded HVA/ADAPT/VQE ground-state preparation, and exact vs Trotterized vs CFQM dynamics pipelines.
@@ -10,7 +18,7 @@ Jordan-Wigner operator construction, binary or unary bosonic encoding, blocked o
 - Primary production model: `Hubbard-Holstein (HH)`.
 - Pure Hubbard is a legacy / dead model for default planning and should be ignored unless explicitly requested.
 - Standard regression checks may still use the HH -> Hubbard limiting case when the task explicitly calls for that consistency check.
-- Noiseless shots and Aer simulator should match the pipeline with noise simular turned off.
+- Noiseless shots and Aer simulator should match the pipeline with noise simulation turned off.
 
 
 ### Warm-start chain
@@ -19,7 +27,7 @@ Warm-start runs follow the active three-stage HH continuation contract:
 
 1. Run HH-HVA VQE warm start with `hh_hva_ptw`.
 2. Use that warm-start state as the ADAPT reference state.
-3. Run ADAPT from that warm-start state in staged HH continuation mode (`phase1_v1` / `phase2_v1` / `phase3_v1`).
+3. Run ADAPT from that warm-start state in staged HH continuation mode (`phase3_v1`, canonical default).
    - For new HH agent work, depth-0 ADAPT starts from the narrow physics-aligned core; current runtime resolves this to `paop_lf_std`.
    - `full_meta` remains a supported broad-pool preset, but only as controlled residual enrichment after plateau diagnosis, not the default depth-0 path.
    - Optional phase-3 follow-ons stay opt-in: `--phase3-runtime-split-mode shortlist_pauli_children_v1` is a shortlist-only continuation aid, and widened `--phase3-symmetry-mitigation-mode` choices remain phase-3 metadata/telemetry hooks on raw staged/hardcoded/replay paths.
@@ -165,7 +173,7 @@ graph TB
 
 - `hubbard` pools: `uccsd`, `cse`, `full_hamiltonian`.
 - `hh` pools: `hva`, `full_hamiltonian`, `paop_min`, `paop_std`, `paop_full`, `paop_lf` (`paop_lf_std` alias), `paop_lf2_std`, `paop_lf_full`.
-- HH staged continuation default for new agent work: `phase1_v1` / `phase2_v1` / `phase3_v1` start from the narrow HH core and runtime-resolve depth-0 HH ADAPT to `paop_lf_std`.
+- HH staged continuation default for new agent work: `phase3_v1` start from the narrow HH core and runtime-resolve depth-0 HH ADAPT to `paop_lf_std`.
 - HH built-in combined preset: `uccsd_paop_lf_full` = `uccsd_lifted + paop_lf_full` (deduplicated) via one CLI value.
 - HH full-meta preset: `full_meta` = `uccsd_lifted + hva + paop_full + paop_lf_full` (deduplicated) via one CLI value; keep it as a compatibility/broad-pool preset and replay fallback, not the default depth-0 staged HH pool.
 - Opt-in runtime split (`--phase3-runtime-split-mode shortlist_pauli_children_v1`) probes shortlisted macro generators as serialized child terms for continuation/replay provenance; it does **not** change the default HH pool curriculum or create a new replay mode.
@@ -187,7 +195,7 @@ The hardcoded VQE/ADAPT path now includes a shared compiled-action acceleration 
   - Applies Pauli rotations through compiled permutation+phase actions (no per-amplitude string loops).
 - VQE one-apply energy backend:
   - `src/quantum/vqe_latex_python_pairs.py` adds `expval_pauli_polynomial_one_apply(...)`.
-  - `vqe_minimize(...)` supports `energy_backend="legacy"|"one_apply_compiled"` (default remains legacy).
+- `vqe_minimize(...)` supports `energy_backend="legacy"|"one_apply_compiled"` (default is `one_apply_compiled`).
   - `pipelines/hardcoded/hubbard_pipeline.py` exposes `--vqe-energy-backend {legacy,one_apply_compiled}` and defaults to `one_apply_compiled`.
   - Hardcoded VQE can emit live progress heartbeats via `--vqe-progress-every-s` (default `60` seconds), including restart lifecycle and periodic energy/nfev telemetry.
 - ADAPT runtime acceleration:
@@ -205,7 +213,7 @@ Fast VQE-from-ADAPT replay (HH, ADAPT-family matched):
 
 ```bash
 python pipelines/hardcoded/hh_vqe_from_adapt_family.py \
-  --adapt-input-json .vscode-userdata/artifacts/useful/L4/l4_hh_seq_20260302_215706_resume_adaptB_20260303_111311_adapt_B_B_probe_checkpoint_state.json \
+  --adapt-input-json <adapt_hh_json_path> \
   --generator-family match_adapt --fallback-family full_meta \
   --L 4 --boundary open --ordering blocked \
   --boson-encoding binary --n-ph-max 1 --t 1.0 --u 4.0 --dv 0.0 --omega0 1.0 --g-ep 0.5 \
@@ -246,7 +254,7 @@ for module-specific details.
 
 Default hard gate policy for agent execution:
 - Final conventional VQE hard gate: `ΔE_abs < 1e-4`.
-- Script strict mode (`1e-7`) is optional and should be treated as strict mode only.
+- In this checkout, `run_drive_accurate.sh` enforces `ΔE_abs < 1e-7` with no built-in strict-mode toggle. This is stricter than the AGENTS default.
 
 ADAPT-VQE (HH, PAOP pool):
 

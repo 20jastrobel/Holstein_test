@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
 
 import pytest
@@ -11,6 +12,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from pipelines.hardcoded.hh_vqe_from_adapt_family import (
     RunConfig,
+    _build_cfg,
     _resolve_family,
     _resolve_family_from_metadata,
     parse_args,
@@ -76,13 +78,38 @@ def test_parse_defaults_match_adapt_and_spsa() -> None:
     assert str(args.generator_family) == "match_adapt"
     assert str(args.fallback_family) == "full_meta"
     assert str(args.method) == "SPSA"
-    assert str(args.replay_continuation_mode) == "legacy"
+    assert args.replay_continuation_mode is None
 
 
 
 def test_parse_rejects_non_spsa_method() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--adapt-input-json", "dummy.json", "--method", "COBYLA"])
+
+
+def test_build_cfg_keeps_replay_continuation_mode_none(tmp_path: Path) -> None:
+    payload = {
+        "settings": {
+            "L": 2,
+            "t": 1.0,
+            "U": 4.0,
+            "dv": 0.0,
+            "omega0": 1.0,
+            "g_ep": 0.5,
+            "n_ph_max": 1,
+            "boson_encoding": "binary",
+            "ordering": "blocked",
+            "boundary": "open",
+            "sector_n_up": 1,
+            "sector_n_dn": 1,
+        }
+    }
+    in_json = tmp_path / "adapt_contract_replay_mode.json"
+    in_json.write_text(json.dumps(payload), encoding="utf-8")
+    payload = json.loads(in_json.read_text(encoding="utf-8"))
+    args = parse_args(["--adapt-input-json", str(in_json)])
+    cfg = _build_cfg(args, payload)
+    assert cfg.replay_continuation_mode is None
 
 
 def test_parse_rejects_auto_replay_continuation_mode() -> None:
@@ -136,6 +163,35 @@ def test_resolve_family_maps_legacy_pool_variant() -> None:
     assert src == "meta.pool_variant"
 
 
+def test_resolve_family_match_adapt_prefers_contract_and_falls_back_when_missing(tmp_path: Path) -> None:
+    cfg = _mk_cfg(tmp_path, generator_family="match_adapt", fallback_family="full_meta")
+    info = _resolve_family(
+        cfg,
+        {
+            "continuation": {
+                "replay_contract": {
+                    "contract_version": 2,
+                    "generator_family": {
+                        "requested": "match_adapt",
+                        "resolved": "paop_lf_std",
+                        "resolution_source": "selected_generator_metadata.family_id",
+                        "fallback_family": "full_meta",
+                        "fallback_used": False,
+                    },
+                    "seed_policy_requested": "auto",
+                    "seed_policy_resolved": "residual_only",
+                    "handoff_state_kind": "prepared_state",
+                    "continuation_mode": "phase1_v1",
+                }
+            }
+        }
+    )
+    assert info["requested"] == "match_adapt"
+    assert info["resolved"] == "paop_lf_std"
+    assert info["resolution_source"] == "selected_generator_metadata.family_id"
+    assert info["fallback_used"] is False
+
+
 def test_resolve_family_match_adapt_falls_back_when_missing(tmp_path: Path) -> None:
     cfg = _mk_cfg(tmp_path, generator_family="match_adapt", fallback_family="full_meta")
     info = _resolve_family(cfg, {})
@@ -143,3 +199,26 @@ def test_resolve_family_match_adapt_falls_back_when_missing(tmp_path: Path) -> N
     assert info["resolved"] == "full_meta"
     assert bool(info["fallback_used"]) is True
     assert info["resolution_source"] == "fallback_family"
+
+
+def test_resolve_family_rejects_malformed_contract(tmp_path: Path) -> None:
+    cfg = _mk_cfg(tmp_path, generator_family="match_adapt", fallback_family="full_meta")
+    with pytest.raises(ValueError, match="continuation.replay_contract"):
+        _resolve_family(
+            cfg,
+            {
+                "continuation": {
+                    "replay_contract": {
+                        "contract_version": 2,
+                    "generator_family": {
+                        "requested": "match_adapt",
+                        "resolved": "not_a_family",
+                    },
+                    "seed_policy_requested": "auto",
+                    "seed_policy_resolved": "residual_only",
+                    "handoff_state_kind": "prepared_state",
+                    "continuation_mode": "legacy",
+                }
+            }
+        }
+    )

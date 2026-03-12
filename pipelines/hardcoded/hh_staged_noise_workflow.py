@@ -23,6 +23,7 @@ from pipelines.exact_bench.noise_oracle_runtime import (
     normalize_mitigation_config,
     normalize_symmetry_mitigation_config,
 )
+from pipelines.exact_bench.noise_model_spec import normalize_runtime_twirling_config
 from pipelines.hardcoded import hh_staged_workflow as base_wf
 
 
@@ -48,6 +49,7 @@ class NoiseConfig:
     oracle_repeats: int
     oracle_aggregate: str
     mitigation_config: dict[str, Any]
+    runtime_twirling_config: dict[str, Any]
     symmetry_mitigation_config: dict[str, Any]
     seed: int
     backend_name: str | None
@@ -63,6 +65,7 @@ class NoiseConfig:
     noisy_mode_timeout_s: int
     benchmark_active_coeff_tol: float
     include_final_audit: bool
+    paired_anchor_comparison: bool
 
 
 @dataclass(frozen=True)
@@ -141,6 +144,15 @@ def resolve_staged_hh_noise_config(args: Any) -> StagedHHNoiseConfig:
                 "mode": str(getattr(args, "mitigation")),
                 "zne_scales": getattr(args, "zne_scales", None),
                 "dd_sequence": getattr(args, "dd_sequence", None),
+                "layer_noise_model_json": getattr(args, "runtime_layer_noise_model_json", None),
+            }
+        ),
+        runtime_twirling_config=normalize_runtime_twirling_config(
+            {
+                "enable_gates": bool(getattr(args, "runtime_enable_gate_twirling", False)),
+                "enable_measure": bool(getattr(args, "runtime_enable_measure_twirling", False)),
+                "num_randomizations": getattr(args, "runtime_twirling_num_randomizations", None),
+                "strategy": getattr(args, "runtime_twirling_strategy", None),
             }
         ),
         symmetry_mitigation_config=normalize_symmetry_mitigation_config(
@@ -166,6 +178,7 @@ def resolve_staged_hh_noise_config(args: Any) -> StagedHHNoiseConfig:
         noisy_mode_timeout_s=int(getattr(args, "noisy_mode_timeout_s")),
         benchmark_active_coeff_tol=float(getattr(args, "benchmark_active_coeff_tol")),
         include_final_audit=bool(getattr(args, "include_final_audit")),
+        paired_anchor_comparison=bool(getattr(args, "paired_anchor_comparison")),
     )
     return StagedHHNoiseConfig(staged=staged_cfg, noise=noise_cfg)
 
@@ -211,6 +224,7 @@ def _run_single_noisy_mode(
         "oracle_repeats": int(noise_cfg.oracle_repeats),
         "oracle_aggregate": str(noise_cfg.oracle_aggregate),
         "mitigation_config": dict(noise_cfg.mitigation_config),
+        "runtime_twirling_config": dict(noise_cfg.runtime_twirling_config),
         "symmetry_mitigation_config": dict(noise_cfg.symmetry_mitigation_config),
         "backend_name": noise_cfg.backend_name,
         "use_fake_backend": bool(noise_cfg.use_fake_backend),
@@ -222,7 +236,7 @@ def _run_single_noisy_mode(
         "fixed_physical_patch": noise_cfg.fixed_physical_patch,
         "allow_noisy_fallback": bool(noise_cfg.allow_noisy_fallback),
         "omp_shm_workaround": bool(noise_cfg.omp_shm_workaround),
-        "layout_lock_key": f"staged_noise:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{str(mode)}",
+        "layout_lock_key": f"staged_noise:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{noise_report._layout_lock_mode_token(str(mode))}",
         "method": str(method),
         "benchmark_active_coeff_tol": float(noise_cfg.benchmark_active_coeff_tol),
         "cfqm_coeff_drop_abs_tol": float(staged_cfg.dynamics.cfqm_coeff_drop_abs_tol),
@@ -254,6 +268,7 @@ def _run_final_audit_mode(
         "oracle_repeats": int(noise_cfg.oracle_repeats),
         "oracle_aggregate": str(noise_cfg.oracle_aggregate),
         "mitigation_config": dict(noise_cfg.mitigation_config),
+        "runtime_twirling_config": dict(noise_cfg.runtime_twirling_config),
         "symmetry_mitigation_config": dict(noise_cfg.symmetry_mitigation_config),
         "backend_name": noise_cfg.backend_name,
         "use_fake_backend": bool(noise_cfg.use_fake_backend),
@@ -265,7 +280,7 @@ def _run_final_audit_mode(
         "fixed_physical_patch": noise_cfg.fixed_physical_patch,
         "allow_noisy_fallback": bool(noise_cfg.allow_noisy_fallback),
         "omp_shm_workaround": bool(noise_cfg.omp_shm_workaround),
-        "layout_lock_key": f"staged_noise_audit:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{str(mode)}",
+        "layout_lock_key": f"staged_noise_audit:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{noise_report._layout_lock_mode_token(str(mode))}",
     }
     return noise_report._run_noisy_audit_mode_isolated(
         kwargs=kwargs,
@@ -286,8 +301,10 @@ def run_noisy_profiles(
 
     noisy_profiles: dict[str, Any] = {}
     audit_profiles: dict[str, Any] = {}
+    paired_anchor_profiles: dict[str, Any] = {}
     for profile_name, profile_drive in profile_specs:
         methods_payload: dict[str, Any] = {}
+        paired_methods_payload: dict[str, Any] = {}
         for method in noise_cfg.methods:
             modes_payload: dict[str, Any] = {}
             for mode in noise_cfg.modes:
@@ -300,11 +317,56 @@ def run_noisy_profiles(
                     mode=str(mode),
                 )
             methods_payload[str(method)] = {"modes": modes_payload}
+            if bool(noise_cfg.paired_anchor_comparison):
+                local_anchor_mode = noise_report._paired_anchor_local_mode(noise_cfg.layout_policy)
+                paired_methods_payload[str(method)] = noise_report._run_paired_anchor_method_trajectory_set(
+                    L=int(staged_cfg.physics.L),
+                    ordering=str(staged_cfg.physics.ordering),
+                    psi_seed=np.asarray(stage_result.psi_final, dtype=complex).reshape(-1),
+                    ordered_labels_exyz=list(stage_result.ordered_labels_exyz),
+                    static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+                    t_final=float(staged_cfg.dynamics.t_final),
+                    num_times=int(staged_cfg.dynamics.num_times),
+                    trotter_steps=int(staged_cfg.dynamics.trotter_steps),
+                    drive_profile=profile_drive,
+                    shots=int(noise_cfg.shots),
+                    seed=int(noise_cfg.seed),
+                    oracle_repeats=int(noise_cfg.oracle_repeats),
+                    oracle_aggregate=str(noise_cfg.oracle_aggregate),
+                    mitigation_config=dict(noise_cfg.mitigation_config),
+                    runtime_twirling_config=dict(noise_cfg.runtime_twirling_config),
+                    symmetry_mitigation_config=dict(noise_cfg.symmetry_mitigation_config),
+                    backend_name=noise_cfg.backend_name,
+                    use_fake_backend=bool(noise_cfg.use_fake_backend),
+                    backend_profile=noise_cfg.backend_profile,
+                    aer_noise_kind=str(noise_cfg.aer_noise_kind),
+                    schedule_policy=noise_cfg.schedule_policy,
+                    layout_policy=noise_cfg.layout_policy,
+                    noise_snapshot_json=noise_cfg.noise_snapshot_json,
+                    fixed_physical_patch=noise_cfg.fixed_physical_patch,
+                    allow_noisy_fallback=bool(noise_cfg.allow_noisy_fallback),
+                    omp_shm_workaround=bool(noise_cfg.omp_shm_workaround),
+                    layout_lock_key=(
+                        f"staged_noise_paired:{staged_cfg.artifacts.tag}:{profile_name}:{method}:"
+                        f"{noise_report._layout_lock_mode_token(str(local_anchor_mode))}"
+                    ),
+                    method=str(method),
+                    benchmark_active_coeff_tol=float(noise_cfg.benchmark_active_coeff_tol),
+                    cfqm_coeff_drop_abs_tol=float(staged_cfg.dynamics.cfqm_coeff_drop_abs_tol),
+                    noisy_mode_timeout_s=int(noise_cfg.noisy_mode_timeout_s),
+                    profile_name=str(profile_name),
+                )
         noisy_profiles[str(profile_name)] = {
             "drive_enabled": bool(profile_drive is not None),
             "drive_profile": profile_drive,
             "methods": methods_payload,
         }
+        if paired_methods_payload:
+            paired_anchor_profiles[str(profile_name)] = {
+                "drive_enabled": bool(profile_drive is not None),
+                "drive_profile": profile_drive,
+                "methods": paired_methods_payload,
+            }
         if bool(noise_cfg.include_final_audit):
             audit_modes = {
                 str(mode): _run_final_audit_mode(
@@ -325,6 +387,11 @@ def run_noisy_profiles(
     dynamics_noisy = {"profiles": noisy_profiles}
     noisy_final_audit = {"profiles": audit_profiles}
     dynamics_benchmarks = {"rows": noise_report._collect_noisy_benchmark_rows(dynamics_noisy)}
+    if paired_anchor_profiles:
+        dynamics_benchmarks["paired_anchor_comparisons"] = {
+            "enabled": True,
+            "profiles": paired_anchor_profiles,
+        }
     return dynamics_noisy, noisy_final_audit, dynamics_benchmarks
 
 
@@ -373,6 +440,11 @@ def write_staged_hh_noise_pdf(payload: Mapping[str, Any], cfg: StagedHHNoiseConf
     stage_pipeline = payload.get("stage_pipeline", {}) if isinstance(payload, Mapping) else {}
     summary = payload.get("summary", {}) if isinstance(payload, Mapping) else {}
     noise_settings = payload.get("settings", {}).get("noise", {}) if isinstance(payload.get("settings", {}), Mapping) else {}
+    paired_anchor_rows = noise_report._paired_anchor_summary_rows(
+        payload.get("dynamics_benchmarks", {}).get("paired_anchor_comparisons", {})
+        if isinstance(payload.get("dynamics_benchmarks", {}), Mapping)
+        else {}
+    )
 
     with PdfPages(pdf_path) as pdf:
         render_parameter_manifest(
@@ -392,6 +464,7 @@ def write_staged_hh_noise_pdf(payload: Mapping[str, Any], cfg: StagedHHNoiseConf
                 "noise_modes": ",".join(cfg.noise.modes),
                 "shots": int(cfg.noise.shots),
                 "mitigation": dict(cfg.noise.mitigation_config),
+                "runtime_twirling": dict(cfg.noise.runtime_twirling_config),
                 "symmetry_mitigation": dict(cfg.noise.symmetry_mitigation_config),
             },
             command=str(run_command),
@@ -411,7 +484,9 @@ def write_staged_hh_noise_pdf(payload: Mapping[str, Any], cfg: StagedHHNoiseConf
                 f"adapt_handoff_json: {staged_cfg.artifacts.handoff_json}",
                 f"replay_json: {staged_cfg.artifacts.replay_output_json}",
                 f"mitigation: {noise_settings.get('mitigation_config')}",
+                f"runtime_twirling: {noise_settings.get('runtime_twirling_config')}",
                 f"symmetry: {noise_settings.get('symmetry_mitigation_config')}",
+                f"paired_anchor_sets: {len(paired_anchor_rows)}",
             ],
             fontsize=10,
             line_spacing=0.03,
@@ -460,6 +535,28 @@ def write_staged_hh_noise_pdf(payload: Mapping[str, Any], cfg: StagedHHNoiseConf
         )
         pdf.savefig(fig)
         plt.close(fig)
+
+        if paired_anchor_rows:
+            fig_paired, ax_paired = plt.subplots(figsize=(11.5, 4.8))
+            render_compact_table(
+                ax_paired,
+                title="Paired same-anchor comparison sets",
+                col_labels=[
+                    "Profile",
+                    "Method",
+                    "Local anchor",
+                    "Executed",
+                    "Local vs runtime",
+                    "Runtime pair",
+                    "Exact anchor",
+                    "Bundle only",
+                    "Reason",
+                ],
+                rows=paired_anchor_rows[:18],
+                fontsize=7,
+            )
+            pdf.savefig(fig_paired)
+            plt.close(fig_paired)
 
         render_command_page(
             pdf,

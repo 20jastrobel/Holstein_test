@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from pipelines.hardcoded.hh_vqe_from_adapt_family import (
     _extract_adapt_operator_theta_sequence,
+    _extract_replay_contract,
     _infer_handoff_state_kind,
     _resolve_family_from_metadata,
 )
@@ -93,6 +94,12 @@ def _make_staged_export_payload(
             "amplitude_cutoff": 1e-14,
             "norm": 1.0,
             "handoff_state_kind": "prepared_state",
+        },
+        "ground_state": {
+            "exact_energy": -2.0,
+            "exact_energy_filtered": -2.0,
+            "filtered_sector": {"n_up": (L + 1) // 2, "n_dn": L // 2},
+            "method": "staged_handoff_bundle",
         },
         "exact": {"E_exact_sector": -2.0},
     }
@@ -300,6 +307,8 @@ class TestWriteStateBundleRoundTrip:
         assert payload["settings"]["sector_n_up"] == 1
         assert payload["settings"]["sector_n_dn"] == 1
         assert payload["settings"]["adapt_pool"] == "pool_a"
+        assert payload["ground_state"]["exact_energy_filtered"] == pytest.approx(-2.0)
+        assert payload["ground_state"]["filtered_sector"] == {"n_up": 1, "n_dn": 1}
 
         # Initial state
         assert "amplitudes_qn_to_q0" in payload["initial_state"]
@@ -312,6 +321,63 @@ class TestWriteStateBundleRoundTrip:
         assert payload["continuation"]["rescue_history"][0]["reason"] == "disabled"
         assert payload["adapt_vqe"]["pre_prune_scaffold"]["operators"] == ["op_x", "op_y", "op_z"]
         assert payload["adapt_vqe"]["prune_summary"]["executed"] is True
+
+    def test_write_with_contract_is_parseable(self, tmp_path: Path) -> None:
+        cfg = HandoffStateBundleConfig(
+            L=2,
+            t=1.0,
+            U=4.0,
+            dv=0.0,
+            omega0=1.0,
+            g_ep=0.5,
+            n_ph_max=1,
+            boson_encoding="binary",
+            ordering="blocked",
+            boundary="open",
+            sector_n_up=1,
+            sector_n_dn=1,
+        )
+
+        nq = 2 * 2 + 2
+        psi = np.zeros(1 << nq, dtype=complex)
+        psi[0] = 1.0
+
+        out_path = tmp_path / "with_contract.json"
+        write_handoff_state_bundle(
+            path=out_path,
+            psi_state=psi,
+            cfg=cfg,
+            source="A_probe_final",
+            exact_energy=-2.0,
+            energy=-1.9,
+            delta_E_abs=0.1,
+            relative_error_abs=0.05,
+            adapt_operators=["op_x", "op_y"],
+            adapt_optimal_point=[0.1, -0.2],
+            adapt_pool_type="pool_a",
+            settings_adapt_pool="pool_a",
+            continuation_mode="phase1_v1",
+            replay_contract={
+                "contract_version": 2,
+                "generator_family": {
+                    "requested": "match_adapt",
+                    "resolved": "paop_lf_std",
+                    "resolution_source": "selected_generator_metadata.family_id",
+                    "fallback_family": "full_meta",
+                    "fallback_used": False,
+                },
+                "seed_policy_requested": "auto",
+                "seed_policy_resolved": "residual_only",
+                "handoff_state_kind": "prepared_state",
+                "continuation_mode": "phase1_v1",
+            },
+        )
+
+        payload = json.loads(out_path.read_text(encoding="utf-8"))
+        assert "continuation" in payload
+        contract = _extract_replay_contract(payload)
+        assert contract is not None
+        assert contract["generator_family"]["resolved"] == "paop_lf_std"
 
     def test_write_sparse_bundle_without_continuation_preserves_legacy_load(self, tmp_path: Path) -> None:
         cfg = HandoffStateBundleConfig(
@@ -360,6 +426,7 @@ class TestWriteStateBundleRoundTrip:
         assert fam == "pool_a"
         assert src == "adapt_vqe.pool_type"
         assert payload["settings"]["adapt_pool"] == "pool_a"
+        assert payload["ground_state"]["exact_energy_filtered"] == pytest.approx(-2.0)
 
         kind, provenance = _infer_handoff_state_kind(payload)
         assert kind == "prepared_state"

@@ -100,6 +100,7 @@ def write_handoff_state_bundle(
     prune_summary: dict[str, Any] | None = None,
     pre_prune_scaffold: dict[str, Any] | None = None,
     replay_contract_hint: dict[str, Any] | None = None,
+    replay_contract: dict[str, Any] | None = None,
     amplitude_cutoff: float = 1e-14,
 ) -> None:
     """Write an adapt_json-compatible HH handoff bundle."""
@@ -133,6 +134,15 @@ def write_handoff_state_bundle(
         "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "settings": build_handoff_settings_manifest(cfg, adapt_pool=settings_adapt_pool),
         "adapt_vqe": adapt_vqe_block,
+        "ground_state": {
+            "exact_energy": float(exact_energy),
+            "exact_energy_filtered": float(exact_energy),
+            "filtered_sector": {
+                "n_up": int(cfg.sector_n_up),
+                "n_dn": int(cfg.sector_n_dn),
+            },
+            "method": "staged_handoff_bundle",
+        },
         "initial_state": {
             "source": str(source),
             "nq_total": nq_total,
@@ -168,6 +178,8 @@ def write_handoff_state_bundle(
         continuation_block["symmetry_mitigation"] = dict(symmetry_mitigation)
     if rescue_history is not None:
         continuation_block["rescue_history"] = [dict(x) for x in rescue_history]
+    if replay_contract is not None:
+        continuation_block["replay_contract"] = dict(replay_contract)
     if replay_contract_hint is not None:
         continuation_block["replay_contract_hint"] = dict(replay_contract_hint)
     if continuation_block:

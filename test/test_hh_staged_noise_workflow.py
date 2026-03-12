@@ -60,6 +60,12 @@ def test_resolve_noise_defaults_and_retagged_artifacts() -> None:
     assert cfg.noise.fixed_physical_patch is None
     assert bool(cfg.noise.allow_noisy_fallback) is False
     assert cfg.noise.mitigation_config == {"mode": "none", "zne_scales": [], "dd_sequence": None}
+    assert cfg.noise.runtime_twirling_config == {
+        "enable_gates": False,
+        "enable_measure": False,
+        "num_randomizations": None,
+        "strategy": None,
+    }
     assert cfg.noise.symmetry_mitigation_config == {
         "mode": "off",
         "num_sites": 2,
@@ -68,6 +74,7 @@ def test_resolve_noise_defaults_and_retagged_artifacts() -> None:
         "sector_n_dn": 1,
     }
     assert bool(cfg.noise.include_final_audit) is False
+    assert bool(cfg.noise.paired_anchor_comparison) is False
     assert str(cfg.staged.artifacts.tag).startswith("hh_staged_noise_")
     assert Path(cfg.staged.artifacts.output_json).name == f"{cfg.staged.artifacts.tag}.json"
     assert Path(cfg.staged.artifacts.replay_output_json).name == f"{cfg.staged.artifacts.tag}_replay.json"
@@ -80,6 +87,79 @@ def test_explicit_noise_tag_is_preserved() -> None:
 
     assert str(cfg.staged.artifacts.tag) == "custom_noise_tag"
     assert Path(cfg.staged.artifacts.output_json).name == "custom_noise_tag.json"
+
+
+def test_resolve_noise_config_preserves_runtime_layer_noise_model_json() -> None:
+    cfg = noise_wf.resolve_staged_hh_noise_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--noise-modes",
+                "qpu_layer_learned",
+                "--mitigation",
+                "zne",
+                "--zne-scales",
+                "1.0,2.0",
+                "--runtime-layer-noise-model-json",
+                "artifacts/json/layer_noise_model.json",
+            ]
+        )
+    )
+
+    assert cfg.noise.mitigation_config == {
+        "mode": "zne",
+        "zne_scales": [1.0, 2.0],
+        "dd_sequence": None,
+        "layer_noise_model_json": "artifacts/json/layer_noise_model.json",
+    }
+
+
+def test_local_aer_modes_share_layout_lock_key_for_patch_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mode_calls: list[dict[str, object]] = []
+
+    def _fake_run_noisy_mode_isolated(*, kwargs: dict[str, object], timeout_s: int) -> dict[str, object]:
+        mode_calls.append({"kwargs": kwargs, "timeout_s": timeout_s})
+        return {
+            "success": True,
+            "trajectory": [],
+            "delta_uncertainty": {},
+            "benchmark_cost": {},
+            "benchmark_runtime": {},
+        }
+
+    monkeypatch.setattr(noise_wf.noise_report, "_run_noisy_mode_isolated", _fake_run_noisy_mode_isolated)
+    monkeypatch.setattr(noise_wf.noise_report, "_run_noisy_audit_mode_isolated", lambda **_kwargs: {"success": True})
+    monkeypatch.setattr(noise_wf.noise_report, "_collect_noisy_benchmark_rows", lambda dynamics_noisy: [])
+
+    cfg = noise_wf.resolve_staged_hh_noise_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--noise-modes",
+                "backend_scheduled,patch_snapshot",
+                "--noisy-methods",
+                "cfqm4",
+                "--backend-profile",
+                "frozen_snapshot_json",
+                "--noise-snapshot-json",
+                "artifacts/json/frozen_snapshot.json",
+                "--schedule-policy",
+                "asap",
+            ]
+        )
+    )
+    stage_result = _stage_result()
+    noise_wf.run_noisy_profiles(stage_result, cfg)
+
+    by_mode = {str(rec["kwargs"]["noise_mode"]): str(rec["kwargs"]["layout_lock_key"]) for rec in mode_calls}
+    assert by_mode["backend_scheduled"] == by_mode["patch_snapshot"]
+
 
 
 def test_run_noisy_profiles_uses_final_state_and_optional_audit(
@@ -172,6 +252,112 @@ def test_run_noisy_profiles_uses_final_state_and_optional_audit(
     assert all(np.allclose(rec["kwargs"]["psi_seed"], stage_result.psi_final) for rec in audit_calls)
     assert {str(rec["kwargs"]["method"]) for rec in mode_calls} == {"cfqm4"}
     assert {str(rec["kwargs"]["noise_mode"]) for rec in mode_calls} == {"ideal", "shots"}
+
+
+def test_resolve_noise_runtime_twirling_flags_propagate() -> None:
+    cfg = noise_wf.resolve_staged_hh_noise_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--runtime-enable-measure-twirling",
+                "--runtime-twirling-num-randomizations",
+                "8",
+                "--runtime-twirling-strategy",
+                "active",
+            ]
+        )
+    )
+
+    assert cfg.noise.runtime_twirling_config == {
+        "enable_gates": False,
+        "enable_measure": True,
+        "num_randomizations": 8,
+        "strategy": "active",
+    }
+
+
+def test_run_noisy_profiles_emits_paired_anchor_comparison_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        noise_wf.noise_report,
+        "_run_noisy_mode_isolated",
+        lambda **_kwargs: {
+            "success": True,
+            "trajectory": [],
+            "delta_uncertainty": {},
+            "benchmark_cost": {},
+            "benchmark_runtime": {},
+        },
+    )
+    monkeypatch.setattr(noise_wf.noise_report, "_run_noisy_audit_mode_isolated", lambda **_kwargs: {"success": True})
+    monkeypatch.setattr(noise_wf.noise_report, "_collect_noisy_benchmark_rows", lambda dynamics_noisy: [])
+
+    def _fake_paired_helper(**kwargs: object) -> dict[str, object]:
+        helper_calls.append(dict(kwargs))
+        return {
+            "enabled": True,
+            "executed": True,
+            "profile": str(kwargs["profile_name"]),
+            "method": str(kwargs["method"]),
+            "layout_lock_key": str(kwargs["layout_lock_key"]),
+            "lock_family_token": "local_aer_locked_patch",
+            "local_mode": "backend_scheduled",
+            "rows": [],
+            "comparability": {
+                "local_vs_runtime_same_anchor_evidence_status": "fully_evidenced",
+                "runtime_pair_same_submitted_evidence_status": "fully_evidenced",
+                "exact_anchor_identity_evidence_status": "fully_evidenced",
+                "runtime_pair_differs_only_in_execution_bundle": True,
+            },
+        }
+
+    monkeypatch.setattr(
+        noise_wf.noise_report,
+        "_run_paired_anchor_method_trajectory_set",
+        _fake_paired_helper,
+    )
+
+    cfg = noise_wf.resolve_staged_hh_noise_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--paired-anchor-comparison",
+                "--noise-modes",
+                "ideal",
+                "--noisy-methods",
+                "cfqm4",
+                "--runtime-enable-gate-twirling",
+                "--runtime-twirling-num-randomizations",
+                "16",
+                "--runtime-twirling-strategy",
+                "active",
+            ]
+        )
+    )
+    stage_result = _stage_result()
+    _, _, dynamics_benchmarks = noise_wf.run_noisy_profiles(stage_result, cfg)
+
+    paired = dynamics_benchmarks["paired_anchor_comparisons"]
+    assert paired["profiles"]["static"]["methods"]["cfqm4"]["local_mode"] == "backend_scheduled"
+    assert len(helper_calls) == 1
+    assert helper_calls[0]["profile_name"] == "static"
+    assert helper_calls[0]["method"] == "cfqm4"
+    assert helper_calls[0]["runtime_twirling_config"] == {
+        "enable_gates": True,
+        "enable_measure": False,
+        "num_randomizations": 16,
+        "strategy": "active",
+    }
+    assert helper_calls[0]["layout_lock_key"] == (
+        f"staged_noise_paired:{cfg.staged.artifacts.tag}:static:cfqm4:local_aer_locked_patch"
+    )
 
 
 def test_run_staged_hh_noise_merges_base_payload_and_writes(

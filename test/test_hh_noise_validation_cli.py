@@ -151,6 +151,12 @@ def test_cli_parses_new_noise_plumbing_flags() -> None:
             "--fixed-physical-patch",
             "1,3",
             "--allow-noisy-fallback",
+            "--runtime-enable-gate-twirling",
+            "--runtime-enable-measure-twirling",
+            "--runtime-twirling-num-randomizations",
+            "16",
+            "--runtime-twirling-strategy",
+            "active",
         ]
     )
     assert str(args.aer_noise_kind) == "basic"
@@ -160,6 +166,10 @@ def test_cli_parses_new_noise_plumbing_flags() -> None:
     assert str(args.noise_snapshot_json).endswith("artifacts/json/frozen_snapshot.json")
     assert str(args.fixed_physical_patch) == "1,3"
     assert bool(args.allow_noisy_fallback) is True
+    assert bool(args.runtime_enable_gate_twirling) is True
+    assert bool(args.runtime_enable_measure_twirling) is True
+    assert int(args.runtime_twirling_num_randomizations) == 16
+    assert str(args.runtime_twirling_strategy) == "active"
 
 
 def test_cli_parses_layout_lock_and_imported_theta_flags() -> None:
@@ -173,11 +183,13 @@ def test_cli_parses_layout_lock_and_imported_theta_flags() -> None:
             "imported_json",
             "--vqe-parameter-json",
             "artifacts/json/l2_hh_ideal.json",
+            "--paired-anchor-validation",
         ]
     )
     assert str(args.layout_lock_key) == "shared_l2_hh_trio"
     assert str(args.vqe_parameter_source) == "imported_json"
     assert str(args.vqe_parameter_json).endswith("artifacts/json/l2_hh_ideal.json")
+    assert bool(args.paired_anchor_validation) is True
 
 
 def test_effective_layout_lock_key_uses_override_or_stable_default() -> None:
@@ -194,7 +206,35 @@ def test_effective_layout_lock_key_uses_override_or_stable_default() -> None:
         problem="hh",
         ansatz="hh_hva_ptw",
         noise_mode="backend_scheduled",
-    ) == "validation:L2:hh:hh_hva_ptw:backend_scheduled"
+    ) == "validation:L2:hh:hh_hva_ptw:local_aer_locked_patch"
+    assert _effective_layout_lock_key(
+        layout_lock_key=None,
+        L=2,
+        problem="hh",
+        ansatz="hh_hva_ptw",
+        noise_mode="qpu_raw",
+    ) == "validation:L2:hh:hh_hva_ptw:local_aer_locked_patch"
+    assert _effective_layout_lock_key(
+        layout_lock_key=None,
+        L=2,
+        problem="hh",
+        ansatz="hh_hva_ptw",
+        noise_mode="qpu_suppressed",
+    ) == "validation:L2:hh:hh_hva_ptw:local_aer_locked_patch"
+    assert _effective_layout_lock_key(
+        layout_lock_key=None,
+        L=2,
+        problem="hh",
+        ansatz="hh_hva_ptw",
+        noise_mode="patch_snapshot",
+    ) == "validation:L2:hh:hh_hva_ptw:local_aer_locked_patch"
+    assert _effective_layout_lock_key(
+        layout_lock_key=None,
+        L=2,
+        problem="hh",
+        ansatz="hh_hva_ptw",
+        noise_mode="ideal",
+    ) == "validation:L2:hh:hh_hva_ptw:ideal"
 
 
 def test_cli_parses_legacy_parity_flags() -> None:
@@ -290,9 +330,42 @@ def test_ground_state_report_fields_include_exact_filtered_energy() -> None:
     assert rows[2] == ("Exact ground-state (full Hilbert)", 0.123)
 
 
+def test_validation_cli_builds_file_backed_layer_noise_model_config() -> None:
+    args = parse_args(
+        [
+            "--L",
+            "2",
+            "--noise-mode",
+            "qpu_layer_learned",
+            "--mitigation",
+            "zne",
+            "--zne-scales",
+            "1.0,2.0",
+            "--runtime-layer-noise-model-json",
+            "artifacts/json/layer_noise_model.json",
+        ]
+    )
+    assert str(args.runtime_layer_noise_model_json) == "artifacts/json/layer_noise_model.json"
+    assert _build_mitigation_config_from_args(args) == {
+        "mode": "zne",
+        "zne_scales": [1.0, 2.0],
+        "dd_sequence": None,
+        "layer_noise_model_json": "artifacts/json/layer_noise_model.json",
+    }
+
+
 def test_report_helpers_expose_mode_honesty_and_energy_block_rows() -> None:
     assert _mode_honesty_statement({"noise_kind": "backend_basic", "executor": "aer"}).startswith(
         "backend_basic:"
+    )
+    assert "patch-frozen local replay" in _mode_honesty_statement(
+        {"noise_kind": "patch_snapshot", "executor": "aer"}
+    )
+    assert "explicit suppression bundle" in _mode_honesty_statement(
+        {"noise_kind": "qpu_suppressed", "executor": "runtime_qpu"}
+    )
+    assert "PEA-backed ZNE" in _mode_honesty_statement(
+        {"noise_kind": "qpu_layer_learned", "executor": "runtime_qpu"}
     )
     rows = _vqe_energy_block_rows(
         {

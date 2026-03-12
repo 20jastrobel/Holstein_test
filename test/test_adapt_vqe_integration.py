@@ -2070,6 +2070,66 @@ class TestHHPhase3Continuation:
         finally:
             monkeypatch.setattr(_adapt_mod, "_ai_log", original_ai_log)
 
+    def test_phase3_drop_plateau_not_blocked_by_grad_floor(self, monkeypatch: pytest.MonkeyPatch):
+        events: list[tuple[str, dict[str, object]]] = []
+        original_ai_log = _adapt_mod._ai_log
+
+        def _capture(event: str, **fields: object) -> None:
+            events.append((str(event), dict(fields)))
+
+        monkeypatch.setattr(_adapt_mod, "_ai_log", _capture)
+        try:
+            payload, _ = _run_hardcoded_adapt_vqe(
+                h_poly=self._hh_h(),
+                num_sites=2,
+                ordering="blocked",
+                problem="hh",
+                adapt_pool="paop_lf_std",
+                t=1.0,
+                u=2.0,
+                dv=0.0,
+                boundary="periodic",
+                omega0=1.0,
+                g_ep=0.5,
+                n_ph_max=1,
+                boson_encoding="binary",
+                max_depth=4,
+                eps_grad=-1.0,
+                eps_energy=1e9,
+                maxiter=20,
+                seed=23,
+                adapt_inner_optimizer="SPSA",
+                adapt_spsa_callback_every=10,
+                adapt_spsa_progress_every_s=999.0,
+                allow_repeats=True,
+                finite_angle_fallback=False,
+                finite_angle=0.1,
+                finite_angle_min_improvement=1e-12,
+                adapt_reopt_policy="windowed",
+                adapt_window_size=1,
+                adapt_window_topk=0,
+                adapt_continuation_mode="phase3_v1",
+                adapt_drop_floor=1e9,
+                adapt_drop_patience=1,
+                adapt_drop_min_depth=1,
+                adapt_grad_floor=1e-12,
+                phase3_symmetry_mitigation_mode="off",
+                phase3_enable_rescue=False,
+                phase3_lifetime_cost_mode="phase3_v1",
+            )
+            assert payload["success"] is True
+            assert payload["adapt_grad_floor_resolved"] == pytest.approx(1e-12)
+            assert str(payload["stop_reason"]) == "drop_plateau"
+            assert any(
+                bool(row["drop_low_signal"]) is True and bool(row["drop_low_grad"]) is False
+                for row in payload.get("history", [])
+            )
+
+            converged_drop = [ev for ev in events if ev[0] == "hardcoded_adapt_converged_drop_plateau"]
+            assert len(converged_drop) == 1
+        finally:
+            monkeypatch.setattr(_adapt_mod, "_ai_log", original_ai_log)
+
     def test_hubbard_legacy_still_allows_eps_grad_stop(self):
         h_poly = build_hubbard_hamiltonian(
             dims=2, t=1.0, U=4.0, v=0.0,

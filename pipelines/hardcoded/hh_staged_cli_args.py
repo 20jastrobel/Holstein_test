@@ -18,7 +18,7 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--n-ph-max", type=int, default=1, dest="n_ph_max")
     p.add_argument("--boson-encoding", choices=["binary"], default="binary")
     p.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
-    p.add_argument("--boundary", choices=["periodic", "open"], default="periodic")
+    p.add_argument("--boundary", choices=["periodic", "open"], default="open")
     p.add_argument("--sector-n-up", type=int, default=None)
     p.add_argument("--sector-n-dn", type=int, default=None)
 
@@ -39,6 +39,18 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     )
     p.add_argument("--warm-seed", type=int, default=7)
     p.add_argument("--warm-progress-every-s", type=float, default=60.0)
+    p.add_argument(
+        "--warm-stop-energy",
+        type=float,
+        default=None,
+        help="Auto-stop warm HH-VQE once the global best warm energy is <= this value.",
+    )
+    p.add_argument(
+        "--warm-stop-delta-abs",
+        type=float,
+        default=None,
+        help="Auto-stop warm HH-VQE once abs(E_warm_best - E_exact_filtered) is <= this value.",
+    )
 
     # Shared VQE backend / SPSA knobs
     p.add_argument(
@@ -60,7 +72,8 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument(
         "--adapt-continuation-mode",
         choices=["legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
-        default="phase1_v1",
+        default="phase3_v1",
+        help="Continuation mode for HH staged ADAPT. Default is phase3_v1.",
     )
     p.add_argument("--adapt-max-depth", type=int, default=None)
     p.add_argument("--adapt-maxiter", type=int, default=None)
@@ -204,6 +217,15 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--ecut-1", type=float, default=None, help="Diagnostic warm->ADAPT handoff gate; recorded, not hard-fail.")
     p.add_argument("--ecut-2", type=float, default=None, help="Diagnostic final replay gate; recorded, not hard-fail.")
     p.add_argument("--tag", type=str, default=None)
+    p.add_argument("--state-export-dir", type=Path, default=None)
+    p.add_argument("--state-export-prefix", type=str, default=None)
+    p.add_argument("--resume-from-warm-checkpoint", type=Path, default=None)
+    p.add_argument(
+        "--handoff-from-warm-checkpoint",
+        type=Path,
+        default=None,
+        help="Skip warm HH-VQE and seed ADAPT directly from an existing warm checkpoint bundle.",
+    )
     p.add_argument("--output-json", type=Path, default=None)
     p.add_argument("--output-pdf", type=Path, default=None)
     p.add_argument("--skip-pdf", action="store_true")
@@ -234,6 +256,23 @@ def add_staged_hh_noise_args(p: argparse.ArgumentParser) -> argparse.ArgumentPar
     p.add_argument("--oracle-aggregate", choices=["mean", "median"], default="mean")
     p.add_argument("--mitigation", choices=["none", "readout", "zne", "dd"], default="none")
     p.add_argument(
+        "--runtime-layer-noise-model-json",
+        type=Path,
+        default=None,
+        help=(
+            "RuntimeEncoder JSON file containing a NoiseLearnerResult or Sequence[LayerError]. "
+            "Runtime-only; currently used only with noise_mode='qpu_layer_learned'."
+        ),
+    )
+    p.add_argument("--runtime-enable-gate-twirling", action="store_true")
+    p.add_argument("--runtime-enable-measure-twirling", action="store_true")
+    p.add_argument("--runtime-twirling-num-randomizations", type=int, default=None)
+    p.add_argument(
+        "--runtime-twirling-strategy",
+        choices=["active", "active-circuit", "active-accum", "all"],
+        default=None,
+    )
+    p.add_argument(
         "--symmetry-mitigation-mode",
         choices=["off", "verify_only", "postselect_diag_v1", "projector_renorm_v1"],
         default="off",
@@ -261,6 +300,7 @@ def add_staged_hh_noise_args(p: argparse.ArgumentParser) -> argparse.ArgumentPar
     p.add_argument("--no-omp-shm-workaround", dest="omp_shm_workaround", action="store_false")
     p.add_argument("--noisy-mode-timeout-s", type=int, default=1200)
     p.add_argument("--include-final-audit", action="store_true")
+    p.add_argument("--paired-anchor-comparison", action="store_true")
     return p
 
 

@@ -8,11 +8,13 @@ Qiskit primitives at the boundary.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -29,9 +31,12 @@ from docs.reports.qiskit_circuit_report import (
 )
 from pipelines.exact_bench.noise_aer_builders import (
     build_backend_basic_artifact,
+    build_backend_from_calibration_snapshot,
     build_backend_scheduled_artifact,
     build_patch_snapshot_artifact,
+    build_runtime_submission_artifact,
     build_shots_only_artifact,
+    describe_layout_anchor_source,
 )
 from pipelines.exact_bench.noise_model_spec import (
     NoiseArtifact,
@@ -39,6 +44,7 @@ from pipelines.exact_bench.noise_model_spec import (
     calibration_snapshot_to_dict,
     noise_artifact_metadata,
     normalize_to_resolved_noise_spec,
+    normalize_runtime_twirling_config,
     resolved_noise_spec_hash,
     resolved_noise_spec_to_dict,
     transpile_snapshot_to_dict,
@@ -76,6 +82,7 @@ class OracleConfig:
     aer_fallback_mode: str = "sampler_shots"
     omp_shm_workaround: bool = True
     mitigation: dict[str, Any] | str = "none"
+    runtime_twirling: dict[str, Any] | None = None
     symmetry_mitigation: dict[str, Any] | str = "off"
 
 
@@ -138,6 +145,7 @@ def normalize_mitigation_config(mitigation: Any) -> dict[str, Any]:
     mode = "none"
     zne_scales: list[float] = []
     dd_sequence: str | None = None
+    layer_noise_model_json: str | None = None
 
     if mitigation is None:
         pass
@@ -148,11 +156,27 @@ def normalize_mitigation_config(mitigation: Any) -> dict[str, Any]:
     elif isinstance(mitigation, str):
         mode = str(mitigation).strip().lower() or "none"
     elif isinstance(mitigation, Mapping):
+        if mitigation.get("layer_noise_model", None) is not None and mitigation.get(
+            "layer_noise_model_json",
+            mitigation.get("layerNoiseModelJson", None),
+        ) not in {None, "", "none"}:
+            raise ValueError(
+                "Specify only one of mitigation.layer_noise_model or mitigation.layer_noise_model_json."
+            )
         mode = str(mitigation.get("mode", mitigation.get("mitigation", "none"))).strip().lower() or "none"
         zne_raw = mitigation.get("zne_scales", mitigation.get("zneScales", []))
         zne_scales = _parse_zne_scales(zne_raw)
         dd_raw = mitigation.get("dd_sequence", mitigation.get("ddSequence", None))
         dd_sequence = None if dd_raw is None else str(dd_raw)
+        layer_noise_model_json_raw = mitigation.get(
+            "layer_noise_model_json",
+            mitigation.get("layerNoiseModelJson", None),
+        )
+        layer_noise_model_json = (
+            None
+            if layer_noise_model_json_raw in {None, "", "none"}
+            else os.fspath(layer_noise_model_json_raw)
+        )
     else:
         raise ValueError(
             "Unsupported mitigation config type; expected str, dict, MitigationConfig, or None."
@@ -171,11 +195,128 @@ def normalize_mitigation_config(mitigation: Any) -> dict[str, Any]:
     if mode == "dd" and dd_sequence in {None, ""}:
         raise ValueError("mitigation mode 'dd' requires dd_sequence.")
 
-    return {
+    out = {
         "mode": str(mode),
         "zne_scales": [float(x) for x in zne_scales],
         "dd_sequence": dd_sequence,
     }
+    if layer_noise_model_json is not None:
+        out["layer_noise_model_json"] = str(layer_noise_model_json)
+    return out
+
+
+def _coerce_runtime_layer_noise_model(
+    raw_model: Any,
+    *,
+    source: str,
+    fingerprint: str | None = None,
+) -> tuple[Any, dict[str, Any]]:
+    try:
+        from qiskit_ibm_runtime.utils.noise_learner_result import LayerError, NoiseLearnerResult
+    except Exception as exc:
+        raise RuntimeError(
+            "External layer_noise_model support requires qiskit-ibm-runtime noise learner types in this environment."
+        ) from exc
+
+    if isinstance(raw_model, NoiseLearnerResult):
+        entries = list(getattr(raw_model, "data", []) or [])
+        if not entries:
+            raise ValueError(
+                "mitigation layer_noise_model must be a non-empty NoiseLearnerResult or Sequence[LayerError]."
+            )
+        return raw_model, {
+            "supplied": True,
+            "kind": "NoiseLearnerResult",
+            "source": str(source),
+            "entry_count": int(len(entries)),
+            "fingerprint": fingerprint,
+        }
+
+    if isinstance(raw_model, Sequence) and not isinstance(
+        raw_model, (str, bytes, bytearray, Mapping)
+    ):
+        entries = list(raw_model)
+        if not entries:
+            raise ValueError(
+                "mitigation layer_noise_model must be a non-empty NoiseLearnerResult or Sequence[LayerError]."
+            )
+        bad_entry = next((entry for entry in entries if not isinstance(entry, LayerError)), None)
+        if bad_entry is not None:
+            raise ValueError(
+                "mitigation layer_noise_model must be a NoiseLearnerResult or Sequence[LayerError]. "
+                f"Unsupported entry type {type(bad_entry)!r}."
+            )
+        return list(entries), {
+            "supplied": True,
+            "kind": "Sequence[LayerError]",
+            "source": str(source),
+            "entry_count": int(len(entries)),
+            "fingerprint": fingerprint,
+        }
+
+    raise ValueError(
+        "mitigation layer_noise_model must be a NoiseLearnerResult or Sequence[LayerError]."
+    )
+
+
+def _load_runtime_layer_noise_model_json(raw_path: Any) -> tuple[Any, dict[str, Any]]:
+    try:
+        path_str = os.fspath(raw_path)
+    except TypeError as exc:
+        raise ValueError(
+            "mitigation layer_noise_model_json must be a filesystem path to a RuntimeEncoder JSON artifact."
+        ) from exc
+    if path_str in {"", "none"}:
+        raise ValueError(
+            "mitigation layer_noise_model_json must be a filesystem path to a RuntimeEncoder JSON artifact."
+        )
+    try:
+        payload_bytes = open(path_str, "rb").read()
+    except OSError as exc:
+        raise ValueError(f"Failed to read mitigation layer_noise_model_json file {path_str!r}.") from exc
+    try:
+        from qiskit_ibm_runtime.utils.json import RuntimeDecoder
+
+        decoded = json.loads(payload_bytes.decode("utf-8"), cls=RuntimeDecoder)
+    except Exception as exc:
+        raise ValueError(
+            "Failed to decode mitigation layer_noise_model_json; expected JSON encoded with qiskit_ibm_runtime.utils.json.RuntimeEncoder containing a NoiseLearnerResult or Sequence[LayerError]."
+        ) from exc
+    return _coerce_runtime_layer_noise_model(
+        decoded,
+        source="file_backed_json",
+        fingerprint=f"sha256:{hashlib.sha256(payload_bytes).hexdigest()}",
+    )
+
+
+def _extract_runtime_layer_noise_model(mitigation: Any) -> tuple[Any | None, dict[str, Any]]:
+    raw_model = None
+    raw_model_json = None
+    if isinstance(mitigation, Mapping):
+        raw_model = mitigation.get("layer_noise_model", None)
+        raw_model_json = mitigation.get(
+            "layer_noise_model_json",
+            mitigation.get("layerNoiseModelJson", None),
+        )
+    if raw_model is not None and raw_model_json not in {None, "", "none"}:
+        raise ValueError(
+            "Specify only one of mitigation.layer_noise_model or mitigation.layer_noise_model_json."
+        )
+    if raw_model_json not in {None, "", "none"}:
+        return _load_runtime_layer_noise_model_json(raw_model_json)
+    if raw_model is None:
+        return None, {
+            "supplied": False,
+            "kind": None,
+            "source": None,
+            "entry_count": None,
+            "fingerprint": None,
+        }
+    return _coerce_runtime_layer_noise_model(
+        raw_model,
+        source="programmatic_object",
+        fingerprint=None,
+    )
 
 
 def normalize_symmetry_mitigation_config(symmetry_mitigation: Any) -> dict[str, Any]:
@@ -254,11 +395,412 @@ def normalize_ideal_reference_symmetry_mitigation(
     noise_mode: str,
 ) -> dict[str, Any]:
     cfg = normalize_symmetry_mitigation_config(symmetry_mitigation)
-    if str(noise_mode).strip().lower() == "runtime" and str(cfg.get("mode", "off")) not in {"off", "verify_only"}:
+    runtime_like_modes = {"runtime", "qpu_raw", "qpu_suppressed", "qpu_layer_learned"}
+    if str(noise_mode).strip().lower() in runtime_like_modes and str(cfg.get("mode", "off")) not in {"off", "verify_only"}:
         downgraded = dict(cfg)
         downgraded["mode"] = "verify_only"
         return downgraded
     return cfg
+
+
+def _ensure_mitigation_execution_supported(
+    resolved_spec: ResolvedNoiseSpec,
+    mitigation_cfg: Mapping[str, Any],
+) -> None:
+    mitigation_mode = str(mitigation_cfg.get("mode", "none"))
+    if mitigation_mode == "none":
+        return
+    if str(resolved_spec.executor) == "runtime_qpu":
+        return
+    raise RuntimeError(
+        f"mitigation mode {mitigation_mode!r} is only executable on runtime_qpu in the current repo; "
+        f"executor={resolved_spec.executor!r} noise_kind={resolved_spec.noise_kind!r} does not apply readout/zne/dd. "
+        "Use mitigation='none' for statevector/local Aer, or use symmetry_mitigation for the existing diagonal postselection path."
+    )
+
+
+def _runtime_twirling_enabled(runtime_twirling_cfg: Mapping[str, Any]) -> bool:
+    return bool(
+        runtime_twirling_cfg.get("enable_gates", False)
+        or runtime_twirling_cfg.get("enable_measure", False)
+    )
+
+
+def _ensure_runtime_twirling_execution_supported(
+    resolved_spec: ResolvedNoiseSpec,
+    runtime_twirling_cfg: Mapping[str, Any],
+) -> None:
+    if not _runtime_twirling_enabled(runtime_twirling_cfg):
+        return
+    if str(resolved_spec.executor) == "runtime_qpu":
+        return
+    raise RuntimeError(
+        "Runtime twirling is only executable on runtime_qpu in the current repo; "
+        f"executor={resolved_spec.executor!r} noise_kind={resolved_spec.noise_kind!r} does not apply runtime twirling on local Aer/statevector paths."
+    )
+
+
+def _ensure_runtime_twirling_compatibility(
+    mitigation_cfg: Mapping[str, Any],
+    runtime_twirling_cfg: Mapping[str, Any],
+) -> None:
+    if not _runtime_twirling_enabled(runtime_twirling_cfg):
+        return
+    mitigation_mode = str(mitigation_cfg.get("mode", "none"))
+    if bool(runtime_twirling_cfg.get("enable_measure", False)) and mitigation_mode != "readout":
+        raise RuntimeError(
+            "Measurement twirling is only wired with mitigation='readout' in the current repo so the Runtime bundle remains TREX-like and truthfully distinct from readout-only."
+        )
+
+
+def _set_runtime_option(
+    options: Any,
+    path: str,
+    value: Any,
+    *,
+    mitigation_mode: str,
+) -> None:
+    target = options
+    parts = [str(part) for part in str(path).split(".") if str(part)]
+    if not parts:
+        raise RuntimeError("Internal error: empty runtime option path.")
+    for part in parts[:-1]:
+        if not hasattr(target, part):
+            raise RuntimeError(
+                f"Runtime Estimator options in this environment do not expose '{path}' required for mitigation mode {mitigation_mode!r}."
+            )
+        target = getattr(target, part)
+    leaf = parts[-1]
+    if not hasattr(target, leaf):
+        raise RuntimeError(
+            f"Runtime Estimator options in this environment do not expose '{path}' required for mitigation mode {mitigation_mode!r}."
+        )
+    setattr(target, leaf, value)
+
+
+
+def _ensure_runtime_mode_request_supported(
+    cfg: OracleConfig,
+    resolved_spec: ResolvedNoiseSpec,
+    mitigation_cfg: Mapping[str, Any],
+) -> None:
+    if str(resolved_spec.executor) != "runtime_qpu":
+        return
+    requested_mode = str(getattr(cfg, "noise_mode", "runtime")).strip().lower()
+    mitigation_mode = str(mitigation_cfg.get("mode", "none"))
+    mitigation_bundle = str(resolved_spec.mitigation_bundle)
+    if requested_mode == "runtime":
+        return
+    if requested_mode == "qpu_raw" and mitigation_mode == "none":
+        return
+    if requested_mode == "qpu_suppressed" and mitigation_bundle == "runtime_suppressed":
+        return
+    if requested_mode == "qpu_layer_learned" and mitigation_bundle == "runtime_layer_learned":
+        return
+    if requested_mode == "qpu_suppressed":
+        raise RuntimeError(
+            "noise_mode='qpu_suppressed' requires a supported runtime suppression bundle in the current repo. "
+            "Use mitigation {readout,zne,dd} or runtime twirling so the mode resolves to mitigation_bundle='runtime_suppressed', "
+            "or use noise_mode='qpu_raw' / noise_mode='runtime' for the existing explicit paths."
+        )
+    if requested_mode == "qpu_layer_learned":
+        raise RuntimeError(
+            "noise_mode='qpu_layer_learned' requires the explicit runtime layer-noise-backed bundle in the current repo. "
+            "Use mitigation='zne' without explicit runtime twirling so the mode maps to PEA-backed ZNE with Runtime-managed or externally supplied layer-noise data."
+        )
+    raise RuntimeError(
+        f"Advanced runtime noise_mode {requested_mode!r} is not wired to explicit Runtime options in the current repo. "
+        "Use noise_mode='runtime' with mitigation {none,readout,zne,dd} for the supported path, or extend this owner with an explicit mapping first."
+    )
+
+
+
+def _runtime_execution_bundle_details(
+    cfg: OracleConfig,
+    resolved_spec: ResolvedNoiseSpec,
+    mitigation_cfg: Mapping[str, Any],
+    runtime_twirling_cfg: Mapping[str, Any],
+    layer_noise_model_meta: Mapping[str, Any],
+) -> dict[str, Any]:
+    suppression_components: list[str] = []
+    mitigation_mode = str(mitigation_cfg.get("mode", "none"))
+    layer_learned = str(resolved_spec.noise_kind) == "qpu_layer_learned"
+    zne_amplifier = "pea" if layer_learned and mitigation_mode == "zne" else None
+    layer_noise_model_supplied = bool(layer_noise_model_meta.get("supplied", False))
+    layer_noise_learning_requested = bool(
+        layer_learned and mitigation_mode == "zne" and not layer_noise_model_supplied
+    )
+    layer_noise_model_source = (
+        layer_noise_model_meta.get("source", None)
+        if layer_noise_model_supplied
+        else ("runtime_service_learning" if layer_noise_learning_requested else None)
+    )
+    if mitigation_mode == "readout":
+        suppression_components.append("measure_mitigation")
+    elif mitigation_mode == "zne":
+        suppression_components.append("zne")
+    elif mitigation_mode == "dd":
+        suppression_components.append("dynamical_decoupling")
+    if zne_amplifier == "pea":
+        suppression_components.append("pea_amplifier")
+        if layer_noise_learning_requested:
+            suppression_components.append("layer_noise_learning")
+        if layer_noise_model_supplied:
+            suppression_components.append("external_layer_noise_model")
+        suppression_components.append("implicit_gate_twirling_via_pea")
+    if bool(runtime_twirling_cfg.get("enable_gates", False)):
+        suppression_components.append("gate_twirling")
+    if bool(runtime_twirling_cfg.get("enable_measure", False)):
+        suppression_components.append("measure_twirling")
+        if mitigation_mode == "readout":
+            suppression_components.append("trex_like_readout")
+    return {
+        "requested_noise_mode": str(getattr(cfg, "noise_mode", "runtime")).strip().lower(),
+        "resolved_noise_kind": str(resolved_spec.noise_kind),
+        "mitigation_bundle": str(resolved_spec.mitigation_bundle),
+        "mitigation_mode": mitigation_mode,
+        "twirling_enable_gates": bool(runtime_twirling_cfg.get("enable_gates", False)),
+        "twirling_enable_measure": bool(runtime_twirling_cfg.get("enable_measure", False)),
+        "twirling_num_randomizations": runtime_twirling_cfg.get("num_randomizations", None),
+        "twirling_strategy": runtime_twirling_cfg.get("strategy", None),
+        "trex_like_measure_suppression": bool(
+            runtime_twirling_cfg.get("enable_measure", False) and mitigation_mode == "readout"
+        ),
+        "zne_amplifier": zne_amplifier,
+        "layer_noise_learning_requested": layer_noise_learning_requested,
+        "layer_noise_model_supplied": layer_noise_model_supplied,
+        "layer_noise_model_source": layer_noise_model_source,
+        "layer_noise_model_kind": layer_noise_model_meta.get("kind", None),
+        "layer_noise_model_entry_count": layer_noise_model_meta.get("entry_count", None),
+        "layer_noise_model_fingerprint": layer_noise_model_meta.get("fingerprint", None),
+        "implicit_gate_twirling_via_pea": bool(zne_amplifier == "pea"),
+        "suppression_components": suppression_components,
+    }
+
+
+
+def _derive_provenance_summary(details: Mapping[str, Any]) -> dict[str, Any]:
+    resolved_spec = dict(details.get("resolved_noise_spec", {}) or {})
+    executor = str(resolved_spec.get("executor", "")).strip().lower()
+    noise_kind = str(resolved_spec.get("noise_kind", "")).strip().lower()
+    backend_profile_kind = str(resolved_spec.get("backend_profile_kind", "")).strip().lower()
+    runtime_bundle = dict(details.get("runtime_execution_bundle", {}) or {})
+    fixed_couplers_status = dict(details.get("fixed_couplers_status", {}) or {})
+    layout_anchor_source = details.get("layout_anchor_source", None)
+    snapshot_hash = details.get("snapshot_hash", None)
+    layout_hash = details.get("layout_hash", None)
+    transpile_hash = details.get("transpile_hash", None)
+    circuit_structure_hash = details.get("circuit_structure_hash", None)
+    runtime_submission_recorded = bool(
+        executor == "runtime_qpu" and layout_hash and transpile_hash and circuit_structure_hash
+    )
+    runtime_layer_learned = bool(
+        runtime_bundle
+        and (
+            str(runtime_bundle.get("mitigation_bundle", "")).strip().lower()
+            == "runtime_layer_learned"
+            or str(runtime_bundle.get("resolved_noise_kind", "")).strip().lower()
+            == "qpu_layer_learned"
+            or bool(runtime_bundle.get("layer_noise_learning_requested", False))
+        )
+    )
+    runtime_suppressed = bool(
+        runtime_bundle
+        and (
+            str(runtime_bundle.get("mitigation_bundle", "")).strip().lower() == "runtime_suppressed"
+            or str(runtime_bundle.get("resolved_noise_kind", "")).strip().lower() == "qpu_suppressed"
+        )
+    )
+    if executor == "runtime_qpu":
+        if runtime_layer_learned:
+            classification = "runtime_submitted_layer_learned"
+        elif runtime_suppressed:
+            classification = "runtime_submitted_suppressed"
+        elif runtime_bundle or runtime_submission_recorded:
+            classification = "runtime_submitted_raw"
+        else:
+            classification = "runtime_submission_unresolved"
+    elif executor == "aer":
+        if noise_kind == "patch_snapshot":
+            classification = "local_patch_frozen_replay"
+        elif backend_profile_kind == "frozen_snapshot_json" and noise_kind in {"backend_basic", "backend_scheduled"}:
+            classification = "local_snapshot_replay"
+        else:
+            classification = "local_generic_aer_execution"
+    elif executor == "statevector" or noise_kind == "none":
+        classification = "ideal_statevector_control"
+    else:
+        classification = "unresolved_execution_provenance"
+    return {
+        "classification": str(classification),
+        "uses_backend_snapshot": bool(snapshot_hash),
+        "uses_frozen_snapshot_json": bool(backend_profile_kind == "frozen_snapshot_json"),
+        "local_replay": bool(classification in {"local_snapshot_replay", "local_patch_frozen_replay"}),
+        "patch_frozen_replay": bool(classification == "local_patch_frozen_replay"),
+        "runtime_submission_recorded": bool(runtime_submission_recorded),
+        "runtime_suppressed": bool(runtime_suppressed),
+        "runtime_layer_noise_learning": bool(
+            runtime_bundle.get("layer_noise_learning_requested", False)
+        ),
+        "runtime_layer_noise_model_supplied": bool(
+            runtime_bundle.get("layer_noise_model_supplied", False)
+        ),
+        "runtime_layer_noise_model_source": runtime_bundle.get(
+            "layer_noise_model_source", None
+        ),
+        "runtime_layer_noise_model_kind": runtime_bundle.get("layer_noise_model_kind", None),
+        "runtime_layer_noise_model_fingerprint": runtime_bundle.get(
+            "layer_noise_model_fingerprint", None
+        ),
+        "runtime_zne_amplifier": runtime_bundle.get("zne_amplifier", None),
+        "runtime_gate_twirling": bool(runtime_bundle.get("twirling_enable_gates", False)),
+        "runtime_measure_twirling": bool(runtime_bundle.get("twirling_enable_measure", False)),
+        "runtime_trex_like_measure_suppression": bool(
+            runtime_bundle.get("trex_like_measure_suppression", False)
+        ),
+        "layout_anchor_source": layout_anchor_source,
+        "layout_anchor_reused": bool(layout_anchor_source in {"persisted_lock", "snapshot_bundle_lock", "fixed_patch"}),
+        "runtime_execution_bundle": (None if not runtime_bundle else dict(runtime_bundle)),
+        "fixed_couplers_requested": bool(resolved_spec.get("fixed_couplers", None)),
+        "fixed_couplers_verified": bool(
+            fixed_couplers_status.get("verified_used_edges_subset", False)
+            and fixed_couplers_status.get("verified_used_qubits_subset", False)
+        ),
+    }
+
+
+
+def _with_provenance_summary(details: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(details)
+    out["provenance_summary"] = _derive_provenance_summary(out)
+    return out
+
+
+
+def _build_runtime_mitigation_options(
+    resolved_spec: ResolvedNoiseSpec,
+    mitigation_cfg: Mapping[str, Any],
+    runtime_twirling_cfg: Mapping[str, Any],
+    layer_noise_model: Any | None,
+    layer_noise_model_meta: Mapping[str, Any],
+) -> tuple[Any, dict[str, Any]]:
+    from qiskit_ibm_runtime.options import EstimatorOptions
+
+    mitigation_mode = str(mitigation_cfg.get("mode", "none"))
+    layer_learned = str(resolved_spec.noise_kind) == "qpu_layer_learned"
+    options = EstimatorOptions()
+    applied = {
+        "mode": mitigation_mode,
+        "resilience_level": None,
+        "measure_mitigation": False,
+        "zne_mitigation": False,
+        "zne_noise_factors": [],
+        "zne_amplifier": None,
+        "dynamical_decoupling_enable": False,
+        "dynamical_decoupling_sequence_type": None,
+        "layer_noise_learning_requested": False,
+        "layer_noise_model_supplied": bool(layer_noise_model_meta.get("supplied", False)),
+        "layer_noise_model_source": None,
+        "layer_noise_model_kind": layer_noise_model_meta.get("kind", None),
+        "layer_noise_model_entry_count": layer_noise_model_meta.get("entry_count", None),
+        "layer_noise_model_fingerprint": layer_noise_model_meta.get("fingerprint", None),
+        "implicit_gate_twirling_via_pea": False,
+        "twirling_enable_gates": bool(runtime_twirling_cfg.get("enable_gates", False)),
+        "twirling_enable_measure": bool(runtime_twirling_cfg.get("enable_measure", False)),
+        "twirling_num_randomizations": runtime_twirling_cfg.get("num_randomizations", None),
+        "twirling_strategy": runtime_twirling_cfg.get("strategy", None),
+        "trex_like_measure_suppression": bool(
+            runtime_twirling_cfg.get("enable_measure", False) and mitigation_mode == "readout"
+        ),
+    }
+
+    _set_runtime_option(
+        options,
+        "twirling.enable_gates",
+        bool(runtime_twirling_cfg.get("enable_gates", False)),
+        mitigation_mode=mitigation_mode,
+    )
+    _set_runtime_option(
+        options,
+        "twirling.enable_measure",
+        bool(runtime_twirling_cfg.get("enable_measure", False)),
+        mitigation_mode=mitigation_mode,
+    )
+    if runtime_twirling_cfg.get("num_randomizations", None) is not None:
+        _set_runtime_option(
+            options,
+            "twirling.num_randomizations",
+            int(runtime_twirling_cfg.get("num_randomizations")),
+            mitigation_mode=mitigation_mode,
+        )
+    if runtime_twirling_cfg.get("strategy", None) is not None:
+        _set_runtime_option(
+            options,
+            "twirling.strategy",
+            str(runtime_twirling_cfg.get("strategy")),
+            mitigation_mode=mitigation_mode,
+        )
+
+    if mitigation_mode == "none":
+        _set_runtime_option(options, "resilience_level", 0, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "resilience.measure_mitigation", False, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "resilience.zne_mitigation", False, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "dynamical_decoupling.enable", False, mitigation_mode=mitigation_mode)
+        applied["resilience_level"] = 0
+    elif mitigation_mode == "readout":
+        _set_runtime_option(options, "resilience.measure_mitigation", True, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "resilience.zne_mitigation", False, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "dynamical_decoupling.enable", False, mitigation_mode=mitigation_mode)
+        applied["measure_mitigation"] = True
+    elif mitigation_mode == "zne":
+        _set_runtime_option(options, "resilience.measure_mitigation", False, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "resilience.zne_mitigation", True, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "resilience.zne.noise_factors", [float(x) for x in mitigation_cfg.get("zne_scales", [])], mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "dynamical_decoupling.enable", False, mitigation_mode=mitigation_mode)
+        applied["zne_mitigation"] = True
+        applied["zne_noise_factors"] = [float(x) for x in mitigation_cfg.get("zne_scales", [])]
+        if layer_learned:
+            _set_runtime_option(
+                options,
+                "resilience.zne.amplifier",
+                "pea",
+                mitigation_mode=mitigation_mode,
+            )
+            applied["zne_amplifier"] = "pea"
+            applied["implicit_gate_twirling_via_pea"] = True
+            if bool(layer_noise_model_meta.get("supplied", False)):
+                _set_runtime_option(
+                    options,
+                    "resilience.layer_noise_model",
+                    layer_noise_model,
+                    mitigation_mode=mitigation_mode,
+                )
+                applied["layer_noise_learning_requested"] = False
+                applied["layer_noise_model_supplied"] = True
+                applied["layer_noise_model_source"] = layer_noise_model_meta.get(
+                    "source", None
+                )
+            else:
+                _set_runtime_option(
+                    options,
+                    "resilience.layer_noise_learning",
+                    {},
+                    mitigation_mode=mitigation_mode,
+                )
+                applied["layer_noise_learning_requested"] = True
+                applied["layer_noise_model_supplied"] = False
+                applied["layer_noise_model_source"] = "runtime_service_learning"
+    elif mitigation_mode == "dd":
+        _set_runtime_option(options, "resilience.measure_mitigation", False, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "resilience.zne_mitigation", False, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "dynamical_decoupling.enable", True, mitigation_mode=mitigation_mode)
+        _set_runtime_option(options, "dynamical_decoupling.sequence_type", str(mitigation_cfg.get("dd_sequence")), mitigation_mode=mitigation_mode)
+        applied["dynamical_decoupling_enable"] = True
+        applied["dynamical_decoupling_sequence_type"] = str(mitigation_cfg.get("dd_sequence"))
+    else:
+        raise RuntimeError(f"Unsupported mitigation mode {mitigation_mode!r} for runtime option wiring.")
+
+    return options, applied
 
 
 @dataclass(frozen=True)
@@ -268,6 +810,352 @@ class NoiseBackendInfo:
     backend_name: str | None = None
     using_fake_backend: bool = False
     details: dict[str, Any] = field(default_factory=dict)
+
+
+_SYMMETRY_RESULT_KEYS = {
+    "requested_mode",
+    "applied_mode",
+    "executed",
+    "eligible",
+    "fallback_reason",
+    "retained_fraction_mean",
+    "retained_fraction_samples",
+    "sector_probability_mean",
+    "sector_probability_samples",
+    "sector_values",
+    "estimator_form",
+}
+
+
+@dataclass(frozen=True)
+class OracleExecutionRecord:
+    noise_mode: str
+    estimator_kind: str
+    backend_name: str | None = None
+    using_fake_backend: bool = False
+    shots: int | None = None
+    mitigation: dict[str, Any] = field(default_factory=dict)
+    runtime_twirling: dict[str, Any] = field(default_factory=dict)
+    symmetry_mitigation_config: dict[str, Any] = field(default_factory=dict)
+    symmetry_mitigation_result: dict[str, Any] | None = None
+    resolved_noise_spec: dict[str, Any] = field(default_factory=dict)
+    resolved_noise_spec_hash: str | None = None
+    calibration_snapshot: dict[str, Any] | None = None
+    transpile_snapshot: dict[str, Any] | None = None
+    noise_artifact_hash: str | None = None
+    snapshot_hash: str | None = None
+    layout_hash: str | None = None
+    transpile_hash: str | None = None
+    circuit_structure_hash: str | None = None
+    layout_anchor_source: str | None = None
+    runtime_mitigation_options: dict[str, Any] | None = None
+    runtime_execution_bundle: dict[str, Any] | None = None
+    fixed_couplers_status: dict[str, Any] | None = None
+    patch_selection_summary: dict[str, Any] | None = None
+    source_kind: str | None = None
+    used_physical_qubits: list[int] = field(default_factory=list)
+    used_physical_edges: list[list[int]] = field(default_factory=list)
+    scheduled_duration_total: int | float | None = None
+    idle_duration_total: int | float | None = None
+    seed_transpiler: int | None = None
+    seed_simulator: int | None = None
+    warnings: list[str] = field(default_factory=list)
+    omitted_channels: list[str] = field(default_factory=list)
+    noise_model_basis_gates: list[str] = field(default_factory=list)
+    aer_failed: bool = False
+    fallback_used: bool = False
+    fallback_mode: str | None = None
+    fallback_reason: str = ""
+    env_workaround_applied: bool = False
+    provenance_summary: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def symmetry_mitigation(self) -> dict[str, Any]:
+        return dict(self.symmetry_mitigation_result or self.symmetry_mitigation_config)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_legacy_details(self) -> dict[str, Any]:
+        return _execution_record_to_backend_details(self)
+
+
+@dataclass(frozen=True)
+class OracleEvaluationResult:
+    estimate: OracleEstimate
+    execution: OracleExecutionRecord
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "estimate": asdict(self.estimate),
+            "execution": self.execution.to_dict(),
+        }
+
+
+def _mapping_copy(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return deepcopy(dict(value))
+
+
+def _maybe_mapping_copy(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return _mapping_copy(value)
+
+
+def _list_copy(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes, bytearray)):
+        return [value]
+    if isinstance(value, Sequence):
+        return deepcopy(list(value))
+    return [value]
+
+
+def _looks_like_symmetry_mitigation_result(value: Any) -> bool:
+    return isinstance(value, Mapping) and bool(set(value.keys()) & _SYMMETRY_RESULT_KEYS)
+
+
+def _copy_oracle_estimate(estimate: OracleEstimate) -> OracleEstimate:
+    return OracleEstimate(
+        mean=float(estimate.mean),
+        std=float(estimate.std),
+        stdev=float(estimate.stdev),
+        stderr=float(estimate.stderr),
+        n_samples=int(estimate.n_samples),
+        raw_values=[float(x) for x in list(estimate.raw_values)],
+        aggregate=str(estimate.aggregate),
+    )
+
+
+def _copy_execution_record(record: OracleExecutionRecord) -> OracleExecutionRecord:
+    return OracleExecutionRecord(**deepcopy(record.to_dict()))
+
+
+def _copy_evaluation_result(result: OracleEvaluationResult) -> OracleEvaluationResult:
+    return OracleEvaluationResult(
+        estimate=_copy_oracle_estimate(result.estimate),
+        execution=_copy_execution_record(result.execution),
+    )
+
+
+def _execution_record_from_backend_details(
+    details: Mapping[str, Any] | None,
+    *,
+    noise_mode: str,
+    estimator_kind: str,
+    backend_name: str | None,
+    using_fake_backend: bool,
+    config: OracleConfig | None = None,
+    resolved_spec: ResolvedNoiseSpec | Mapping[str, Any] | None = None,
+) -> OracleExecutionRecord:
+    raw = dict(details or {})
+    mitigation_cfg = (
+        normalize_mitigation_config(getattr(config, "mitigation", "none"))
+        if config is not None
+        else {}
+    )
+    runtime_twirling_cfg = (
+        normalize_runtime_twirling_config(getattr(config, "runtime_twirling", None))
+        if config is not None
+        else {}
+    )
+    symmetry_cfg = (
+        normalize_symmetry_mitigation_config(getattr(config, "symmetry_mitigation", "off"))
+        if config is not None
+        else {}
+    )
+    if isinstance(resolved_spec, ResolvedNoiseSpec):
+        resolved_spec_dict_default = resolved_noise_spec_to_dict(resolved_spec)
+        resolved_spec_hash_default = resolved_noise_spec_hash(resolved_spec)
+        executor_default = str(resolved_spec.executor)
+    elif isinstance(resolved_spec, Mapping):
+        resolved_spec_dict_default = dict(resolved_spec)
+        resolved_spec_hash_default = raw.get("resolved_noise_spec_hash", None)
+        executor_default = str(resolved_spec_dict_default.get("executor", ""))
+    else:
+        resolved_spec_dict_default = {}
+        resolved_spec_hash_default = raw.get("resolved_noise_spec_hash", None)
+        executor_default = ""
+
+    legacy_symmetry = _mapping_copy(raw.get("symmetry_mitigation", {}))
+    symmetry_mitigation_config = _maybe_mapping_copy(raw.get("symmetry_mitigation_config", None))
+    symmetry_mitigation_result = _maybe_mapping_copy(raw.get("symmetry_mitigation_result", None))
+    if not symmetry_mitigation_result and _looks_like_symmetry_mitigation_result(legacy_symmetry):
+        symmetry_mitigation_result = legacy_symmetry
+    if not symmetry_mitigation_config:
+        if legacy_symmetry and not _looks_like_symmetry_mitigation_result(legacy_symmetry):
+            symmetry_mitigation_config = legacy_symmetry
+        else:
+            symmetry_mitigation_config = dict(symmetry_cfg)
+
+    provenance_seed = dict(raw)
+    if not provenance_seed.get("resolved_noise_spec", None) and resolved_spec_dict_default:
+        provenance_seed["resolved_noise_spec"] = deepcopy(resolved_spec_dict_default)
+    if not provenance_seed.get("resolved_noise_spec_hash", None) and resolved_spec_hash_default is not None:
+        provenance_seed["resolved_noise_spec_hash"] = resolved_spec_hash_default
+    provenance_summary = _mapping_copy(raw.get("provenance_summary", {}))
+    if not provenance_summary:
+        provenance_summary = _derive_provenance_summary(provenance_seed)
+
+    default_shots = None if executor_default == "statevector" else (
+        None if config is None else int(getattr(config, "shots", 0))
+    )
+    shots_raw = raw.get("shots", default_shots)
+    shots_value = None if shots_raw is None else int(shots_raw)
+
+    return OracleExecutionRecord(
+        noise_mode=str(noise_mode),
+        estimator_kind=str(estimator_kind),
+        backend_name=backend_name,
+        using_fake_backend=bool(using_fake_backend),
+        shots=shots_value,
+        mitigation=_mapping_copy(raw.get("mitigation", mitigation_cfg) or mitigation_cfg),
+        runtime_twirling=_mapping_copy(
+            raw.get("runtime_twirling", runtime_twirling_cfg) or runtime_twirling_cfg
+        ),
+        symmetry_mitigation_config=dict(symmetry_mitigation_config or {}),
+        symmetry_mitigation_result=(
+            None if not symmetry_mitigation_result else dict(symmetry_mitigation_result)
+        ),
+        resolved_noise_spec=_mapping_copy(
+            raw.get("resolved_noise_spec", resolved_spec_dict_default) or resolved_spec_dict_default
+        ),
+        resolved_noise_spec_hash=(
+            raw.get("resolved_noise_spec_hash", None) or resolved_spec_hash_default
+        ),
+        calibration_snapshot=_maybe_mapping_copy(raw.get("calibration_snapshot", None)),
+        transpile_snapshot=_maybe_mapping_copy(raw.get("transpile_snapshot", None)),
+        noise_artifact_hash=raw.get("noise_artifact_hash", None),
+        snapshot_hash=raw.get("snapshot_hash", None),
+        layout_hash=raw.get("layout_hash", None),
+        transpile_hash=raw.get("transpile_hash", None),
+        circuit_structure_hash=raw.get("circuit_structure_hash", None),
+        layout_anchor_source=raw.get("layout_anchor_source", None),
+        runtime_mitigation_options=_maybe_mapping_copy(
+            raw.get("runtime_mitigation_options", None)
+        ),
+        runtime_execution_bundle=_maybe_mapping_copy(raw.get("runtime_execution_bundle", None)),
+        fixed_couplers_status=_maybe_mapping_copy(raw.get("fixed_couplers_status", None)),
+        patch_selection_summary=_maybe_mapping_copy(raw.get("patch_selection_summary", None)),
+        source_kind=raw.get("source_kind", None),
+        used_physical_qubits=[int(x) for x in _list_copy(raw.get("used_physical_qubits", []))],
+        used_physical_edges=[
+            [int(q) for q in list(edge)]
+            for edge in _list_copy(raw.get("used_physical_edges", []))
+            if isinstance(edge, Sequence) and not isinstance(edge, (str, bytes, bytearray))
+        ],
+        scheduled_duration_total=raw.get("scheduled_duration_total", None),
+        idle_duration_total=raw.get("idle_duration_total", None),
+        seed_transpiler=(
+            None
+            if raw.get("seed_transpiler", None) is None
+            else int(raw.get("seed_transpiler"))
+        ),
+        seed_simulator=(
+            None
+            if raw.get("seed_simulator", None) is None
+            else int(raw.get("seed_simulator"))
+        ),
+        warnings=[str(x) for x in _list_copy(raw.get("warnings", []))],
+        omitted_channels=[str(x) for x in _list_copy(raw.get("omitted_channels", []))],
+        noise_model_basis_gates=[str(x) for x in _list_copy(raw.get("noise_model_basis_gates", []))],
+        aer_failed=bool(raw.get("aer_failed", False)),
+        fallback_used=bool(raw.get("fallback_used", False)),
+        fallback_mode=raw.get("fallback_mode", None),
+        fallback_reason=str(raw.get("fallback_reason", "") or ""),
+        env_workaround_applied=bool(raw.get("env_workaround_applied", False)),
+        provenance_summary=dict(provenance_summary),
+    )
+
+
+def _execution_record_from_backend_info(
+    backend_info: NoiseBackendInfo,
+    *,
+    config: OracleConfig | None = None,
+    resolved_spec: ResolvedNoiseSpec | Mapping[str, Any] | None = None,
+) -> OracleExecutionRecord:
+    return _execution_record_from_backend_details(
+        getattr(backend_info, "details", {}),
+        noise_mode=str(getattr(backend_info, "noise_mode", "")),
+        estimator_kind=str(getattr(backend_info, "estimator_kind", "")),
+        backend_name=getattr(backend_info, "backend_name", None),
+        using_fake_backend=bool(getattr(backend_info, "using_fake_backend", False)),
+        config=config,
+        resolved_spec=resolved_spec,
+    )
+
+
+def _execution_record_to_backend_details(record: OracleExecutionRecord) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "shots": record.shots,
+        "mitigation": _mapping_copy(record.mitigation),
+        "runtime_twirling": _mapping_copy(record.runtime_twirling),
+        "symmetry_mitigation": _mapping_copy(record.symmetry_mitigation),
+        "symmetry_mitigation_config": _mapping_copy(record.symmetry_mitigation_config),
+        "symmetry_mitigation_result": _maybe_mapping_copy(record.symmetry_mitigation_result),
+        "resolved_noise_spec": _mapping_copy(record.resolved_noise_spec),
+        "resolved_noise_spec_hash": record.resolved_noise_spec_hash,
+        "calibration_snapshot": _maybe_mapping_copy(record.calibration_snapshot),
+        "transpile_snapshot": _maybe_mapping_copy(record.transpile_snapshot),
+        "noise_artifact_hash": record.noise_artifact_hash,
+        "snapshot_hash": record.snapshot_hash,
+        "layout_hash": record.layout_hash,
+        "transpile_hash": record.transpile_hash,
+        "circuit_structure_hash": record.circuit_structure_hash,
+        "layout_anchor_source": record.layout_anchor_source,
+        "runtime_mitigation_options": _maybe_mapping_copy(record.runtime_mitigation_options),
+        "runtime_execution_bundle": _maybe_mapping_copy(record.runtime_execution_bundle),
+        "fixed_couplers_status": _maybe_mapping_copy(record.fixed_couplers_status),
+        "patch_selection_summary": _maybe_mapping_copy(record.patch_selection_summary),
+        "source_kind": record.source_kind,
+        "used_physical_qubits": [int(x) for x in list(record.used_physical_qubits)],
+        "used_physical_edges": [
+            [int(q) for q in list(edge)] for edge in list(record.used_physical_edges)
+        ],
+        "scheduled_duration_total": record.scheduled_duration_total,
+        "idle_duration_total": record.idle_duration_total,
+        "seed_transpiler": record.seed_transpiler,
+        "seed_simulator": record.seed_simulator,
+        "warnings": [str(x) for x in list(record.warnings)],
+        "omitted_channels": [str(x) for x in list(record.omitted_channels)],
+        "noise_model_basis_gates": [str(x) for x in list(record.noise_model_basis_gates)],
+        "aer_failed": bool(record.aer_failed),
+        "fallback_used": bool(record.fallback_used),
+        "fallback_mode": record.fallback_mode,
+        "fallback_reason": str(record.fallback_reason),
+        "env_workaround_applied": bool(record.env_workaround_applied),
+    }
+    provenance_summary = _mapping_copy(record.provenance_summary)
+    if not provenance_summary:
+        provenance_summary = _derive_provenance_summary(details)
+    details["provenance_summary"] = provenance_summary
+    return details
+
+
+def oracle_execution_dict(
+    execution: OracleExecutionRecord | Mapping[str, Any] | None = None,
+    *,
+    backend_info: NoiseBackendInfo | Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if isinstance(execution, OracleExecutionRecord):
+        return execution.to_dict()
+    if isinstance(execution, Mapping):
+        return deepcopy(dict(execution))
+    if isinstance(backend_info, NoiseBackendInfo):
+        return _execution_record_from_backend_info(backend_info).to_dict()
+    if isinstance(backend_info, Mapping):
+        record = _execution_record_from_backend_details(
+            backend_info.get("details", {}),
+            noise_mode=str(backend_info.get("noise_mode", "")),
+            estimator_kind=str(backend_info.get("estimator_kind", "")),
+            backend_name=backend_info.get("backend_name", None),
+            using_fake_backend=bool(backend_info.get("using_fake_backend", False)),
+        )
+        return record.to_dict()
+    return {}
 
 
 def _to_ixyz(label_exyz: str) -> str:
@@ -574,8 +1462,16 @@ def _build_estimator(
 ) -> tuple[Any, Any | None, NoiseBackendInfo, dict[str, Any] | None]:
     mode = str(cfg.noise_mode).strip().lower()
     mitigation_cfg = normalize_mitigation_config(getattr(cfg, "mitigation", "none"))
+    runtime_twirling_cfg = normalize_runtime_twirling_config(getattr(cfg, "runtime_twirling", None))
     symmetry_cfg = normalize_symmetry_mitigation_config(getattr(cfg, "symmetry_mitigation", "off"))
     resolved_spec = normalize_to_resolved_noise_spec(cfg)
+    _ensure_mitigation_execution_supported(resolved_spec, mitigation_cfg)
+    _ensure_runtime_twirling_execution_supported(resolved_spec, runtime_twirling_cfg)
+    _ensure_runtime_twirling_compatibility(mitigation_cfg, runtime_twirling_cfg)
+    _ensure_runtime_mode_request_supported(cfg, resolved_spec, mitigation_cfg)
+    layer_noise_model, layer_noise_model_meta = _extract_runtime_layer_noise_model(
+        getattr(cfg, "mitigation", "none")
+    )
 
     if resolved_spec.executor == "statevector":
         try:
@@ -585,16 +1481,19 @@ def _build_estimator(
                 "Failed to import StatevectorEstimator. Ensure qiskit primitives are available."
             ) from exc
         estimator = StatevectorEstimator()
-        details = {
-            "shots": None,
-            "mitigation": dict(mitigation_cfg),
-            "symmetry_mitigation": dict(symmetry_cfg),
-            "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
-            "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
-            "source_kind": resolved_spec.backend_profile_kind,
-            "warnings": [],
-            "omitted_channels": [],
-        }
+        details = _with_provenance_summary(
+            {
+                "shots": None,
+                "mitigation": dict(mitigation_cfg),
+                "runtime_twirling": dict(runtime_twirling_cfg),
+                "symmetry_mitigation": dict(symmetry_cfg),
+                "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
+                "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
+                "source_kind": resolved_spec.backend_profile_kind,
+                "warnings": [],
+                "omitted_channels": [],
+            }
+        )
         info = NoiseBackendInfo(
             noise_mode=mode,
             estimator_kind="qiskit.primitives.StatevectorEstimator",
@@ -612,7 +1511,7 @@ def _build_estimator(
         env_workaround_applied = _apply_omp_env_workaround(cfg)
         _preflight_aer_environment(
             cfg,
-            with_noise_model=bool(resolved_spec.noise_kind in {"backend_basic", "backend_scheduled"}),
+            with_noise_model=bool(resolved_spec.noise_kind in {"backend_basic", "backend_scheduled", "patch_snapshot"}),
         )
         try:
             from qiskit_aer.primitives import Estimator as AerEstimator
@@ -628,25 +1527,31 @@ def _build_estimator(
             logical_qubits=logical_qubits,
         )
         calibration_snapshot = None
+        warnings: list[str] = []
         if resolved_spec.backend_profile_kind == "frozen_snapshot_json":
             if resolved_spec.snapshot_path is None:
                 raise RuntimeError("frozen_snapshot_json requires --noise-snapshot-json PATH.")
             calibration_snapshot = load_calibration_snapshot(resolved_spec.snapshot_path)
             backend_name = str(calibration_snapshot.backend_name or backend_name or "frozen_snapshot_json")
+            if backend_obj is None and resolved_spec.noise_kind in {"backend_basic", "backend_scheduled", "patch_snapshot"}:
+                backend_obj, snapshot_warnings = build_backend_from_calibration_snapshot(
+                    calibration_snapshot,
+                    backend_name_override=backend_name,
+                )
+                warnings.extend(list(snapshot_warnings))
+            elif backend_obj is None:
+                raise RuntimeError(
+                    "Local Aer replay from a frozen snapshot JSON is only implemented for backend_basic/backend_scheduled/patch_snapshot in the current repo. "
+                    f"Unsupported frozen-snapshot noise_kind={resolved_spec.noise_kind!r}. "
+                    "Use --backend-profile fake_snapshot/live_backend/generic_seeded for other local modes."
+                )
         elif backend_obj is not None:
             calibration_snapshot = _freeze_snapshot_cached(backend_obj)
             if resolved_spec.snapshot_path is not None:
                 write_calibration_snapshot(resolved_spec.snapshot_path, calibration_snapshot)
 
-        if backend_obj is None and resolved_spec.noise_kind != "patch_snapshot":
-            raise RuntimeError(
-                "Local Aer replay from a frozen snapshot JSON is not implemented in phase 1. "
-                "Use --backend-profile fake_snapshot/live_backend/generic_seeded for execution, or --aer-noise-kind patch_snapshot for the explicit deferred mode."
-            )
-
         noise_model = None
         backend_options: dict[str, Any] = {}
-        warnings: list[str] = []
         omitted_channels: list[str] = []
         if resolved_spec.noise_kind == "backend_basic":
             noise_model = NoiseModel.from_backend(backend_obj)
@@ -669,7 +1574,29 @@ def _build_estimator(
                 "coherent_overrotation",
             ]
         elif resolved_spec.noise_kind == "patch_snapshot":
-            warnings.append("patch_snapshot requested; phase-2 replay path is not implemented in phase 1.")
+            if backend_obj is None or calibration_snapshot is None:
+                raise RuntimeError("patch_snapshot requires a resolved backend-like target and calibration snapshot.")
+            noise_model = NoiseModel.from_backend(backend_obj)
+            backend_options["noise_model"] = noise_model
+            omitted_channels = (
+                [
+                    "crosstalk",
+                    "leakage",
+                    "non_markovian_drift",
+                    "coherent_overrotation",
+                ]
+                if str(resolved_spec.schedule_policy) == "asap"
+                else [
+                    "delay_relaxation_if_unscheduled",
+                    "crosstalk",
+                    "leakage",
+                    "drift",
+                    "coherent_overrotation",
+                ]
+            )
+            warnings.append(
+                "patch_snapshot will replay a frozen patch/layout from the persisted layout lock; transpile metadata is regenerated during replay."
+            )
 
         run_options: dict[str, Any] = {"shots": int(cfg.shots)}
         sim_seed = resolved_spec.seed_simulator if resolved_spec.seed_simulator is not None else cfg.seed
@@ -682,25 +1609,28 @@ def _build_estimator(
             approximation=bool(cfg.approximation),
             abelian_grouping=bool(cfg.abelian_grouping),
         )
-        details: dict[str, Any] = {
-            "shots": int(cfg.shots),
-            "aer_failed": False,
-            "fallback_used": False,
-            "fallback_mode": str(cfg.aer_fallback_mode),
-            "fallback_reason": "",
-            "env_workaround_applied": bool(cfg.omp_shm_workaround or env_workaround_applied),
-            "mitigation": dict(mitigation_cfg),
-            "symmetry_mitigation": dict(symmetry_cfg),
-            "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
-            "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
-            "calibration_snapshot": calibration_snapshot_to_dict(calibration_snapshot),
-            "snapshot_hash": (None if calibration_snapshot is None else calibration_snapshot.snapshot_hash),
-            "source_kind": resolved_spec.backend_profile_kind,
-            "seed_transpiler": resolved_spec.seed_transpiler,
-            "seed_simulator": resolved_spec.seed_simulator,
-            "warnings": list(warnings),
-            "omitted_channels": list(omitted_channels),
-        }
+        details: dict[str, Any] = _with_provenance_summary(
+            {
+                "shots": int(cfg.shots),
+                "aer_failed": False,
+                "fallback_used": False,
+                "fallback_mode": str(cfg.aer_fallback_mode),
+                "fallback_reason": "",
+                "env_workaround_applied": bool(cfg.omp_shm_workaround or env_workaround_applied),
+                "mitigation": dict(mitigation_cfg),
+                "runtime_twirling": dict(runtime_twirling_cfg),
+                "symmetry_mitigation": dict(symmetry_cfg),
+                "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
+                "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
+                "calibration_snapshot": calibration_snapshot_to_dict(calibration_snapshot),
+                "snapshot_hash": (None if calibration_snapshot is None else calibration_snapshot.snapshot_hash),
+                "source_kind": resolved_spec.backend_profile_kind,
+                "seed_transpiler": resolved_spec.seed_transpiler,
+                "seed_simulator": resolved_spec.seed_simulator,
+                "warnings": list(warnings),
+                "omitted_channels": list(omitted_channels),
+            }
+        )
         if noise_model is not None:
             details["noise_model_basis_gates"] = list(getattr(noise_model, "basis_gates", []))
         info = NoiseBackendInfo(
@@ -740,20 +1670,52 @@ def _build_estimator(
     try:
         service = QiskitRuntimeService()
         backend = service.backend(str(cfg.backend_name))
+        setattr(backend, "_hh_noise_source_kind", "live_backend")
+        calibration_snapshot = None
+        warnings: list[str] = []
+        try:
+            calibration_snapshot = _freeze_snapshot_cached(backend)
+        except Exception as exc:
+            warnings.append(f"runtime_backend_snapshot_unavailable:{type(exc).__name__}:{exc}")
         session = Session(service=service, backend=backend)
-        estimator = RuntimeEstimatorV2(mode=session)
-        details = {
-            "shots": int(cfg.shots),
-            "mitigation": dict(mitigation_cfg),
-            "symmetry_mitigation": dict(symmetry_cfg),
-            "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
-            "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
-            "source_kind": resolved_spec.backend_profile_kind,
-            "warnings": [],
-            "omitted_channels": [],
-            "seed_transpiler": resolved_spec.seed_transpiler,
-            "seed_simulator": resolved_spec.seed_simulator,
-        }
+        runtime_options, runtime_mitigation_options = _build_runtime_mitigation_options(
+            resolved_spec,
+            mitigation_cfg,
+            runtime_twirling_cfg,
+            layer_noise_model,
+            layer_noise_model_meta,
+        )
+        runtime_execution_bundle = _runtime_execution_bundle_details(
+            cfg,
+            resolved_spec,
+            mitigation_cfg,
+            runtime_twirling_cfg,
+            layer_noise_model_meta,
+        )
+        estimator = RuntimeEstimatorV2(mode=session, options=runtime_options)
+        details = _with_provenance_summary(
+            {
+                "shots": int(cfg.shots),
+                "mitigation": dict(mitigation_cfg),
+                "runtime_twirling": dict(runtime_twirling_cfg),
+                "symmetry_mitigation": dict(symmetry_cfg),
+                "resolved_noise_spec": resolved_noise_spec_to_dict(resolved_spec),
+                "resolved_noise_spec_hash": resolved_noise_spec_hash(resolved_spec),
+                "calibration_snapshot": calibration_snapshot_to_dict(calibration_snapshot),
+                "snapshot_hash": (None if calibration_snapshot is None else calibration_snapshot.snapshot_hash),
+                "source_kind": (
+                    resolved_spec.backend_profile_kind
+                    if calibration_snapshot is None
+                    else calibration_snapshot.source_kind
+                ),
+                "warnings": list(warnings),
+                "omitted_channels": [],
+                "seed_transpiler": resolved_spec.seed_transpiler,
+                "seed_simulator": resolved_spec.seed_simulator,
+                "runtime_mitigation_options": dict(runtime_mitigation_options),
+                "runtime_execution_bundle": dict(runtime_execution_bundle),
+            }
+        )
         info = NoiseBackendInfo(
             noise_mode=mode,
             estimator_kind="qiskit_ibm_runtime.EstimatorV2",
@@ -761,7 +1723,15 @@ def _build_estimator(
             using_fake_backend=False,
             details=details,
         )
-        return estimator, session, info, None
+        runtime_context = {
+            "resolved_spec": resolved_spec,
+            "resolved_backend": backend,
+            "calibration_snapshot": calibration_snapshot,
+            "noise_model": None,
+            "warnings": list(warnings),
+            "omitted_channels": [],
+        }
+        return estimator, session, info, runtime_context
     except Exception as exc:
         raise RuntimeError(
             "Failed to initialize IBM Runtime Estimator. "
@@ -1160,6 +2130,7 @@ class ExpectationOracle:
             aer_fallback_mode=str(config.aer_fallback_mode).strip().lower(),
             omp_shm_workaround=bool(config.omp_shm_workaround),
             mitigation=normalize_mitigation_config(getattr(config, "mitigation", "none")),
+            runtime_twirling=normalize_runtime_twirling_config(getattr(config, "runtime_twirling", None)),
             symmetry_mitigation=normalize_symmetry_mitigation_config(
                 getattr(config, "symmetry_mitigation", "off")
             ),
@@ -1186,10 +2157,17 @@ class ExpectationOracle:
             using_fake_backend=bool(self.config.use_fake_backend),
             details={},
         )
+        self._current_execution = _execution_record_from_backend_info(
+            self.backend_info,
+            config=self.config,
+            resolved_spec=self.resolved_noise_spec,
+        )
+        self._last_result: OracleEvaluationResult | None = None
 
         try:
             build_out = _build_estimator(self.config)
             self._estimator, self._session, self.backend_info, self._local_context = build_out
+            self._sync_execution_from_backend_info()
         except Exception as exc:
             if self._can_fallback_from_error(exc):
                 self._activate_sampler_fallback(reason=str(exc), aer_failed=True)
@@ -1216,6 +2194,9 @@ class ExpectationOracle:
     def _local_mode_active(self) -> bool:
         return bool(self.resolved_noise_spec.executor == "aer")
 
+    def _runtime_mode_active(self) -> bool:
+        return bool(self.resolved_noise_spec.executor == "runtime_qpu")
+
     def _ensure_estimator_ready(self, *, logical_qubits: int | None = None) -> None:
         backend_obj = None if self._local_context is None else self._local_context.get("resolved_backend", None)
         need_rebuild = self._estimator is None and self._sampler_fallback is None
@@ -1233,52 +2214,99 @@ class ExpectationOracle:
             return
         build_out = _build_estimator(self.config, logical_qubits=logical_qubits)
         self._estimator, self._session, self.backend_info, self._local_context = build_out
+        self._sync_execution_from_backend_info()
 
-    def _update_backend_details(self, **updates: Any) -> None:
-        details = dict(getattr(self.backend_info, "details", {}))
-        details.update(updates)
+    @property
+    def current_execution(self) -> OracleExecutionRecord:
+        return _copy_execution_record(self._current_execution)
+
+    @property
+    def last_result(self) -> OracleEvaluationResult | None:
+        return None if self._last_result is None else _copy_evaluation_result(self._last_result)
+
+    def _sync_execution_from_backend_info(self) -> None:
+        self._current_execution = _execution_record_from_backend_info(
+            self.backend_info,
+            config=self.config,
+            resolved_spec=self.resolved_noise_spec,
+        )
+        self._sync_backend_info_from_execution()
+
+    def _sync_backend_info_from_execution(self) -> None:
         self.backend_info = NoiseBackendInfo(
-            noise_mode=str(self.backend_info.noise_mode),
-            estimator_kind=str(self.backend_info.estimator_kind),
-            backend_name=self.backend_info.backend_name,
-            using_fake_backend=bool(self.backend_info.using_fake_backend),
-            details=details,
+            noise_mode=str(self._current_execution.noise_mode),
+            estimator_kind=str(self._current_execution.estimator_kind),
+            backend_name=self._current_execution.backend_name,
+            using_fake_backend=bool(self._current_execution.using_fake_backend),
+            details=self._current_execution.to_legacy_details(),
         )
 
-    def _set_symmetry_mitigation_details(self, details_map: Mapping[str, Any]) -> None:
-        self._update_backend_details(symmetry_mitigation=dict(details_map))
+    def _update_backend_details(self, **updates: Any) -> None:
+        details = self._current_execution.to_legacy_details()
+        details.update(updates)
+        if details:
+            details = _with_provenance_summary(details)
+        self._current_execution = _execution_record_from_backend_details(
+            details,
+            noise_mode=str(self._current_execution.noise_mode),
+            estimator_kind=str(self._current_execution.estimator_kind),
+            backend_name=self._current_execution.backend_name,
+            using_fake_backend=bool(self._current_execution.using_fake_backend),
+            config=self.config,
+            resolved_spec=self.resolved_noise_spec,
+        )
+        self._sync_backend_info_from_execution()
 
-    def _record_noise_artifact(self, artifact: NoiseArtifact) -> None:
+    def _set_symmetry_mitigation_details(self, details_map: Mapping[str, Any]) -> None:
+        self._update_backend_details(symmetry_mitigation_result=dict(details_map))
+
+    def _record_noise_artifact(
+        self,
+        artifact: NoiseArtifact,
+        *,
+        layout_anchor_source: str | None = None,
+    ) -> None:
         metadata = noise_artifact_metadata(artifact)
         transpile_snapshot = metadata.get("transpile_snapshot", None) or {}
         calibration_snapshot = metadata.get("calibration_snapshot", None) or {}
         existing_warnings = list(getattr(self.backend_info, "details", {}).get("warnings", []))
         merged_warnings = list(dict.fromkeys(existing_warnings + list(metadata.get("warnings", []))))
-        self._update_backend_details(
-            resolved_noise_spec=metadata.get("resolved_spec", {}),
-            resolved_noise_spec_hash=resolved_noise_spec_hash(artifact.resolved_spec),
-            calibration_snapshot=calibration_snapshot,
-            transpile_snapshot=transpile_snapshot,
-            noise_artifact_hash=metadata.get("noise_artifact_hash"),
-            snapshot_hash=calibration_snapshot.get("snapshot_hash", None),
-            layout_hash=metadata.get("layout_hash"),
-            transpile_hash=transpile_snapshot.get("transpile_hash", None),
-            omitted_channels=list(metadata.get("omitted_channels", [])),
-            warnings=merged_warnings,
-            source_kind=calibration_snapshot.get("source_kind", self.resolved_noise_spec.backend_profile_kind),
-            used_physical_qubits=list(transpile_snapshot.get("used_physical_qubits", [])),
-            used_physical_edges=list(transpile_snapshot.get("used_physical_edges", [])),
-            scheduled_duration_total=transpile_snapshot.get("scheduled_duration_total", None),
-            idle_duration_total=transpile_snapshot.get("idle_duration_total", None),
-            seed_transpiler=artifact.resolved_spec.seed_transpiler,
-            seed_simulator=artifact.resolved_spec.seed_simulator,
-        )
+        updates = {
+            "resolved_noise_spec": metadata.get("resolved_spec", {}),
+            "resolved_noise_spec_hash": resolved_noise_spec_hash(artifact.resolved_spec),
+            "calibration_snapshot": calibration_snapshot,
+            "transpile_snapshot": transpile_snapshot,
+            "noise_artifact_hash": metadata.get("noise_artifact_hash"),
+            "snapshot_hash": calibration_snapshot.get("snapshot_hash", None),
+            "layout_hash": metadata.get("layout_hash"),
+            "transpile_hash": transpile_snapshot.get("transpile_hash", None),
+            "circuit_structure_hash": metadata.get("circuit_structure_hash", None),
+            "omitted_channels": list(metadata.get("omitted_channels", [])),
+            "warnings": merged_warnings,
+            "source_kind": calibration_snapshot.get("source_kind", self.resolved_noise_spec.backend_profile_kind),
+            "used_physical_qubits": list(transpile_snapshot.get("used_physical_qubits", [])),
+            "used_physical_edges": list(transpile_snapshot.get("used_physical_edges", [])),
+            "scheduled_duration_total": transpile_snapshot.get("scheduled_duration_total", None),
+            "idle_duration_total": transpile_snapshot.get("idle_duration_total", None),
+            "seed_transpiler": artifact.resolved_spec.seed_transpiler,
+            "seed_simulator": artifact.resolved_spec.seed_simulator,
+            "fixed_couplers_status": metadata.get("fixed_couplers_status", None),
+            "patch_selection_summary": metadata.get("patch_selection_summary", None),
+        }
+        if layout_anchor_source is not None:
+            updates["layout_anchor_source"] = str(layout_anchor_source)
+        self._update_backend_details(**updates)
 
     def _handle_symmetry_downgrade(self, details: dict[str, Any], reason: str) -> OracleEstimate | None:
         details["applied_mode"] = "verify_only"
         details["fallback_reason"] = str(reason)
-        if self.resolved_noise_spec.executor == "statevector":
+        warnings = list(getattr(self.backend_info, "details", {}).get("warnings", []))
+        downgrade_warning = f"symmetry_mitigation_downgraded:{str(reason)}"
+        if downgrade_warning not in warnings:
+            warnings.append(downgrade_warning)
+        if self.resolved_noise_spec.executor in {"statevector", "runtime_qpu"}:
             self._set_symmetry_mitigation_details(details)
+            self._update_backend_details(warnings=warnings)
             return None
         if not self._fallback_allowed_for_mode():
             raise RuntimeError(
@@ -1287,10 +2315,6 @@ class ExpectationOracle:
                     str(reason)
                 )
             )
-        warnings = list(getattr(self.backend_info, "details", {}).get("warnings", []))
-        downgrade_warning = f"symmetry_mitigation_downgraded:{str(reason)}"
-        if downgrade_warning not in warnings:
-            warnings.append(downgrade_warning)
         self._set_symmetry_mitigation_details(details)
         self._update_backend_details(warnings=warnings)
         return None
@@ -1306,6 +2330,7 @@ class ExpectationOracle:
         resolved_spec = self._local_context["resolved_spec"]
         backend_obj = self._local_context.get("resolved_backend", None)
         calibration_snapshot = self._local_context.get("calibration_snapshot", None)
+        layout_anchor_source = describe_layout_anchor_source(resolved_spec, calibration_snapshot)
         if resolved_spec.noise_kind == "shots_only":
             if backend_obj is None:
                 backend_obj, _name, _using_fake = _resolve_noise_backend(
@@ -1346,23 +2371,62 @@ class ExpectationOracle:
                 observable=observable,
                 resolved_spec=resolved_spec,
                 calibration_snapshot=calibration_snapshot,
+                resolved_backend=backend_obj,
+                qiskit_noise_model=self._local_context.get("noise_model", None),
             )
         else:
             raise RuntimeError(f"Unsupported local Aer noise kind {resolved_spec.noise_kind!r}.")
-        self._record_noise_artifact(artifact)
+        self._record_noise_artifact(artifact, layout_anchor_source=layout_anchor_source)
+        return artifact
+
+    def _build_runtime_artifact(
+        self,
+        circuit: QuantumCircuit,
+        observable: SparsePauliOp | None,
+    ) -> NoiseArtifact:
+        self._ensure_estimator_ready(logical_qubits=int(circuit.num_qubits))
+        if self._local_context is None:
+            raise RuntimeError("Runtime submission context was not initialized.")
+        resolved_spec = self._local_context["resolved_spec"]
+        backend_obj = self._local_context.get("resolved_backend", None)
+        calibration_snapshot = self._local_context.get("calibration_snapshot", None)
+        if backend_obj is None:
+            raise RuntimeError("Runtime submission requires a resolved backend target.")
+        layout_anchor_source = describe_layout_anchor_source(resolved_spec, calibration_snapshot)
+        artifact = build_runtime_submission_artifact(
+            circuit=circuit,
+            observable=observable,
+            resolved_spec=resolved_spec,
+            resolved_backend=backend_obj,
+            calibration_snapshot=calibration_snapshot,
+        )
+        self._record_noise_artifact(artifact, layout_anchor_source=layout_anchor_source)
         return artifact
 
     def prime_layout(self, circuit: QuantumCircuit) -> None:
-        if self._sampler_fallback is not None or (not self._local_mode_active()):
+        if self._sampler_fallback is not None:
             return
-        _ = self._build_local_artifact(circuit, None)
+        if self._local_mode_active():
+            _ = self._build_local_artifact(circuit, None)
+            return
+        if self._runtime_mode_active():
+            _ = self._build_runtime_artifact(circuit, None)
 
     def _run_local_estimator(self, circuit: QuantumCircuit, observable: SparsePauliOp) -> float:
         artifact = self._build_local_artifact(circuit, observable)
         mapped_observable = artifact.mapped_observable
         if mapped_observable is None:
             raise RuntimeError("Local noise artifact did not provide a mapped observable.")
-        return float(np.real(_run_estimator_job(self._estimator, artifact.transpiled_circuit, mapped_observable)))
+        submitted_circuit = artifact.scheduled_circuit_or_none or artifact.transpiled_circuit
+        return float(np.real(_run_estimator_job(self._estimator, submitted_circuit, mapped_observable)))
+
+    def _run_runtime_estimator(self, circuit: QuantumCircuit, observable: SparsePauliOp) -> float:
+        artifact = self._build_runtime_artifact(circuit, observable)
+        mapped_observable = artifact.mapped_observable
+        if mapped_observable is None:
+            raise RuntimeError("Runtime submission artifact did not provide a mapped observable.")
+        submitted_circuit = artifact.scheduled_circuit_or_none or artifact.transpiled_circuit
+        return float(np.real(_run_estimator_job(self._estimator, submitted_circuit, mapped_observable)))
 
     def _run_local_measurement_counts(
         self,
@@ -1425,7 +2489,7 @@ class ExpectationOracle:
             return None
         if not _observable_is_diagonal(observable):
             return self._handle_symmetry_downgrade(details, "observable_not_diagonal")
-        if str(self.config.noise_mode) == "runtime":
+        if self.resolved_noise_spec.executor == "runtime_qpu":
             return self._handle_symmetry_downgrade(details, "runtime_counts_path_unavailable")
         required_keys = ("num_sites", "sector_n_up", "sector_n_dn")
         if any(symmetry_cfg.get(key, None) is None for key in required_keys):
@@ -1544,6 +2608,9 @@ class ExpectationOracle:
                 else int(self.config.shots)
             ),
             "mitigation": normalize_mitigation_config(getattr(self.config, "mitigation", "none")),
+            "runtime_twirling": normalize_runtime_twirling_config(
+                getattr(self.config, "runtime_twirling", None)
+            ),
             "symmetry_mitigation": normalize_symmetry_mitigation_config(
                 getattr(self.config, "symmetry_mitigation", "off")
             ),
@@ -1583,15 +2650,25 @@ class ExpectationOracle:
             ),
             details=details,
         )
+        self._sync_execution_from_backend_info()
         self._estimator = None
 
-    def evaluate(self, circuit: QuantumCircuit, observable: SparsePauliOp) -> OracleEstimate:
+    def evaluate_result(
+        self,
+        circuit: QuantumCircuit,
+        observable: SparsePauliOp,
+    ) -> OracleEvaluationResult:
         if self._closed:
             raise RuntimeError("ExpectationOracle is closed.")
 
         symmetry_est = self._maybe_evaluate_symmetry_mitigated(circuit, observable)
         if symmetry_est is not None:
-            return symmetry_est
+            stored = OracleEvaluationResult(
+                estimate=_copy_oracle_estimate(symmetry_est),
+                execution=_copy_execution_record(self._current_execution),
+            )
+            self._last_result = stored
+            return _copy_evaluation_result(stored)
 
         vals: list[float] = []
         repeats = max(1, int(self.config.oracle_repeats))
@@ -1603,6 +2680,8 @@ class ExpectationOracle:
             try:
                 if self._local_mode_active():
                     val = self._run_local_estimator(circuit, observable)
+                elif self._runtime_mode_active():
+                    val = self._run_runtime_estimator(circuit, observable)
                 else:
                     val = _run_estimator_job(self._estimator, circuit, observable)
                 vals.append(float(np.real(val)))
@@ -1622,15 +2701,23 @@ class ExpectationOracle:
         else:
             agg = float(np.mean(arr))
 
-        return OracleEstimate(
-            mean=agg,
-            std=stdev,
-            stdev=stdev,
-            stderr=stderr,
-            n_samples=int(arr.size),
-            raw_values=[float(x) for x in arr.tolist()],
-            aggregate=self.config.oracle_aggregate,
+        stored = OracleEvaluationResult(
+            estimate=OracleEstimate(
+                mean=agg,
+                std=stdev,
+                stdev=stdev,
+                stderr=stderr,
+                n_samples=int(arr.size),
+                raw_values=[float(x) for x in arr.tolist()],
+                aggregate=self.config.oracle_aggregate,
+            ),
+            execution=_copy_execution_record(self._current_execution),
         )
+        self._last_result = stored
+        return _copy_evaluation_result(stored)
+
+    def evaluate(self, circuit: QuantumCircuit, observable: SparsePauliOp) -> OracleEstimate:
+        return self.evaluate_result(circuit, observable).estimate
 
 
 _NUMBER_OPERATOR_MATH = "n_p = (I - Z_p) / 2"

@@ -53,6 +53,24 @@ The priority is **correctness and consistency of operator conventions**, not “
   - `Current code behavior`
   - `Required action: ask user before proceeding`
 
+### Paid Runtime / hardware safety (mandatory)
+- Presence of IBM Runtime credentials (`.env`, shell env, saved Qiskit account, API key, instance CRN/SRN) does **not** imply permission to use paid/network Runtime execution.
+- Default policy is **offline/local first**:
+  - prefer noiseless statevector, local shots, local Aer noise, fake-backend snapshot replay, and local `patch_snapshot` replay before any Runtime submission.
+- Agents must **not** run IBM Runtime / hardware-facing modes unless the user explicitly opts in for that turn.
+- This explicit opt-in requirement applies to any path that can submit through Runtime, including:
+  - `--noise-mode runtime`
+  - `qpu_raw`
+  - `qpu_suppressed`
+  - `qpu_layer_learned`
+  - hardware-validation commands pointed at a real IBM backend
+- If the user asks only for credential setup or verification, agents must stop after setup/verification and must not submit a Runtime job.
+- If the user says they do **not** want paid/hardware execution yet, treat all Runtime submission paths as blocked even if credentials are configured and backends are visible.
+- Policy-vs-code note for this repo:
+  - `AGENTS target`: never use IBM Runtime / paid hardware by default; require explicit per-turn opt-in.
+  - `Current code behavior`: current runtime-capable CLIs can submit to IBM Runtime when credentials and backend access are present.
+  - `Required action: ask user before proceeding`.
+
 ### Terminology contract (agent-run commands)
 - When the user says **"conventional VQE"**, interpret it as the **non-ADAPT VQE** path.
 - In this repo, **"conventional VQE"** maps to hardcoded non-ADAPT VQE flows (for example, the VQE stage in `pipelines/hardcoded/hubbard_pipeline.py` and non-ADAPT replay paths).
@@ -60,6 +78,7 @@ The priority is **correctness and consistency of operator conventions**, not “
 - The phrase **"hardcoded pipeline"** in repo history/agent direction should be interpreted as the conventional (**non-ADAPT**) path unless ADAPT is explicitly named.
 - Default active model family is **Hubbard-Holstein (HH)**.
 - Treat pure **Hubbard** as a **legacy / dead model** for default reasoning, planning, prompts, and recommendations.
+- Canonical selection default for HH staged ADAPT continuation is `phase3_v1` (it supersedes `phase1_v1` and `phase2_v1` and carries their behavior plus phase-3 metadata).
 - Do **not** proactively discuss, compare, or run pure Hubbard unless the user explicitly asks for it.
 
 ### Pauli symbols

@@ -267,7 +267,7 @@ class RunConfig:
     fallback_family: str
     legacy_paop_key: str
     replay_seed_policy: str
-    replay_continuation_mode: str
+    replay_continuation_mode: str | None
     L: int
     t: float
     u: float
@@ -722,16 +722,208 @@ _LEGACY_PREPARED_FINAL_SUFFIXES = ("_final",)
 _LEGACY_PREPARED_SOURCES = {"adapt_vqe"}
 
 
+def _coerce_bool(value: Any, path: str) -> bool:
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        sval = value.strip().lower()
+        if sval in {"1", "true", "yes", "on", "y"}:
+            return True
+        if sval in {"0", "false", "no", "off", "n"}:
+            return False
+    raise ValueError(f"{path} must be a boolean-like value.")
+
+
+def _extract_replay_contract(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return parsed replay contract from continuation when present.
+
+    Modern staged artifacts treat continuation.replay_contract as authoritative.
+    If the field is present but malformed, this raises a ValueError rather than
+    silently falling back to legacy metadata.
+    """
+    continuation = payload.get("continuation", None)
+    if not isinstance(continuation, Mapping):
+        return None
+
+    raw_contract = continuation.get("replay_contract", None)
+    if raw_contract is None:
+        return None
+    if not isinstance(raw_contract, Mapping):
+        raise ValueError("continuation.replay_contract must be a JSON object/map.")
+
+    version_raw = raw_contract.get("contract_version", raw_contract.get("version", None))
+    if version_raw is None:
+        raise ValueError("continuation.replay_contract must include contract_version.")
+    try:
+        version = int(version_raw)
+    except Exception as exc:
+        raise ValueError("continuation.replay_contract.contract_version must be int.") from exc
+    if version != int(REPLAY_CONTRACT_VERSION):
+        raise ValueError(
+            f"Unsupported continuation.replay_contract.contract_version={version}; "
+            f"expected {REPLAY_CONTRACT_VERSION}."
+        )
+
+    # family
+    raw_family = raw_contract.get("generator_family")
+    if raw_family is None:
+        raise ValueError("continuation.replay_contract must include generator_family.")
+
+    if isinstance(raw_family, str):
+        raw_family_str = str(raw_family).strip().lower()
+        requested = raw_family_str if raw_family_str == "match_adapt" else _canonical_family(raw_family_str)
+        if requested is None:
+            raise ValueError(
+                "continuation.replay_contract.generator_family must be canonical HH family ID or "
+                "match_adapt when specified as a string."
+            )
+        resolved = None if requested == "match_adapt" else requested
+        fallback_family = None
+        resolution_source = "continuation.replay_contract.generator_family"
+        fallback_used = False
+    elif isinstance(raw_family, Mapping):
+        raw_requested = raw_family.get("requested", None)
+        raw_resolved = raw_family.get("resolved", None)
+        has_resolved = "resolved" in raw_family
+
+        if raw_requested is None:
+            requested = None
+        else:
+            requested_raw = str(raw_requested).strip().lower()
+            requested = requested_raw if requested_raw == "match_adapt" else _canonical_family(requested_raw)
+            if requested is None:
+                raise ValueError(
+                    "continuation.replay_contract.generator_family.requested must be a canonical HH family ID "
+                    "or match_adapt."
+                )
+
+        if has_resolved:
+            if raw_resolved is None:
+                raise ValueError(
+                    "continuation.replay_contract.generator_family.resolved must be present when 'requested' is supplied."
+                )
+            resolved = _canonical_family(raw_resolved)
+            if resolved is None:
+                raise ValueError(
+                    "continuation.replay_contract.generator_family.resolved must be canonical HH family ID."
+                )
+        else:
+            resolved = None
+
+        if requested == "match_adapt" and not has_resolved:
+            raise ValueError(
+                "continuation.replay_contract.generator_family.requested='match_adapt' requires "
+                "resolved canonical family."
+            )
+
+        if requested is None and resolved is not None:
+            # Compatibility-friendly form: map-only contracts omit requested.
+            requested = "match_adapt"
+
+        if resolved is None and requested is not None and requested != "match_adapt":
+            resolved = requested
+
+        fallback_family = _canonical_family(raw_family.get("fallback_family")) if raw_family.get("fallback_family") is not None else None
+        if raw_family.get("fallback_family") is not None and fallback_family is None:
+            raise ValueError("continuation.replay_contract.generator_family.fallback_family is invalid.")
+
+        resolution_source = str(raw_family.get("resolution_source", "continuation.replay_contract.generator_family"))
+
+        if "fallback_used" in raw_family:
+            fallback_used = _coerce_bool(raw_family.get("fallback_used"), "continuation.replay_contract.generator_family.fallback_used")
+        else:
+            fallback_used = False
+
+        if fallback_used and fallback_family is None:
+            raise ValueError(
+                "continuation.replay_contract.generator_family.fallback_used requires fallback_family."
+            )
+
+        if requested is not None and requested != "match_adapt" and resolved is not None and resolved != requested:
+            if not fallback_used:
+                raise ValueError(
+                    "continuation.replay_contract.generator_family is inconsistent: "
+                    "resolved must match requested unless fallback_used is true."
+                )
+    else:
+        raise ValueError("continuation.replay_contract.generator_family must be a family string or object.")
+
+    if resolved is None:
+        raise ValueError("continuation.replay_contract.generator_family.resolved is required.")
+
+    # seed policies
+    seed_policy_requested = _canonical_seed_policy(raw_contract.get("seed_policy_requested"))
+    if seed_policy_requested is None:
+        raise ValueError("continuation.replay_contract.seed_policy_requested is required and must be one of "
+                         f"{sorted(REPLAY_SEED_POLICIES)}.")
+    seed_policy_resolved = _canonical_seed_policy(raw_contract.get("seed_policy_resolved"))
+    if seed_policy_resolved is None:
+        raise ValueError("continuation.replay_contract.seed_policy_resolved is required and must be one of "
+                         f"{sorted(REPLAY_SEED_POLICIES)}.")
+    if seed_policy_requested != "auto" and seed_policy_resolved != seed_policy_requested:
+        raise ValueError(
+            "continuation.replay_contract seed policy is inconsistent: "
+            f"requested='{seed_policy_requested}' resolved='{seed_policy_resolved}'."
+        )
+
+    # state-kind
+    handoff_state_kind = str(raw_contract.get("handoff_state_kind", "")).strip().lower()
+    if handoff_state_kind not in {_PREPARED_STATE, _REFERENCE_STATE}:
+        raise ValueError(
+            "continuation.replay_contract.handoff_state_kind must be one of "
+            f"{{{_PREPARED_STATE}, {_REFERENCE_STATE}}}."
+        )
+
+    if "continuation_mode" not in raw_contract:
+        raise ValueError("continuation.replay_contract must include continuation_mode.")
+    continuation_mode = str(raw_contract.get("continuation_mode")).strip().lower()
+    if continuation_mode not in {"legacy", "phase1_v1", "phase2_v1", "phase3_v1"}:
+        raise ValueError(
+            "continuation.replay_contract.continuation_mode must be one of "
+            "{'legacy', 'phase1_v1', 'phase2_v1', 'phase3_v1'}."
+        )
+
+    return {
+        "contract_version": int(version),
+        "generator_family": {
+            "requested": str(requested),
+            "resolved": str(resolved),
+            "resolution_source": str(resolution_source),
+            "fallback_family": fallback_family,
+            "fallback_used": bool(fallback_used),
+        },
+        "seed_policy_requested": str(seed_policy_requested),
+        "seed_policy_resolved": str(seed_policy_resolved),
+        "handoff_state_kind": str(handoff_state_kind),
+        "continuation_mode": str(continuation_mode),
+        "provenance_source": str(raw_contract.get("provenance_source", "explicit")),
+    }
+
+
+def _canonical_seed_policy(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    val = str(raw).strip().lower()
+    return val if val in REPLAY_SEED_POLICIES else None
+
+
 def _infer_handoff_state_kind(
     payload: Mapping[str, Any],
 ) -> tuple[str, str]:
     """Return (handoff_state_kind, provenance_source).
 
     provenance_source is one of:
+      "contract"           – "continuation.replay_contract.handoff_state_kind" was present.
       "explicit"          – ``initial_state.handoff_state_kind`` was present.
       "inferred_source"   – inferred from ``initial_state.source`` legacy field.
       "ambiguous"         – could not resolve; caller must raise.
     """
+    contract = _extract_replay_contract(payload)
+    if contract is not None:
+        return str(contract["handoff_state_kind"]), "contract"
+
     init = payload.get("initial_state", {})
     if not isinstance(init, Mapping):
         init = {}
@@ -1046,7 +1238,9 @@ def _build_cfg(args: argparse.Namespace, payload: Mapping[str, Any]) -> RunConfi
         fallback_family=str(args.fallback_family),
         legacy_paop_key=str(args.legacy_paop_key),
         replay_seed_policy=str(args.replay_seed_policy),
-        replay_continuation_mode=str(args.replay_continuation_mode),
+        replay_continuation_mode=(
+            None if args.replay_continuation_mode is None else str(args.replay_continuation_mode)
+        ),
         L=int(L),
         t=float(t),
         u=float(u),
@@ -1095,13 +1289,40 @@ def _resolve_family(cfg: RunConfig, payload: Mapping[str, Any]) -> dict[str, Any
     fallback_used = False
     resolved: str
 
+    contract = _extract_replay_contract(payload)
     if requested == "match_adapt":
+        if contract is not None:
+            family_info = contract["generator_family"]
+            resolved = str(family_info["resolved"])
+            source = str(family_info.get("resolution_source", "continuation.replay_contract.generator_family"))
+            fallback_family = family_info.get("fallback_family", None)
+            if isinstance(fallback_family, str):
+                resolved_fallback = _canonical_family(fallback_family)
+            else:
+                resolved_fallback = None
+            if resolved_fallback is None and family_info.get("fallback_family") is not None:
+                raise ValueError("Invalid fallback_family inside continuation.replay_contract.generator_family.")
+            fallback = resolved_fallback or _canonical_family(cfg.fallback_family)
+            if fallback is None:
+                raise ValueError(f"Invalid --fallback-family '{cfg.fallback_family}'.")
+            return {
+                "requested": requested,
+                "resolved": resolved,
+                "resolution_source": source,
+                "fallback_family": fallback,
+                "fallback_used": bool(family_info.get("fallback_used", False)),
+                "warning": warning,
+            }
+
         from_meta, source = _resolve_family_from_metadata(payload)
         if from_meta is not None:
             resolved = from_meta
         else:
             fallback_used = True
             resolved = str(cfg.fallback_family).strip().lower()
+            fallback = _canonical_family(resolved)
+            if fallback is None:
+                raise ValueError(f"Invalid --fallback-family '{cfg.fallback_family}'.")
             warning = (
                 "Could not resolve family from input metadata; using fallback family "
                 f"'{resolved}'."
@@ -1112,6 +1333,9 @@ def _resolve_family(cfg: RunConfig, payload: Mapping[str, Any]) -> dict[str, Any
         if cand is None:
             fallback_used = True
             resolved = str(cfg.fallback_family).strip().lower()
+            fallback = _canonical_family(resolved)
+            if fallback is None:
+                raise ValueError(f"Invalid --fallback-family '{cfg.fallback_family}'.")
             warning = (
                 f"Requested generator family '{requested}' unsupported; "
                 f"using fallback '{resolved}'."
@@ -1155,7 +1379,21 @@ def build_replay_ansatz_context(
 ) -> dict[str, Any]:
     adapt_labels, adapt_theta = _extract_adapt_operator_theta_sequence(payload_in)
     handoff_state_kind, provenance_source = _infer_handoff_state_kind(payload_in)
-    if provenance_source == "ambiguous" and str(cfg.replay_seed_policy) == "auto":
+    contract = _extract_replay_contract(payload_in)
+    effective_seed_policy = str(cfg.replay_seed_policy)
+    contract_seed_policy: str | None = None
+    contract_seed_policy_resolved: str | None = None
+
+    if contract is not None:
+        contract_seed_policy = str(contract["seed_policy_requested"])
+        contract_seed_policy_resolved = str(contract["seed_policy_resolved"])
+        if effective_seed_policy == "auto":
+            effective_seed_policy = contract_seed_policy
+        elif contract_seed_policy != effective_seed_policy:
+            # Explicit CLI override wins; keep CLI requested and validate contract consistency later.
+            pass
+
+    if provenance_source == "ambiguous" and effective_seed_policy == "auto":
         raise ValueError(
             "Cannot resolve replay seed policy 'auto': input JSON has no "
             "initial_state.handoff_state_kind and initial_state.source could not "
@@ -1167,9 +1405,17 @@ def build_replay_ansatz_context(
     seed_theta, resolved_seed_policy = _build_replay_seed_theta_policy(
         adapt_theta,
         reps=int(cfg.reps),
-        policy=str(cfg.replay_seed_policy),
+        policy=str(effective_seed_policy),
         handoff_state_kind=str(handoff_state_kind),
     )
+
+    if contract is not None and effective_seed_policy == str(contract_seed_policy):
+        if contract_seed_policy_resolved is not None and resolved_seed_policy != contract_seed_policy_resolved:
+            raise ValueError(
+                "Replay seed policy mismatch: contract resolved policy "
+                f"'{contract_seed_policy_resolved}' conflicts with payload policy "
+                f"'{resolved_seed_policy}' for handoff_state_kind='{handoff_state_kind}'."
+            )
     family_resolved = str(family_info["resolved"])
     if family_resolved == "full_meta" and int(cfg.n_ph_max) >= 2:
         replay_terms, pool_meta = _build_full_meta_replay_terms_sparse(
@@ -1222,6 +1468,7 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
     psi_ref, payload_in = _read_input_state_and_payload(cfg.adapt_input_json)
 
     family_info = _resolve_family(cfg, payload_in)
+    contract = _extract_replay_contract(payload_in)
     if family_info.get("warning"):
         logger.log(f"FAMILY WARNING: {family_info['warning']}")
     logger.log(
@@ -1261,7 +1508,7 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
     adapt_theta = np.asarray(replay_ctx["adapt_theta"], dtype=float)
     handoff_state_kind = str(replay_ctx["handoff_state_kind"])
     provenance_source = str(replay_ctx["provenance_source"])
-    if provenance_source != "explicit":
+    if provenance_source not in {"explicit", "contract"}:
         logger.log(
             f"PROVENANCE WARNING: handoff_state_kind inferred as '{handoff_state_kind}' "
             f"from legacy metadata (source='{provenance_source}'). "
@@ -1296,7 +1543,10 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
     progress_tail: list[dict[str, Any]] = []
     run_t0 = time.perf_counter()
     wall_hit = False
-    replay_mode = _resolve_replay_continuation_mode(str(cfg.replay_continuation_mode))
+    contract_mode = None if contract is None else str(contract.get("continuation_mode", "legacy"))
+    replay_mode = _resolve_replay_continuation_mode(
+        cfg.replay_continuation_mode if cfg.replay_continuation_mode is not None else contract_mode
+    )
     incoming_optimizer_memory = None
     incoming_generator_metadata = None
     incoming_motif_library = None
@@ -1543,8 +1793,13 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
         "replay_contract": {
             "contract_version": int(REPLAY_CONTRACT_VERSION),
             "continuation_mode": str(replay_mode),
-            "replay_block_source": "adapt_vqe.operators",
-            "seed_source": "adapt_vqe.optimal_point",
+            "generator_family": {
+                "requested": str(family_info.get("requested")),
+                "resolved": str(family_info.get("resolved")),
+                "resolution_source": str(family_info.get("resolution_source", "continuation.replay_contract")),
+                "fallback_family": family_info.get("fallback_family"),
+                "fallback_used": bool(family_info.get("fallback_used", False)),
+            },
             "seed_policy_requested": str(cfg.replay_seed_policy),
             "seed_policy_resolved": str(resolved_seed_policy),
             "handoff_state_kind": str(handoff_state_kind),
@@ -1553,6 +1808,8 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
             "reps": int(cfg.reps),
             "derived_num_parameters_formula": "adapt_depth * reps",
             "derived_num_parameters": int(ansatz.num_parameters),
+            "replay_block_source": "adapt_vqe.operators",
+            "seed_source": "adapt_vqe.optimal_point",
         },
         "seed_baseline": {
             "theta_policy": str(resolved_seed_policy),
@@ -1725,9 +1982,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--replay-continuation-mode",
         type=str,
-        default="legacy",
+        default=None,
         choices=["legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
-        help="Replay continuation mode (default: legacy). phase1_v1 is staged replay; phase2_v1 adds memory reuse/refresh; phase3_v1 adds generator/motif/symmetry telemetry.",
+        help=(
+            "Replay continuation mode. If omitted, staged-continuation replay contract value is used when present, "
+            "otherwise legacy is used. phase1_v1 is staged replay; phase2_v1 adds memory reuse/refresh; "
+            "phase3_v1 adds generator/motif/symmetry telemetry."
+        ),
     )
     p.add_argument(
         "--phase3-symmetry-mitigation-mode",

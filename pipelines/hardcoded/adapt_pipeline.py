@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -1280,9 +1281,9 @@ def _make_reduced_objective(
 
 
 def _resolve_adapt_continuation_mode(*, problem: str, requested_mode: str | None) -> str:
-    mode_raw = "legacy" if requested_mode is None else str(requested_mode).strip().lower()
+    mode_raw = "phase3_v1" if requested_mode is None else str(requested_mode).strip().lower()
     if mode_raw == "":
-        return "legacy"
+        return "phase3_v1"
     if mode_raw not in {"legacy", "phase1_v1", "phase2_v1", "phase3_v1"}:
         raise ValueError("adapt_continuation_mode must be one of {'legacy','phase1_v1','phase2_v1','phase3_v1'}.")
     return str(mode_raw)
@@ -1530,6 +1531,7 @@ def _run_hardcoded_adapt_vqe(
     paop_normalization: str = "none",
     disable_hh_seed: bool = False,
     psi_ref_override: np.ndarray | None = None,
+    adapt_ref_json: Path | None = None,
     adapt_gradient_parity_check: bool = False,
     adapt_state_backend: str = "compiled",
     adapt_reopt_policy: str = "append_only",
@@ -1538,7 +1540,7 @@ def _run_hardcoded_adapt_vqe(
     adapt_full_refit_every: int = 0,
     adapt_final_full_refit: bool = True,
     exact_gs_override: float | None = None,
-    adapt_continuation_mode: str | None = "legacy",
+    adapt_continuation_mode: str | None = "phase3_v1",
     phase1_lambda_F: float = 1.0,
     phase1_lambda_compile: float = 0.05,
     phase1_lambda_measure: float = 0.02,
@@ -1674,6 +1676,83 @@ def _run_hardcoded_adapt_vqe(
     }
     t0 = time.perf_counter()
     hf_bits = "N/A"
+    if adapt_ref_json is not None and psi_ref_override is not None:
+        raise ValueError("Provide at most one of adapt_ref_json or psi_ref_override.")
+    adapt_ref_import: dict[str, Any] | None = None
+    adapt_ref_meta: Mapping[str, Any] | None = None
+    if adapt_ref_json is not None:
+        nq_total_expected = (
+            int(2 * int(num_sites) + int(num_sites) * int(boson_qubits_per_site(int(n_ph_max), str(boson_encoding))))
+            if problem_key == "hh"
+            else int(2 * int(num_sites))
+        )
+        psi_ref_override, adapt_ref_meta = _load_adapt_initial_state(
+            Path(adapt_ref_json),
+            int(nq_total_expected),
+        )
+        adapt_ref_vqe = adapt_ref_meta.get("adapt_vqe", {})
+        if isinstance(adapt_ref_vqe, Mapping):
+            ref_depth_raw = adapt_ref_vqe.get("ansatz_depth")
+            try:
+                ref_depth_val = int(ref_depth_raw)
+                if ref_depth_val >= 0:
+                    adapt_ref_base_depth = int(ref_depth_val)
+            except (TypeError, ValueError):
+                pass
+        adapt_ref_import = {
+            "path": str(Path(adapt_ref_json)),
+            "initial_state_source": adapt_ref_meta.get("initial_state_source"),
+            "settings": adapt_ref_meta.get("settings", {}),
+            "adapt_vqe": adapt_ref_meta.get("adapt_vqe", {}),
+            "adapt_ref_base_depth": int(adapt_ref_base_depth),
+        }
+        _ai_log(
+            "hardcoded_adapt_ref_json_loaded",
+            path=str(Path(adapt_ref_json)),
+            initial_state_source=adapt_ref_meta.get("initial_state_source"),
+            adapt_ref_base_depth=int(adapt_ref_base_depth),
+        )
+        if exact_gs_override is None:
+            args_like = SimpleNamespace(
+                L=int(num_sites),
+                problem=str(problem_key),
+                ordering=str(ordering),
+                boundary=str(boundary),
+                t=float(t),
+                u=float(u),
+                dv=float(dv),
+                omega0=float(omega0),
+                g_ep=float(g_ep),
+                n_ph_max=int(n_ph_max),
+                boson_encoding=str(boson_encoding),
+            )
+            exact_from_ref, exact_energy_source, exact_energy_reuse_mismatches = _resolve_exact_energy_override_from_adapt_ref(
+                adapt_ref_meta=adapt_ref_meta,
+                args=args_like,
+                problem=str(problem_key),
+                continuation_mode=str(continuation_mode),
+            )
+            if exact_from_ref is not None:
+                exact_gs_override = float(exact_from_ref)
+            adapt_ref_import["exact_energy_reused"] = bool(exact_energy_source == "adapt_ref_json")
+            adapt_ref_import["exact_energy_reuse_mismatches"] = list(exact_energy_reuse_mismatches)
+            if exact_energy_source == "adapt_ref_json":
+                adapt_ref_import["reused_exact_energy"] = float(exact_gs_override)
+                _ai_log(
+                    "hardcoded_adapt_exact_energy_reused",
+                    path=str(Path(adapt_ref_json)),
+                    exact_energy=float(exact_gs_override),
+                )
+            elif (
+                problem_key == "hh"
+                and str(continuation_mode).strip().lower() in _HH_STAGED_CONTINUATION_MODES
+            ):
+                _ai_log(
+                    "hardcoded_adapt_exact_energy_reuse_skipped",
+                    path=str(Path(adapt_ref_json)),
+                    mismatch_count=int(len(exact_energy_reuse_mismatches)),
+                    has_candidate=bool(_resolve_exact_energy_from_payload(adapt_ref_meta or {})),
+                )
     _ai_log(
         "hardcoded_adapt_vqe_start",
         L=int(num_sites),
@@ -1719,6 +1798,7 @@ def _run_hardcoded_adapt_vqe(
         adapt_window_topk=int(adapt_window_topk_val),
         adapt_full_refit_every=int(adapt_full_refit_every_val),
         adapt_final_full_refit=bool(adapt_final_full_refit_val),
+        adapt_ref_json=(str(adapt_ref_json) if adapt_ref_json is not None else None),
     )
 
     num_particles = half_filled_num_particles(int(num_sites))
@@ -3724,7 +3804,8 @@ def _run_hardcoded_adapt_vqe(
                 drop_low_grad = bool(float(max_grad) < float(adapt_grad_floor))
             else:
                 drop_low_grad = True
-            if bool(drop_low_signal) and bool(drop_low_grad):
+            # HH staged policy is energy-drop first; grad floors remain diagnostic.
+            if bool(drop_low_signal):
                 drop_plateau_hits += 1
             else:
                 drop_plateau_hits = 0
@@ -4814,6 +4895,8 @@ def _run_hardcoded_adapt_vqe(
         )
     if adapt_inner_optimizer_key == "SPSA":
         payload["adapt_spsa"] = dict(adapt_spsa_params)
+    if adapt_ref_import is not None:
+        payload["adapt_ref_import"] = dict(adapt_ref_import)
 
     _ai_log(
         "hardcoded_adapt_vqe_done",
@@ -5146,7 +5229,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--g-ep", type=float, default=0.0, help="Holstein electron-phonon coupling g.")
     p.add_argument("--n-ph-max", type=int, default=1)
     p.add_argument("--boson-encoding", choices=["binary"], default="binary")
-    p.add_argument("--boundary", choices=["periodic", "open"], default="periodic")
+    p.add_argument("--boundary", choices=["periodic", "open"], default="open")
     p.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
     p.add_argument("--term-order", choices=["native", "sorted"], default="sorted")
 
@@ -5178,8 +5261,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--adapt-continuation-mode",
         choices=["legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
-        default="legacy",
-        help="Continuation mode for ADAPT. legacy is default; phase1_v1 is staged continuation; phase2_v1 adds shortlist/full scoring and batching; phase3_v1 adds generator/motif/symmetry/rescue metadata.",
+        default="phase3_v1",
+        help="Continuation mode for ADAPT. phase3_v1 is the default (phase1_v1 staged, phase2_v1 adds shortlist/full scoring and batching).",
     )
     p.add_argument("--adapt-max-depth", type=int, default=20)
     p.add_argument("--adapt-eps-grad", type=float, default=1e-4)

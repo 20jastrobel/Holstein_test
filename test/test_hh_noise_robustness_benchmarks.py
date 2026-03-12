@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import numpy as np
 import pytest
 
 from pipelines.exact_bench.hh_noise_robustness_seq_report import (
@@ -10,13 +13,18 @@ from pipelines.exact_bench.hh_noise_robustness_seq_report import (
     _compute_time_dynamics_proxy_cost,
     _disabled_hardcoded_superset_meta,
     _enforce_defaults_and_minimums,
+    _layout_lock_mode_token,
     _noise_config_caption,
     _noise_style_legend_lines,
     _normalize_display_string_list,
+    _paired_anchor_summary_rows,
     _parse_noisy_methods_csv,
+    _run_noisy_method_trajectory,
+    _run_paired_anchor_method_trajectory_set,
     _validate_pool_b_strict_composition,
     parse_args,
 )
+from pipelines.exact_bench.noise_snapshot import freeze_backend_snapshot, write_calibration_snapshot
 
 
 def test_parse_args_noisy_benchmark_flags() -> None:
@@ -79,6 +87,34 @@ def test_parse_args_disable_time_dynamics_flag() -> None:
 
 
 
+def test_parse_args_paired_anchor_comparison_flag() -> None:
+    args = parse_args(["--paired-anchor-comparison"])
+    assert bool(args.paired_anchor_comparison) is True
+
+
+def test_parse_args_runtime_twirling_flags() -> None:
+    args = parse_args(
+        [
+            "--runtime-enable-gate-twirling",
+            "--runtime-enable-measure-twirling",
+            "--runtime-twirling-num-randomizations",
+            "16",
+            "--runtime-twirling-strategy",
+            "active",
+        ]
+    )
+    assert bool(args.runtime_enable_gate_twirling) is True
+    assert bool(args.runtime_enable_measure_twirling) is True
+    assert int(args.runtime_twirling_num_randomizations) == 16
+    assert str(args.runtime_twirling_strategy) == "active"
+
+
+def test_parse_args_runtime_layer_noise_model_json_flag() -> None:
+    args = parse_args(["--runtime-layer-noise-model-json", "artifacts/json/layer_noise_model.json"])
+    assert str(args.runtime_layer_noise_model_json) == "artifacts/json/layer_noise_model.json"
+
+
+
 def test_hh_robustness_defaults_to_spsa_methods() -> None:
     args = _enforce_defaults_and_minimums(parse_args([]))
     assert str(args.warm_method) == "SPSA"
@@ -94,9 +130,26 @@ def test_hh_robustness_rejects_non_spsa_methods_at_parse_time() -> None:
 
 
 def test_mitigation_schema_defaults_and_caption() -> None:
-    mit = _build_mitigation_config(mitigation="none", zne_scales=None, dd_sequence=None)
+    mit = _build_mitigation_config(
+        mitigation="none",
+        zne_scales=None,
+        dd_sequence=None,
+        layer_noise_model_json=None,
+    )
+    layer_noise_mit = _build_mitigation_config(
+        mitigation="zne",
+        zne_scales="1.0,2.0",
+        dd_sequence=None,
+        layer_noise_model_json="artifacts/json/layer_noise_model.json",
+    )
     sym = _build_symmetry_mitigation_config(mode="postselect_diag_v1", L=2, ordering="blocked")
     assert mit == {"mode": "none", "zne_scales": [], "dd_sequence": None}
+    assert layer_noise_mit == {
+        "mode": "zne",
+        "zne_scales": [1.0, 2.0],
+        "dd_sequence": None,
+        "layer_noise_model_json": "artifacts/json/layer_noise_model.json",
+    }
     assert sym == {
         "mode": "postselect_diag_v1",
         "num_sites": 2,
@@ -111,11 +164,18 @@ def test_mitigation_schema_defaults_and_caption() -> None:
             "oracle_repeats": 4,
             "oracle_aggregate": "mean",
             "mitigation_config": mit,
+            "runtime_twirling_config": {
+                "enable_gates": True,
+                "enable_measure": False,
+                "num_randomizations": 8,
+                "strategy": "active",
+            },
             "symmetry_mitigation_config": sym,
         },
         "shots",
     )
     assert "mitigation=none" in caption
+    assert "runtime_twirling={'enable_gates': True" in caption
     assert "symmetry=postselect_diag_v1" in caption
 
 
@@ -200,6 +260,105 @@ def test_suzuki_and_cfqm_proxy_cost_sanity() -> None:
         assert int(rec["depth_proxy_total"]) == int(rec["pauli_rot_count_total"])
 
 
+def _generic_backend_2q():
+    from qiskit.providers.fake_provider import GenericBackendV2
+
+    return GenericBackendV2(
+        2,
+        basis_gates=["id", "rz", "sx", "x", "cx", "measure", "delay", "reset"],
+        coupling_map=[[0, 1], [1, 0]],
+        dt=2.2222222222222221e-10,
+        seed=7,
+        noise_info=True,
+    )
+
+
+
+def test_layout_lock_mode_token_shares_patch_replay_family() -> None:
+    shared_token = _layout_lock_mode_token("patch_snapshot")
+    assert _layout_lock_mode_token("backend_scheduled") == shared_token
+    assert _layout_lock_mode_token("runtime") == shared_token
+    assert _layout_lock_mode_token("qpu_raw") == shared_token
+    assert _layout_lock_mode_token("qpu_suppressed") == shared_token
+
+
+
+def test_patch_snapshot_replay_is_executable_through_noisy_method_trajectory(tmp_path: Path) -> None:
+    pytest.importorskip("qiskit_aer")
+
+    backend = _generic_backend_2q()
+    snapshot = freeze_backend_snapshot(backend)
+    snapshot_path = tmp_path / "patch_replay_snapshot.json"
+    write_calibration_snapshot(snapshot_path, snapshot)
+
+    common_kwargs = {
+        "L": 1,
+        "ordering": "blocked",
+        "psi_seed": np.asarray([1.0, 0.0, 0.0, 0.0], dtype=complex),
+        "ordered_labels_exyz": ["zz"],
+        "static_coeff_map_exyz": {"zz": 0.25 + 0.0j},
+        "t_final": 0.2,
+        "num_times": 1,
+        "trotter_steps": 1,
+        "drive_profile": None,
+        "shots": 64,
+        "seed": 21,
+        "oracle_repeats": 1,
+        "oracle_aggregate": "mean",
+        "mitigation_config": {"mode": "none", "zne_scales": [], "dd_sequence": None},
+        "runtime_twirling_config": {
+            "enable_gates": False,
+            "enable_measure": False,
+            "num_randomizations": None,
+            "strategy": None,
+        },
+        "symmetry_mitigation_config": {
+            "mode": "off",
+            "num_sites": 1,
+            "ordering": "blocked",
+            "sector_n_up": 1,
+            "sector_n_dn": 0,
+        },
+        "backend_name": None,
+        "use_fake_backend": False,
+        "backend_profile": "frozen_snapshot_json",
+        "aer_noise_kind": "scheduled",
+        "schedule_policy": "asap",
+        "noise_snapshot_json": str(snapshot_path),
+        "fixed_physical_patch": None,
+        "allow_noisy_fallback": False,
+        "omp_shm_workaround": True,
+        "layout_lock_key": "bench_patch_replay_shared",
+        "method": "suzuki2",
+        "benchmark_active_coeff_tol": 1e-12,
+        "cfqm_coeff_drop_abs_tol": 0.0,
+    }
+
+    captured = _run_noisy_method_trajectory(
+        noise_mode="backend_scheduled",
+        layout_policy="auto_then_lock",
+        **common_kwargs,
+    )
+    replayed = _run_noisy_method_trajectory(
+        noise_mode="patch_snapshot",
+        layout_policy="frozen_layout",
+        **common_kwargs,
+    )
+
+    captured_details = dict(captured.get("backend_info", {}).get("details", {}))
+    replayed_details = dict(replayed.get("backend_info", {}).get("details", {}))
+
+    assert bool(replayed.get("success", False)) is True
+    assert captured_details.get("provenance_summary", {}).get("classification") == "local_snapshot_replay"
+    assert replayed_details.get("resolved_noise_spec", {}).get("noise_kind") == "patch_snapshot"
+    assert replayed_details.get("provenance_summary", {}).get("classification") == "local_patch_frozen_replay"
+    assert replayed_details.get("snapshot_hash") == snapshot.snapshot_hash
+    assert replayed_details.get("used_physical_qubits") == captured_details.get("used_physical_qubits")
+    assert replayed_details.get("used_physical_edges") == captured_details.get("used_physical_edges")
+    assert replayed_details.get("layout_hash") == captured_details.get("layout_hash")
+
+
+
 def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
     dyn_noisy = {
         "profiles": {
@@ -212,6 +371,7 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
                                 "backend_info": {
                                     "details": {
                                         "source_kind": "fake_snapshot",
+                                        "provenance_summary": {"classification": "local_generic_aer_execution"},
                                         "snapshot_hash": "snap_a",
                                         "layout_hash": "layout_a",
                                         "omitted_channels": ["crosstalk"],
@@ -250,6 +410,7 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
                                 "backend_info": {
                                     "details": {
                                         "source_kind": "fake_snapshot",
+                                        "provenance_summary": {"classification": "local_snapshot_replay"},
                                         "snapshot_hash": "snap_b",
                                         "layout_hash": "layout_b",
                                         "omitted_channels": ["crosstalk"],
@@ -297,8 +458,14 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
             "mode",
             "benchmark_cell_id",
             "source_kind",
+            "provenance_classification",
             "snapshot_hash",
             "layout_hash",
+            "transpile_hash",
+            "circuit_structure_hash",
+            "layout_anchor_source",
+            "runtime_execution_bundle",
+            "fixed_couplers_status",
             "omitted_channels",
             "term_exp_count_total",
             "pauli_rot_count_total",
@@ -316,6 +483,8 @@ def test_collect_noisy_benchmark_rows_schema_and_values() -> None:
             "max_abs_delta_over_stderr",
             "mean_abs_delta_over_stderr",
         }
+    classes = {str(row["provenance_classification"]) for row in rows}
+    assert classes == {"local_generic_aer_execution", "local_snapshot_replay"}
 
 
 def test_disabled_hardcoded_superset_metadata_and_summary_shape() -> None:
@@ -411,3 +580,284 @@ def test_noise_style_legend_semantics_tokens_present() -> None:
     text = "\n".join(_noise_style_legend_lines())
     assert "Δ(noisy-ideal)" in text
     assert "noiseless (final-seed Suzuki-2)" in text
+
+
+
+def _paired_mode_result(
+    *,
+    mode: str,
+    mitigation_mode: str | None = None,
+    runtime_twirling: dict[str, object] | None = None,
+    anchor_source: str = "persisted_lock",
+) -> dict[str, object]:
+    twirling_cfg = dict(runtime_twirling or {})
+    runtime_bundle = None
+    executor = "aer"
+    provenance = "local_snapshot_replay"
+    if mode == "qpu_raw":
+        executor = "runtime_qpu"
+        provenance = "runtime_submitted_raw"
+        runtime_bundle = {
+            "requested_noise_mode": "qpu_raw",
+            "resolved_noise_kind": "qpu_raw",
+            "mitigation_bundle": "none",
+            "mitigation_mode": "none",
+            "twirling_enable_gates": False,
+            "twirling_enable_measure": False,
+            "twirling_num_randomizations": None,
+            "twirling_strategy": None,
+            "trex_like_measure_suppression": False,
+            "suppression_components": [],
+        }
+    elif mode == "qpu_suppressed":
+        executor = "runtime_qpu"
+        provenance = "runtime_submitted_suppressed"
+        suppression_components: list[str] = []
+        if str(mitigation_mode) == "readout":
+            suppression_components.append("measure_mitigation")
+        if bool(twirling_cfg.get("enable_gates", False)):
+            suppression_components.append("gate_twirling")
+        if bool(twirling_cfg.get("enable_measure", False)):
+            suppression_components.append("measure_twirling")
+            if str(mitigation_mode) == "readout":
+                suppression_components.append("trex_like_readout")
+        runtime_bundle = {
+            "requested_noise_mode": "qpu_suppressed",
+            "resolved_noise_kind": "qpu_suppressed",
+            "mitigation_bundle": "runtime_suppressed",
+            "mitigation_mode": str(mitigation_mode),
+            "twirling_enable_gates": bool(twirling_cfg.get("enable_gates", False)),
+            "twirling_enable_measure": bool(twirling_cfg.get("enable_measure", False)),
+            "twirling_num_randomizations": twirling_cfg.get("num_randomizations", None),
+            "twirling_strategy": twirling_cfg.get("strategy", None),
+            "trex_like_measure_suppression": bool(
+                twirling_cfg.get("enable_measure", False) and str(mitigation_mode) == "readout"
+            ),
+            "suppression_components": suppression_components,
+        }
+    return {
+        "success": True,
+        "noise_mode": str(mode),
+        "trajectory": [
+            {
+                "time": 0.0,
+                "energy_total_noisy": 0.1,
+                "energy_total_delta_noisy_minus_ideal": 0.01,
+            }
+        ],
+        "backend_info": {
+            "backend_name": "ibm_fake_runtime",
+            "details": {
+                "resolved_noise_spec": {"executor": executor, "noise_kind": str(mode)},
+                "layout_hash": "layout:shared",
+                "transpile_hash": "tx:shared",
+                "snapshot_hash": "snap:shared",
+                "used_physical_qubits": [0, 1],
+                "used_physical_edges": [[0, 1]],
+                "circuit_structure_hash": "cstruct:shared",
+                "layout_anchor_source": anchor_source,
+                "runtime_execution_bundle": runtime_bundle,
+                "provenance_summary": {"classification": provenance},
+                "fixed_couplers_status": {"requested": False, "enforced": False, "verified": False},
+            },
+        },
+    }
+
+
+
+def test_run_paired_anchor_method_trajectory_set_reuses_same_lock_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mode_calls: list[dict[str, object]] = []
+
+    def _fake_run_noisy_mode_isolated(*, kwargs: dict[str, object], timeout_s: int) -> dict[str, object]:
+        mode_calls.append({"kwargs": kwargs, "timeout_s": timeout_s})
+        mode = str(kwargs["noise_mode"])
+        anchor_source = "fresh_auto_then_lock" if mode == "backend_scheduled" else "persisted_lock"
+        mitigation_mode = str(dict(kwargs["mitigation_config"]).get("mode"))
+        return _paired_mode_result(
+            mode=mode,
+            mitigation_mode=mitigation_mode,
+            runtime_twirling=dict(kwargs.get("runtime_twirling_config", {})),
+            anchor_source=anchor_source,
+        )
+
+    monkeypatch.setattr(
+        "pipelines.exact_bench.hh_noise_robustness_seq_report._run_noisy_mode_isolated",
+        _fake_run_noisy_mode_isolated,
+    )
+
+    payload = _run_paired_anchor_method_trajectory_set(
+        L=1,
+        ordering="blocked",
+        psi_seed=np.asarray([1.0, 0.0], dtype=complex),
+        ordered_labels_exyz=["z"],
+        static_coeff_map_exyz={"z": 0.5 + 0.0j},
+        t_final=0.2,
+        num_times=2,
+        trotter_steps=1,
+        drive_profile=None,
+        shots=64,
+        seed=7,
+        oracle_repeats=1,
+        oracle_aggregate="mean",
+        mitigation_config={"mode": "readout", "zne_scales": [], "dd_sequence": None},
+        runtime_twirling_config={
+            "enable_gates": True,
+            "enable_measure": False,
+            "num_randomizations": 16,
+            "strategy": "active",
+        },
+        symmetry_mitigation_config={"mode": "off"},
+        backend_name="ibm_fake_runtime",
+        use_fake_backend=False,
+        backend_profile="live_backend",
+        aer_noise_kind="scheduled",
+        schedule_policy="asap",
+        layout_policy="auto_then_lock",
+        noise_snapshot_json=None,
+        fixed_physical_patch=None,
+        allow_noisy_fallback=False,
+        omp_shm_workaround=True,
+        layout_lock_key="paired:shared",
+        method="cfqm4",
+        benchmark_active_coeff_tol=1e-12,
+        cfqm_coeff_drop_abs_tol=0.0,
+        noisy_mode_timeout_s=120,
+        profile_name="static",
+    )
+
+    assert payload["local_mode"] == "backend_scheduled"
+    assert [row["label"] for row in payload["rows"]] == [
+        "local_patch_anchor",
+        "runtime_raw",
+        "runtime_suppressed",
+    ]
+    assert {str(rec["kwargs"]["layout_lock_key"]) for rec in mode_calls} == {"paired:shared"}
+    assert {str(rec["kwargs"]["noise_mode"]) for rec in mode_calls} == {
+        "backend_scheduled",
+        "qpu_raw",
+        "qpu_suppressed",
+    }
+    raw_row = next(row for row in payload["rows"] if row["label"] == "runtime_raw")
+    suppressed_row = next(row for row in payload["rows"] if row["label"] == "runtime_suppressed")
+    assert raw_row["runtime_execution_bundle"]["mitigation_mode"] == "none"
+    assert suppressed_row["runtime_execution_bundle"]["mitigation_mode"] == "readout"
+    assert payload["runtime_twirling_config"] == {
+        "enable_gates": True,
+        "enable_measure": False,
+        "num_randomizations": 16,
+        "strategy": "active",
+    }
+    suppressed_call = next(rec for rec in mode_calls if str(rec["kwargs"]["noise_mode"]) == "qpu_suppressed")
+    assert suppressed_call["kwargs"]["runtime_twirling_config"] == payload["runtime_twirling_config"]
+    assert suppressed_row["runtime_execution_bundle"]["twirling_enable_gates"] is True
+    assert suppressed_row["runtime_execution_bundle"]["twirling_num_randomizations"] == 16
+    assert suppressed_row["runtime_execution_bundle"]["suppression_components"] == [
+        "measure_mitigation",
+        "gate_twirling",
+    ]
+    cmp = payload["comparability"]
+    assert cmp["same_lock_context"] is True
+    assert cmp["local_vs_runtime_same_anchor_evidence_status"] == "fully_evidenced"
+    assert cmp["runtime_pair_same_submitted_evidence_status"] == "fully_evidenced"
+    assert cmp["runtime_pair_differs_only_in_execution_bundle"] is True
+
+
+
+def test_run_paired_anchor_method_trajectory_set_fails_explicitly_for_missing_frozen_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_run_noisy_mode_isolated(*, kwargs: dict[str, object], timeout_s: int) -> dict[str, object]:
+        if str(kwargs["noise_mode"]) == "patch_snapshot":
+            return {
+                "success": False,
+                "reason": "worker_exception",
+                "error": (
+                    "RuntimeError: layout_policy='frozen_layout' requires an existing persisted layout lock "
+                    "or replay artifact; no prior locked layout was found for this backend/snapshot/key."
+                ),
+            }
+        return _paired_mode_result(mode=str(kwargs["noise_mode"]), mitigation_mode="readout")
+
+    monkeypatch.setattr(
+        "pipelines.exact_bench.hh_noise_robustness_seq_report._run_noisy_mode_isolated",
+        _fake_run_noisy_mode_isolated,
+    )
+
+    with pytest.raises(RuntimeError, match="layout_policy='frozen_layout' requires an existing persisted layout lock"):
+        _run_paired_anchor_method_trajectory_set(
+            L=1,
+            ordering="blocked",
+            psi_seed=np.asarray([1.0, 0.0], dtype=complex),
+            ordered_labels_exyz=["z"],
+            static_coeff_map_exyz={"z": 0.5 + 0.0j},
+            t_final=0.2,
+            num_times=2,
+            trotter_steps=1,
+            drive_profile=None,
+            shots=64,
+            seed=7,
+            oracle_repeats=1,
+            oracle_aggregate="mean",
+            mitigation_config={"mode": "readout", "zne_scales": [], "dd_sequence": None},
+            runtime_twirling_config={
+                "enable_gates": False,
+                "enable_measure": False,
+                "num_randomizations": None,
+                "strategy": None,
+            },
+            symmetry_mitigation_config={"mode": "off"},
+            backend_name="ibm_fake_runtime",
+            use_fake_backend=False,
+            backend_profile="frozen_snapshot_json",
+            aer_noise_kind="scheduled",
+            schedule_policy="asap",
+            layout_policy="frozen_layout",
+            noise_snapshot_json="artifacts/json/frozen_snapshot.json",
+            fixed_physical_patch=None,
+            allow_noisy_fallback=False,
+            omp_shm_workaround=True,
+            layout_lock_key="paired:frozen",
+            method="cfqm4",
+            benchmark_active_coeff_tol=1e-12,
+            cfqm_coeff_drop_abs_tol=0.0,
+            noisy_mode_timeout_s=120,
+            profile_name="static",
+        )
+
+
+
+def test_paired_anchor_summary_rows_encode_evidence_statuses() -> None:
+    rows = _paired_anchor_summary_rows(
+        {
+            "profiles": {
+                "static": {
+                    "methods": {
+                        "cfqm4": {
+                            "executed": True,
+                            "local_mode": "backend_scheduled",
+                            "reason": "",
+                            "comparability": {
+                                "local_vs_runtime_same_anchor_evidence_status": "fully_evidenced",
+                                "runtime_pair_same_submitted_evidence_status": "fully_evidenced",
+                                "exact_anchor_identity_evidence_status": "fully_evidenced",
+                                "runtime_pair_differs_only_in_execution_bundle": True,
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    )
+    assert rows == [[
+        "static",
+        "cfqm4",
+        "backend_scheduled",
+        "True",
+        "fully_evidenced",
+        "fully_evidenced",
+        "fully_evidenced",
+        "True",
+        "",
+    ]]

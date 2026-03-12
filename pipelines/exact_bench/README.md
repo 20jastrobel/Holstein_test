@@ -1,36 +1,33 @@
 # Exact-Metrics Benchmark
 
-Independent exact-diagonalization (ED) references and accuracy validation tools
-for benchmarking the hardcoded quantum algorithms.
+This folder hosts ED-based benchmarking and validation helpers used with the hardcoded and noise-validation toolchain.
 
-## Key properties
+## Current purpose
 
-- **No Qiskit dependency** — pure numpy / scipy
-- **Accuracy oracle** for VQE, Trotter, and future QPE results
-- Produces reference eigenvalues, sector-filtered ground states, fidelity benchmarks
+- Exact references and sweep helpers for cross-checking VQE/ADAPT + time-propagation workflows.
+- CFQM/Suzuki benchmark suites for cost-vs-accuracy analysis.
+- Noisy and hardware-facing validation utilities with shared oracle logic.
 
-## Current contents
+## Key modules
 
 | File | Purpose |
 |------|---------|
-| `cross_check_suite.py` | Exact benchmark matrix across ansatz/VQE modes with JSON/PDF outputs |
+| `cross_check_suite.py` | Exact benchmark matrix across ansatz/VQE modes with JSON + PDF outputs |
 | `cfqm_vs_suzuki_efficiency_suite.py` | Error-vs-cost CFQM/Suzuki benchmarking suite |
-| `cfqm_vs_suzuki_qproc_proxy_benchmark.py` | Processor-proxy benchmark and summary artifacts |
-| `hh_noise_hardware_validation.py` | HH noisy/hardware-facing validation runner |
-| `hh_noise_robustness_seq_report.py` | Sequential HH robustness report workflow |
-| `hh_noise_model_repo_guide.py` | Code/docs-derived HH noise-model guide generator |
-| `benchmark_metrics_proxy.py` | Shared benchmark proxy metric utilities |
-| `statevector_kernels.py` | Shared statevector kernel helpers for exact-bench runners |
-| `noise_oracle_runtime.py` | Runtime/noise oracle support helpers |
-
-Campaign-specific runners that are no longer part of the active benchmark
-surface now live under `archive/exact_bench_campaigns/`.
+| `cfqm_vs_suzuki_qproc_proxy_benchmark.py` | Processor-proxy benchmark runner and summary artifacts |
+| `hh_noise_hardware_validation.py` | HH noisy/hardware validation runner (ideal, shots, Aer, runtime modes) |
+| `hh_noise_robustness_seq_report.py` | Sequential HH robustness + final/trajectory report workflow |
+| `hh_noise_model_repo_guide.py` | Code/docs guide generator for the noise-model stack |
+| `benchmark_metrics_proxy.py` | Shared benchmark metric helpers |
+| `statevector_kernels.py` | Shared statevector kernels used by exact-bench scripts |
+| `noise_oracle_runtime.py` | Noise-oracle helper runtime for validation suites |
+| `noise_aer_builders.py` | Noisy Aer circuit/sampler construction helpers |
+| `noise_model_spec.py` | Noise model/spec metadata definitions |
+| `noise_snapshot.py` | Structured snapshotting helpers for noise diagnostics |
 
 ## Relationship to `test/`
 
-- `test/` verifies **implementation correctness** (unit + integration)
-- `exact_bench/` produces **reference data** and **physics-level accuracy reports**
+- `test/` validates implementation correctness (unit + integration).
+- `exact_bench/` produces reference data, diagnostics, and reproducibility artifacts for physics-level runs.
 
-Example:
-- `test/test_ed_crosscheck.py` → "does the ED module compute correct eigenvalues?"
-- `exact_bench/ed_reference_sweep.py` → "here are the reference eigenvalues for L=2..6, used to gate VQE accuracy"
+Example: `test/test_ed_crosscheck.py` checks ED numerics; the exact-bench scripts are where you run the broader benchmark workflows.

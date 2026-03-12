@@ -12,6 +12,17 @@ Editing contract (keep stable):
 This file is the executable runbook layer (commands + operational contracts).
 Active contract surface: `AGENTS.md` and this run guide.
 
+## Active checkout status (2026-03-09)
+
+- **Active production surface in this checkout**
+  - `pipelines/hardcoded/hubbard_pipeline.py` (single-run hardcoded VQE/propagation)
+  - `pipelines/hardcoded/adapt_pipeline.py` (ADAPT-VQE)
+  - `pipelines/shell/run_drive_accurate.sh` (canonical shorthand `run L` contract)
+  - `pipelines/exact_bench/cross_check_suite.py` and the `pipelines/exact_bench/` benchmarking/validation tools
+- `archive/` compare/Qiskit runners are not present in this checkout.
+- Sections labeled **Historical** / **Historical (not runnable)** are kept for provenance only.
+- Parser defaults used by the active scripts are `--boundary open` and `--ordering blocked` unless explicitly overridden.
+
 ## HH + drive production prologue (2026-03-02)
 
 ### Scope (current reality)
@@ -68,7 +79,7 @@ Scoped to **HH + drive-enabled** with **L=3**, the last successful runs are:
 - The parameter set that produced the expected convergence behavior is **Run A**, not the depth-15 proxy.
 - **Current best observed HH L=3 drive-start convergence is** `ΔE_abs ≈ 6.5e-03`.
 - **Default Hard Gate (final conventional VQE):** `ΔE_abs < 1e-4`.
-- `1e-7` is **optional strict mode** for the shorthand script, not the default hard stop.
+- In this checkout, `run_drive_accurate.sh` enforces `<1e-7` unconditionally.
 
 ---
 
@@ -90,25 +101,23 @@ Define workflow-level energy gates for HH warm-start → ADAPT → final VQE:
 Notes:
 - ADAPT internal stopping remains controlled by existing knobs (`adapt-eps-grad`, `adapt-eps-energy`, `adapt-max-depth`, `adapt-maxiter`) and is separate from `ecut_*`.
 - This is a runbook convention. If you script this, enforce `ecut_1/ecut_2` as post-stage checks in the orchestration layer; defaults above apply unless overridden by experiment policy.
-- `pipelines/shell/run_drive_accurate.sh` and HH scaling preset scripts keep their own documented gates unless explicitly overridden in wrappers.
+- `pipelines/shell/run_drive_accurate.sh` is the active shorthand runner contract in this checkout. It enforces a fixed `1e-7` gate in code with no strict/loose runtime switch.
 
 ### Gate semantics by context
 
-| Context | Gate | Purpose |
+| Context | Gate | Basis |
 |---|---|---|
-| Final conventional VQE (default hard gate) | `ΔE_abs < 1e-4` | Default agent pass/fail gate |
-| Shorthand runner strict mode (`pipelines/shell/run_drive_accurate.sh`) | `ΔE_abs < 1e-7` | Optional strict-mode gate |
+| Final conventional VQE (agent policy) | `ΔE_abs < 1e-4` | AGENTS/run-guide default policy for this stage |
+| Active shorthand runner (`pipelines/shell/run_drive_accurate.sh`) | `ΔE_abs < 1e-7` | Current CLI behavior (hardcoded in this checkout) |
 | HH staged handoff (`ecut_1`) | `ΔE_ws <= 1e-2` | Diagnostic handoff guidance (pre-VQE) |
 | HH staged final (`ecut_2`) | `ΔE_final <= 1e-4` | Diagnostic stage target before final replay |
 | HH production pass gate (runbook) | `ΔE_abs <= 1e-2` | Practical quality indicator, not default hard stop |
 
-### Policy-vs-code conflict handling
+### Policy-vs-code note
 
-If AGENTS policy and current code/CLI behavior diverge:
-
-- `AGENTS target`: follow AGENTS contract text.
-- `Current code behavior`: document the observed CLI/code behavior.
-- `Required action: ask user before proceeding`.
+- `AGENTS target`: shorthand default hard gate `1e-4`; optional strict mode `1e-7`.
+- `Current code behavior` (as of 2026-03-09): `pipelines/shell/run_drive_accurate.sh` hardcodes `ERROR_THRESHOLD=1e-7` and exposes no strict-mode switch.
+- Guide contract rule: active command sections follow executable behavior, and this mismatch is intentionally visible here for operators.
 
 ### Terminology contract (agent-run commands)
 - When the user says **"conventional VQE"**, interpret it as the **non-ADAPT VQE** path.
@@ -125,6 +134,7 @@ For agent-run HH workflows, use this stage contract:
    start from a narrow HH physics-aligned pool and do **not** open `full_meta`
    at depth 0; treat `full_meta` only as controlled residual enrichment after
    plateau diagnosis.
+   - Canonical stage selection mode for new HH agent-directed runs is `phase3_v1` (phase1_v1 and phase2_v1 remain opt-in).
 3. ADAPT -> final VQE switch: apply an energy-drop switching criterion (see "ADAPT continuation stop policy (energy-first, mandatory for agent runs)").
 4. Final VQE replay: initialize from ADAPT state and replay with the same variational generator family ADAPT used (`--generator-family match_adapt`, fallback `full_meta`), using `vqe_reps=L` by default.
 
@@ -140,6 +150,8 @@ Pool curriculum transition note:
 CLI note:
 - `--adapt-pool full_meta` remains a supported HH pool token in current code; do
   not treat it as the canonical depth-0 target for new agent work.
+- Canonical continuation default for new HH staged runs is `--adapt-continuation-mode phase3_v1`.
+  (`phase1_v1` and `phase2_v1` are opt-in legacy/experimental follow-ons.)
 - Legacy nearest subset remains `--adapt-pool uccsd_paop_lf_full` (`uccsd_lifted + paop_lf_full`).
 
 Opt-in phase-3 follow-ons (keep defaults off unless explicitly requested):
@@ -297,7 +309,7 @@ state export plus `hubbard_pipeline.py --initial-state-source adapt_json`.
 
 Active helper: `pipelines/hardcoded/handoff_state_bundle.py`
 
-Archived example script: `archive/handoff/l4_hh_warmstart_uccsd_paop_hva_seq_probe.py`
+Historical example script: `archive/handoff/l4_hh_warmstart_uccsd_paop_hva_seq_probe.py` (not runnable in this checkout since `archive/` is absent).
 
 Key flags:
 - `--warm-auto-cutoff`
@@ -306,6 +318,9 @@ Key flags:
 - `--warm-cutoff-slope-threshold` (default `5e-4` per second)
 - `--warm-cutoff-min-elapsed-s` (default `180`)
 - `--state-export-dir`, `--state-export-prefix`
+- staged noiseless wrapper parity flags: `--warm-stop-energy`,
+  `--warm-stop-delta-abs`, `--state-export-dir`, `--state-export-prefix`,
+  `--resume-from-warm-checkpoint`, `--handoff-from-warm-checkpoint`
 
 Archived-script behavior:
 - Warm stage continuously writes `*_warm_checkpoint_state.json` whenever a new
@@ -413,7 +428,7 @@ python pipelines/hardcoded/hubbard_pipeline.py \
   --L 2 \
   --problem hubbard \
   --t 1.0 --u 4.0 --dv 0.0 \
-  --boundary periodic --ordering blocked \
+  --boundary open --ordering blocked \
   --vqe-ansatz uccsd --vqe-reps 2 --vqe-restarts 3 --vqe-maxiter 600 --vqe-seed 7 \
   --t-final 10.0 --num-times 101 --suzuki-order 2 --trotter-steps 128 \
   --initial-state-source vqe --skip-qpe \
@@ -435,17 +450,15 @@ Run from the repository root (`Holstein_test/`).
 |--------|---------|
 | `pipelines/hardcoded/hubbard_pipeline.py` | Hardcoded Hamiltonian, hardcoded VQE, hardcoded Trotter dynamics, optional QPE |
 | `pipelines/hardcoded/adapt_pipeline.py` | Hardcoded ADAPT-VQE (greedy operator selection, COBYLA re-opt) + Trotter dynamics |
-| `archive/qiskit_compare/qiskit_baseline.py` | Archived Qiskit Hamiltonian, Qiskit VQE, Qiskit Trotter dynamics, optional QPE |
-| `archive/qiskit_compare/compare_hc_vs_qk.py` | Archived orchestrator — runs both, compares metrics, writes comparison PDFs |
-| `archive/qiskit_compare/compare_jsons.py` | Archived standalone JSON-vs-JSON consistency checker |
-| `archive/qiskit_compare/regression_L2_L3.sh` | Archived L=2/L=3 regression harness |
-| `archive/qiskit_compare/run_qiskit_L2_L3.sh` | Archived repro runner for hardcoded layer-wise UCCSD/HVA vs shared qiskit baseline on L=2,3 |
-| `pipelines/shell/run_drive_accurate.sh` | Shorthand runner for "run L": drive-only, default hard gate `<1e-4`, optional strict mode `<1e-7`, with L-scaled heaviness |
-| `pipelines/shell/run_scaling_L2_L6.sh` | Hardcoded+drive scaling preset for L=2..6 with VQE error gate and fallback ladder |
+| `pipelines/shell/run_drive_accurate.sh` | Shorthand runner for "run L": drive-only, active hard gate `<1e-7` in this checkout, with L-scaled heaviness |
 
-> **Archive note:** Compare/Qiskit workflows are retained under `archive/qiskit_compare/` and are not part of the active hardcoded runtime lane.
-> **HH note:** `run_drive_accurate.sh` supports strict mode at `1e-7`.
-> Default agent hard gate remains `ΔE_abs < 1e-4` for final conventional VQE.
+Active historical notes:
+
+- Archive comparison workflows (`archive/qiskit_compare/*`) are not present in this checkout (verified 2026-03-09).
+- `pipelines/shell/run_scaling_L2_L6.sh` is not present in this checkout.
+
+> **Archive note:** Compare/Qiskit workflows are retained under `archive/qiskit_compare/` only for provenance and are not part of this checkout's active runtime lane.
+> **Policy-vs-code:** AGENTS default final gate is `ΔE_abs < 1e-4`, while `run_drive_accurate.sh` currently enforces `<1e-7` with no strict-mode toggle (as observed on 2026-03-09).
 
 ---
 
@@ -774,7 +787,7 @@ $$v(t) = A \cdot \sin(\omega t + \phi) \cdot \exp\!\Big(-\frac{(t - t_0)^2}{2\,\
 
 ### VQE Parameters
 
-**Single runtimes** (`hardcoded/hubbard_pipeline.py`, archived `qiskit_compare/qiskit_baseline.py`):
+**Single runtimes** (`hardcoded/hubbard_pipeline.py`; `qiskit_compare` baseline entries are archived only):
 
 | Flag | Type | Default (HC) | Default (QK) | Description |
 |------|------|-------------|-------------|-------------|
@@ -1042,8 +1055,8 @@ Defaults:
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--fidelity-subspace-energy-tol 1e-8`
 - `--term-order sorted` (`native|sorted`)
-- `--vqe-ansatz uccsd` (`uccsd|hva|hh_hva`)
-- `--vqe-method SPSA` (HH VQE is SPSA-only; legacy explicit-only Hubbard paths may still use other optimizers)
+- `--vqe-ansatz uccsd` (`uccsd|hva|hh_hva|hh_hva_tw|hh_hva_ptw`)
+- `--vqe-method SPSA` (current hardcoded default; HH runs are enforced to SPSA-only in `hubbard_pipeline.py`)
 - `--vqe-reps 2 --vqe-restarts 1 --vqe-seed 7 --vqe-maxiter 120`
 - `--qpe-eval-qubits 6 --qpe-shots 1024 --qpe-seed 11`
 - `--initial-state-source vqe`
@@ -1075,14 +1088,15 @@ Defaults:
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--initial-state-source adapt_vqe` (`adapt_vqe|exact|hf`)
 
-### Archived Qiskit baseline pipeline
+### Historical (not runnable in this checkout): Qiskit baseline
 
-> **HH scope:** The Qiskit baseline uses `FermiHubbardModel` and does not support
-> Hubbard-Holstein. Passing `--problem hh` will exit with an error message.
+This checkpoint does not include `archive/` (checked 2026-03-09), so these command examples are historical references only and are not executable here.
 
-```bash
-python archive/qiskit_compare/qiskit_baseline.py --help
-```
+- `python archive/qiskit_compare/qiskit_baseline.py --help`
+
+Historical behavior notes:
+- The historical baseline used `FermiHubbardModel`.
+- HH was not supported in that baseline (`--problem hh` would error).
 
 Defaults:
 
@@ -1098,21 +1112,21 @@ Defaults:
 
 ### Archived compare runner
 
-> **HH scope:** The compare pipeline orchestrates both the hardcoded and Qiskit
-> baselines. Since the Qiskit baseline does not support HH, passing `--problem hh`
-> to the compare pipeline will exit with an error. Run HH directly via the
-> hardcoded pipeline.
+This historical compare runner is archived and not runnable in this checkout (no
+`archive/` directory present, 2026-03-09).
 
-```bash
-python archive/qiskit_compare/compare_hc_vs_qk.py --help
-```
+- `python archive/qiskit_compare/compare_hc_vs_qk.py --help`
+
+Historical HH scope note:
+- The historical compare path coordinated the hardcoded and Qiskit baselines.
+- It used the historical HH guard that HH is not supported in the Qiskit baseline.
 
 Defaults:
 
 - `--l-values 2,3,4,5`
 - `--run-pipelines` (use `--no-run-pipelines` to reuse existing JSONs)
 - `--t 1.0 --u 4.0 --dv 0.0`
-- `--boundary periodic --ordering blocked`
+- `--boundary open --ordering blocked`
 - `--t-final 20.0 --num-times 201 --suzuki-order 2 --trotter-steps 64`
 - `--fidelity-subspace-energy-tol 1e-8`
 - `--hardcoded-vqe-ansatzes uccsd` (set `uccsd,hva` for 3-way hardcoded-vs-qiskit runs)
@@ -1137,21 +1151,16 @@ Defaults:
 bash pipelines/shell/run_drive_accurate.sh --L 4
 ```
 
-### 0b) HVA/UCCSD layer-wise L=2,3 runner (production-safe profile)
+### 0b) Historical L=2,3 shorthand profile (archived, not runnable)
+
+`archive/qiskit_compare/run_qiskit_L2_L3.sh` is not present in this checkout.
+
+Use `run_drive_accurate.sh` directly for active shorthand runs:
 
 ```bash
-bash archive/qiskit_compare/run_qiskit_L2_L3.sh --heavy
+bash pipelines/shell/run_drive_accurate.sh --L 2
+bash pipelines/shell/run_drive_accurate.sh --L 3
 ```
-
-This enforces the default shorthand contract:
-
-- drive is always enabled (never static),
-- default hard gate is enforced on final conventional VQE:
-  `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-4`,
-- optional strict mode in shorthand script:
-  `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-7`,
-- settings scale with `L` (heavier defaults for larger systems),
-- fallback attempts auto-escalate if the primary attempt misses the gate.
 
 Primary per-L presets used by the shorthand runner:
 
@@ -1184,37 +1193,13 @@ bash pipelines/shell/run_drive_accurate.sh --L 2 \
   --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding unary
 ```
 
-Scaling preset with HH (env-var driven):
-
-```bash
-PROBLEM=hh OMEGA0=1.0 G_EP=0.5 N_PH_MAX=1 BOSON_ENCODING=unary \
-  bash pipelines/shell/run_scaling_L2_L6.sh
-```
-
 ### 1) Run full compare for L=2,3,4 with locked heavy settings
 
-```bash
-python archive/qiskit_compare/compare_hc_vs_qk.py \
-  --l-values 2,3,4 \
-  --artifacts-dir artifacts \
-  --initial-state-source vqe \
-  --t 1.0 --u 4.0 --dv 0.0 --boundary periodic --ordering blocked \
-  --t-final 20.0 --num-times 401 --suzuki-order 2 --trotter-steps 128 \
-  --hardcoded-vqe-reps 2 --hardcoded-vqe-restarts 3 --hardcoded-vqe-maxiter 1800 --hardcoded-vqe-seed 7 \
-  --qiskit-vqe-reps 2 --qiskit-vqe-restarts 3 --qiskit-vqe-maxiter 1800 --qiskit-vqe-seed 7 \
-  --qpe-eval-qubits 8 --qpe-shots 4096 --qpe-seed 11 \
-  --with-per-l-pdfs
-```
+This workflow is historical and not runnable in this checkout because `archive/qiskit_compare` comparison tooling is not present.
 
 ### 2) Rebuild comparison PDFs/summary from existing JSON
 
-```bash
-python archive/qiskit_compare/compare_hc_vs_qk.py \
-  --l-values 2,3,4 \
-  --artifacts-dir artifacts \
-  --no-run-pipelines \
-  --with-per-l-pdfs
-```
+This workflow is historical and not runnable in this checkout because `archive/qiskit_compare` comparison tooling is not present.
 
 ### 3) Run hardcoded pipeline only
 
@@ -1227,12 +1212,7 @@ python pipelines/hardcoded/hubbard_pipeline.py \
 
 ### 4) Run archived Qiskit baseline only
 
-```bash
-python archive/qiskit_compare/qiskit_baseline.py \
-  --L 3 --initial-state-source vqe \
-  --output-json artifacts/json/qk_hubbard_L3_static_t1.0_U4.0_S64.json \
-  --output-pdf artifacts/pdf/qk_hubbard_L3_static_t1.0_U4.0_S64.pdf
-```
+This workflow is historical and not runnable in this checkout (`archive/` is absent).
 
 ### 5) Run with time-dependent drive enabled
 
@@ -1311,7 +1291,7 @@ python pipelines/hardcoded/hubbard_pipeline.py \
 # 1) Static ADAPT-VQE ground-state preparation
 python pipelines/hardcoded/adapt_pipeline.py \
   --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding binary \
-  --t 1.0 --u 2.0 --dv 0.0 --boundary periodic --ordering blocked \
+  --t 1.0 --u 2.0 --dv 0.0 --boundary open --ordering blocked \
   --adapt-pool paop_std --adapt-max-depth 30 --adapt-eps-grad 1e-5 --adapt-maxiter 800 \
   --initial-state-source adapt_vqe --skip-pdf \
   --output-json artifacts/json/adapt_hh_L2_seed.json
@@ -1319,7 +1299,7 @@ python pipelines/hardcoded/adapt_pipeline.py \
 # 2) Drive-enabled hardcoded trajectory initialized from imported ADAPT state
 python pipelines/hardcoded/hubbard_pipeline.py \
   --L 2 --problem hh --omega0 1.0 --g-ep 0.5 --n-ph-max 1 --boson-encoding binary \
-  --t 1.0 --u 2.0 --dv 0.0 --boundary periodic --ordering blocked \
+  --t 1.0 --u 2.0 --dv 0.0 --boundary open --ordering blocked \
   --initial-state-source adapt_json \
   --adapt-input-json artifacts/json/adapt_hh_L2_seed.json \
   --enable-drive --drive-A 0.5 --drive-omega 1.0 --drive-tbar 3.0 --drive-pattern staggered \
@@ -1355,7 +1335,7 @@ Notes:
 - Replay uses ADAPT-selected generators from `adapt_vqe.operators` as the base block, repeated by `--reps`.
 - ADAPT replay input requires both `adapt_vqe.operators` and `adapt_vqe.optimal_point` with equal non-zero length.
 - This is the canonical ADAPT-family replay path: keep `--generator-family match_adapt` as the default and treat `full_meta` as fallback compatibility, not as a reason to broaden the default HH run contract.
-- Replay continuation modes remain explicit (`legacy`, `phase1_v1`, `phase2_v1`, `phase3_v1`). The follow-on runtime split behavior does **not** introduce a new replay mode.
+- Replay continuation modes remain explicit (`legacy`, `phase1_v1`, `phase2_v1`, `phase3_v1`). For canonical new HH runs, replay defaults to `phase3_v1` unless explicitly overridden. The follow-on runtime split behavior does **not** introduce a new replay mode.
 - If an opt-in runtime split admitted child labels that are not present in the resolved family pool, replay reconstructs them from `continuation.selected_generator_metadata[*].compile_metadata.serialized_terms_exyz` when that serialized metadata is present.
 - `hubbard_pipeline.py --vqe-ansatz hh_hva_*` remains a fixed-ansatz baseline path.
 
@@ -1373,11 +1353,17 @@ Wrapper contract:
 - default stage effort is resolved from the HH scaling formulas in this guide,
 - when this guide does not specify separate replay optimizer effort, the wrapper reuses the warm-stage restart/maxiter scaling for replay,
 - default replay continuation mode follows ADAPT continuation mode unless explicitly overridden,
+- warm-stage handoff is persistent and resumable: each new best warm point rewrites `<state-export-prefix>_warm_checkpoint_state.json`,
+- when `--warm-stop-energy` and/or `--warm-stop-delta-abs` is provided, the wrapper auto-stops warm HH-VQE at the requested cutoff, writes `<state-export-prefix>_warm_cutover_state.json`, and seeds ADAPT from that JSON via the `adapt_ref_json` path,
+- when warm HH-VQE finishes below the requested cutoff, the wrapper still promotes the best persisted warm bundle to `<state-export-prefix>_warm_cutover_state.json`, logs that the cutoff was not reached, and seeds ADAPT from that JSON,
+- `--resume-from-warm-checkpoint <json>` resumes warm HH-VQE from the saved warm bundle after validating HH settings/exact-energy metadata; if that checkpoint already satisfies the cutoff, the wrapper cuts over directly,
+- `--handoff-from-warm-checkpoint <json>` skips warm HH-VQE and seeds staged ADAPT directly from the saved warm bundle after the same metadata validation,
 - staged energy-error plots/tables use the replay exact-sector ground-state baseline, while fidelity remains against the seeded exact-reference trajectory,
 - diagnostics record `ecut_1` / `ecut_2` in the workflow payload instead of stopping mid-run.
 
 Primary artifacts:
 - workflow JSON/PDF: `artifacts/json/<tag>.json`, `artifacts/pdf/<tag>.pdf`
+- warm checkpoints/log: `<state-export-dir>/<state-export-prefix>_warm_checkpoint_state.json`, `<state-export-dir>/<state-export-prefix>_warm_cutover_state.json`, `artifacts/logs/<tag>.log`
 - ADAPT handoff JSON: `artifacts/json/<tag>_adapt_handoff.json`
 - replay sidecars: `artifacts/json/<tag>_replay.{json,csv}`, `artifacts/useful/L{L}/<tag>_replay.md`, `artifacts/logs/<tag>_replay.log`
 
@@ -1440,26 +1426,11 @@ For old payloads without this field, the replay runner infers provenance from `i
 
 ### 6) Compare pipeline with drive enabled
 
-```bash
-python archive/qiskit_compare/compare_hc_vs_qk.py \
-  --l-values 2,3 --run-pipelines --enable-drive \
-  --drive-A 0.5 --drive-omega 2.0 --drive-tbar 3.0 \
-  --drive-pattern dimer_bias --drive-time-sampling midpoint \
-  --t-final 10.0 --num-times 101 --trotter-steps 64 \
-  --exact-steps-multiplier 4 --skip-qpe \
-  --with-per-l-pdfs
-```
+Historical (not runnable in this checkout): archived compare runner is unavailable (`archive/qiskit_compare/` missing).
 
 ### 7) Amplitude comparison PDF (scoreboard + physics response)
 
-```bash
-python archive/qiskit_compare/compare_hc_vs_qk.py \
-  --l-values 2 --run-pipelines --enable-drive \
-  --drive-pattern dimer_bias --drive-omega 2.0 --drive-tbar 2.0 \
-  --t-final 2.0 --num-times 21 --trotter-steps 32 --skip-qpe \
-  --drive-amplitudes '0.0,0.2' \
-  --with-drive-amplitude-comparison-pdf
-```
+Historical (not runnable in this checkout): archived compare runner is unavailable (`archive/qiskit_compare/` missing).
 
 This runs 8 sub-pipeline invocations per L (2 main + 6 amplitude comparison) and generates:
 - `pdf/amp_cmp_hubbard_{tag}.pdf` — multi-page PDF with settings, scoreboard tables, drive waveform, response deltas, combined overlay, and residual-focused VQE page
@@ -1467,52 +1438,27 @@ This runs 8 sub-pipeline invocations per L (2 main + 6 amplitude comparison) and
 
 ### 8) Run the L=2/L=3 regression harness
 
-```bash
-bash archive/qiskit_compare/regression_L2_L3.sh
-```
-
-This writes `_reg` JSON/PDF outputs for L=2 and L=3, runs the compare runner, runs
-`archive/qiskit_compare/compare_jsons.py`, and ends with `REGRESSION PASS` or `REGRESSION FAIL`.
+Historical (not runnable in this checkout): `archive/qiskit_compare/regression_L2_L3.sh` is missing here.
 
 ### 9) Manual JSON-vs-JSON consistency check
 
-```bash
-python archive/qiskit_compare/compare_jsons.py \
-  --hardcoded artifacts/json/hc_hubbard_L3_static_t1.0_U4.0_S64.json \
-  --qiskit artifacts/json/qk_hubbard_L3_static_t1.0_U4.0_S64.json \
-  --metrics artifacts/json/cmp_hubbard_L3_static_t1.0_U4.0_S64_metrics.json
-```
+Historical (not runnable in this checkout): `archive/qiskit_compare/compare_jsons.py` is missing here.
 
 ### 10) Run the L=2..6 scaling preset with VQE error gate
 
 ```bash
-bash pipelines/shell/run_scaling_L2_L6.sh
+for L in 2 3 4 5 6; do
+  bash pipelines/shell/run_drive_accurate.sh --L "${L}" --artifacts-dir artifacts
+done
 ```
 
-Defaults in this runner:
+This command replaces the missing `run_scaling_L2_L6.sh` preset and uses the
+active `run_drive_accurate.sh` ladder for the same L range.
 
-- Physics: `t=1.0, u=4.0, dv=0.0, open, blocked`.
-- Drive: enabled with `A=0.5, omega=2.0, tbar=3.0, phi=0.0, pattern=staggered`.
-- Error gate: `abs(vqe.energy - ground_state.exact_energy_filtered) < 1e-2`.
-- L=2..5 budget guard: `10` hours (`L25_BUDGET_HOURS`).
-- L6 run: enabled by default (`RUN_L6=1`).
-- PDFs: skipped by default (`SKIP_PDF=1`) for production timing runs.
+Useful historical overrides from the archived preset are not supported by the
+active script in this checkout.
 
-Useful overrides:
-
-```bash
-L25_BUDGET_HOURS=10 RUN_L6=0 bash pipelines/shell/run_scaling_L2_L6.sh
-```
-
-```bash
-ERROR_THRESHOLD=5e-3 SKIP_PDF=0 bash pipelines/shell/run_scaling_L2_L6.sh
-```
-
-Artifacts are written to:
-
-- `artifacts/scaling_preset_L2_L6_<timestamp>/json`
-- `artifacts/scaling_preset_L2_L6_<timestamp>/logs/summary.tsv`
-- `artifacts/scaling_preset_L2_L6_<timestamp>/logs/best.tsv`
+Artifacts follow `run_drive_accurate.sh` defaults.
 
 ---
 
@@ -1568,9 +1514,9 @@ The JSON `settings` block includes an `energy_observable_definition` string that
 "energy_observable_definition": "energy_static_* measures <psi|H_static|psi>. energy_total_* measures <psi|H_static + H_drive(drive_t0 + t)|psi>. When drive is disabled, energy_total_* == energy_static_*. Drive sampling uses the same drive_t0 convention as propagation."
 ```
 
-### Compare pipeline handling
+### Compare pipeline handling (archived only)
 
-The archived compare pipeline (`archive/qiskit_compare/compare_hc_vs_qk.py`) handles both energy families:
+The historical compare pipeline (`archive/qiskit_compare/compare_hc_vs_qk.py`) handled both energy families while present in prior snapshots; it is not runnable in this checkout because `archive/` is absent.
 
 - **Static energy**: `energy_static_trotter` HC−QK delta is a primary pass/fail gate (threshold `1e-3`).
 - **Total energy**: `energy_total_trotter` HC−QK delta is also a pass/fail gate (threshold `1e-3`), included when both JSONs provide the field.
@@ -1905,7 +1851,7 @@ Recommended parity command (full-match anchor):
 python pipelines/exact_bench/hh_noise_hardware_validation.py \
   --problem hh --ansatz hh_hva_tw --L 2 \
   --t 1.0 --u 2.0 --dv 0.0 --omega0 1.0 --g-ep 1.0 --n-ph-max 1 \
-  --boundary periodic --ordering blocked \
+  --boundary open --ordering blocked \
   --noise-mode ideal \
   --run-vqe --run-trotter --no-run-adapt --initial-state-source vqe \
   --vqe-reps 3 --vqe-restarts 1 --vqe-maxiter 3000 --vqe-method SPSA \
