@@ -1,0 +1,60 @@
+{
+  "fixed_physics": {
+    "model": "Hubbard-Holstein",
+    "L": 2,
+    "J": 1.0,
+    "U": 2.0,
+    "omega0": 1.0,
+    "g_ep": 1.0,
+    "num_particles_half_filled": [
+      1,
+      1
+    ]
+  },
+  "search": {
+    "budget_minutes": 2.0,
+    "tested": 1,
+    "candidate_pool": 1159,
+    "target_delta_e": 0.001
+  },
+  "best": {
+    "config": {
+      "boundary": "periodic",
+      "ordering": "blocked",
+      "n_ph_max": 1,
+      "reps": 4,
+      "method": "COBYLA",
+      "restarts": 6,
+      "maxiter": 1200,
+      "seed": 37,
+      "initial_point_stddev": 1.0
+    },
+    "exact_energy_filtered": -0.3895531032970533,
+    "vqe_energy": -0.00982197933042106,
+    "delta_e_abs": 0.3797311239666322,
+    "vqe_success": false,
+    "vqe_message": "Maximum number of function evaluations has been exceeded.",
+    "elapsed_sec": 138.75247853599967
+  },
+  "all_results_ranked": [
+    {
+      "config": {
+        "boundary": "periodic",
+        "ordering": "blocked",
+        "n_ph_max": 1,
+        "reps": 4,
+        "method": "COBYLA",
+        "restarts": 6,
+        "maxiter": 1200,
+        "seed": 37,
+        "initial_point_stddev": 1.0
+      },
+      "exact_energy_filtered": -0.3895531032970533,
+      "vqe_energy": -0.00982197933042106,
+      "delta_e_abs": 0.3797311239666322,
+      "vqe_success": false,
+      "vqe_message": "Maximum number of function evaluations has been exceeded.",
+      "elapsed_sec": 138.75247853599967
+    }
+  ]
+}
