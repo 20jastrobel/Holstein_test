@@ -36,6 +36,11 @@ def _to_signature(poly: PauliPolynomial, tol: float = 1e-12) -> tuple[tuple[str,
 
 def _clean_poly(poly: PauliPolynomial, prune_eps: float) -> PauliPolynomial:
     """Drop tiny coefficients and enforce purely-real Pauli coefficients."""
+    return _prune_poly(poly, prune_eps, enforce_real=True)
+
+
+def _prune_poly(poly: PauliPolynomial, prune_eps: float, *, enforce_real: bool) -> PauliPolynomial:
+    """Drop tiny coefficients; optionally enforce purely-real Pauli coefficients."""
     terms = poly.return_polynomial()
     if not terms:
         return PauliPolynomial("JW")
@@ -45,9 +50,14 @@ def _clean_poly(poly: PauliPolynomial, prune_eps: float) -> PauliPolynomial:
         coeff = complex(term.p_coeff)
         if abs(coeff) <= float(prune_eps):
             continue
-        if abs(coeff.imag) > 1e-10:
+        if enforce_real and abs(coeff.imag) > 1e-10:
             raise ValueError(f"PAOP generator has non-negligible imaginary coefficient: {coeff}")
-        cleaned.add_term(PauliTerm(nq, ps=str(term.pw2strng()), pc=float(coeff.real)))
+        coeff_out: complex | float
+        if enforce_real:
+            coeff_out = float(coeff.real)
+        else:
+            coeff_out = complex(coeff)
+        cleaned.add_term(PauliTerm(nq, ps=str(term.pw2strng()), pc=coeff_out))
     cleaned._reduce()
     return cleaned
 
@@ -98,6 +108,17 @@ def _append_operator(
         sub_label = f"{label}[{term_idx}]_{term.pw2strng()}"
         single = PauliPolynomial("JW", [PauliTerm(int(term.nqubit()), ps=str(term.pw2strng()), pc=float(coeff.real))])
         pool.append((sub_label, single))
+
+
+def _mul_clean(
+    left: PauliPolynomial,
+    right: PauliPolynomial,
+    prune_eps: float,
+    *,
+    enforce_real: bool = True,
+) -> PauliPolynomial:
+    """(AB)_clean := clean(A * B) after each nontrivial multiplication."""
+    return _prune_poly(left * right, float(prune_eps), enforce_real=bool(enforce_real))
 
 
 def _distance_1d(i: int, j: int, n_sites: int, periodic: bool) -> int:
@@ -182,12 +203,21 @@ def _make_paop_core(
     include_hopdrag: bool,
     include_curdrag: bool,
     include_hop2: bool,
+    include_curdrag3: bool,
+    include_hop4: bool,
+    include_bond_disp: bool,
+    include_hop_sq: bool,
+    include_pair_sq: bool,
     drop_hop2_phonon_identity: bool,
     include_extended_cloud: bool,
     cloud_radius: int,
     include_cloud_x: bool,
     include_doublon_translation_p: bool,
     include_doublon_translation_x: bool,
+    include_sq: bool,
+    include_dens_sq: bool,
+    include_cloud_sq: bool,
+    include_doublon_sq: bool,
     split_paulis: bool,
     prune_eps: float,
     normalization: str,
@@ -214,12 +244,34 @@ def _make_paop_core(
 
     number_cache: dict[int, PauliPolynomial] = {}
     doublon_cache: dict[int, PauliPolynomial] = {}
+    phonon_qubit_cache: dict[int, tuple[int, ...]] = {}
+    b_cache: dict[int, PauliPolynomial] = {}
+    bdag_cache: dict[int, PauliPolynomial] = {}
     p_cache: dict[int, PauliPolynomial] = {}
     x_cache: dict[int, PauliPolynomial] = {}
+    sq_cache: dict[int, PauliPolynomial] = {}
     hopping_cache: dict[tuple[int, int], PauliPolynomial] = {}
     current_cache: dict[tuple[int, int], PauliPolynomial] = {}
+    delta_p_cache: dict[tuple[int, int], PauliPolynomial] = {}
+    delta_p_power_cache: dict[tuple[int, int, int], PauliPolynomial] = {}
+    bond_p_sum_cache: dict[tuple[int, int], PauliPolynomial] = {}
+    bond_sq_sum_cache: dict[tuple[int, int], PauliPolynomial] = {}
+    pair_sq_cache: dict[tuple[int, int], PauliPolynomial] = {}
     pool: list[tuple[str, PauliPolynomial]] = []
     phonon_qubits = tuple(range(2 * n_sites, nq))
+
+    def local_qubits(site: int) -> tuple[int, ...]:
+        key = int(site)
+        if key not in phonon_qubit_cache:
+            phonon_qubit_cache[key] = tuple(
+                phonon_qubit_indices_for_site(
+                    key,
+                    n_sites=n_sites,
+                    qpb=boson_qubits_per_site(n_ph_max_i, boson_encoding_i),
+                    fermion_qubits=2 * n_sites,
+                )
+            )
+        return phonon_qubit_cache[key]
 
     def n_i(site: int) -> PauliPolynomial:
         key = int(site)
@@ -232,52 +284,58 @@ def _make_paop_core(
             number_cache[key] = cached
         return number_cache[key]
 
-    def p_i(site: int) -> PauliPolynomial:
+    def b_i(site: int) -> PauliPolynomial:
         key = int(site)
-        if key not in p_cache:
-            qubits = phonon_qubit_indices_for_site(
-                int(key),
-                n_sites=n_sites,
-                qpb=boson_qubits_per_site(n_ph_max_i, boson_encoding_i),
-                fermion_qubits=2 * n_sites,
-            )
-            b_op = boson_operator(
+        if key not in b_cache:
+            b_cache[key] = boson_operator(
                 repr_mode,
                 nq,
-                qubits,
+                local_qubits(key),
                 which="b",
                 n_ph_max=n_ph_max_i,
                 encoding=boson_encoding_i,
             )
-            bdag_op = boson_operator(
+        return b_cache[key]
+
+    def bdag_i(site: int) -> PauliPolynomial:
+        key = int(site)
+        if key not in bdag_cache:
+            bdag_cache[key] = boson_operator(
                 repr_mode,
                 nq,
-                qubits,
+                local_qubits(key),
                 which="bdag",
                 n_ph_max=n_ph_max_i,
                 encoding=boson_encoding_i,
             )
+        return bdag_cache[key]
+
+    def p_i(site: int) -> PauliPolynomial:
+        key = int(site)
+        if key not in p_cache:
             # P = i (b^† - b)
-            p_cache[key] = (1j * bdag_op) + (-1j * b_op)
+            p_cache[key] = _clean_poly((1j * bdag_i(key)) + (-1j * b_i(key)), prune_eps)
         return p_cache[key]
 
     def x_i(site: int) -> PauliPolynomial:
         key = int(site)
         if key not in x_cache:
-            qubits = phonon_qubit_indices_for_site(
-                int(key),
-                n_sites=n_sites,
-                qpb=boson_qubits_per_site(n_ph_max_i, boson_encoding_i),
-                fermion_qubits=2 * n_sites,
-            )
             x_cache[key] = boson_displacement_operator(
                 repr_mode,
                 nq,
-                qubits,
+                local_qubits(key),
                 n_ph_max=n_ph_max_i,
                 encoding=boson_encoding_i,
             )
         return x_cache[key]
+
+    def sq_i(site: int) -> PauliPolynomial:
+        key = int(site)
+        if key not in sq_cache:
+            b2 = _mul_clean(b_i(key), b_i(key), prune_eps, enforce_real=False)
+            bdag2 = _mul_clean(bdag_i(key), bdag_i(key), prune_eps, enforce_real=False)
+            sq_cache[key] = _clean_poly((1j * bdag2) + ((-1j) * b2), prune_eps)
+        return sq_cache[key]
 
     def shifted_density(site: int) -> PauliPolynomial:
         n_site = n_i(site)
@@ -292,7 +350,7 @@ def _make_paop_core(
             down = mode_index(key, 1, indexing=ordering_i, n_sites=n_sites)
             n_up = jw_number_operator(repr_mode, nq, up)
             n_dn = jw_number_operator(repr_mode, nq, down)
-            doublon_cache[key] = n_up * n_dn
+            doublon_cache[key] = _mul_clean(n_up, n_dn, prune_eps)
         return doublon_cache[key]
 
     def k_ij(i_site: int, j_site: int) -> PauliPolynomial:
@@ -306,7 +364,7 @@ def _make_paop_core(
                 term_ji = fermion_plus_operator(repr_mode, nq, j_spin) * fermion_minus_operator(repr_mode, nq, i_spin)
                 hopping += term_ij
                 hopping += term_ji
-            hopping_cache[key] = hopping
+            hopping_cache[key] = _clean_poly(hopping, prune_eps)
         return hopping_cache[key]
 
     def j_ij(i_site: int, j_site: int) -> PauliPolynomial:
@@ -317,8 +375,51 @@ def _make_paop_core(
                 i_spin = mode_index(key[0], spin, indexing=ordering_i, n_sites=n_sites)
                 j_spin = mode_index(key[1], spin, indexing=ordering_i, n_sites=n_sites)
                 current += jw_current_hop(nq, i_spin, j_spin)
-            current_cache[key] = current
+            current_cache[key] = _clean_poly(current, prune_eps)
         return current_cache[key]
+
+    def delta_p_ij(i_site: int, j_site: int) -> PauliPolynomial:
+        key = (int(i_site), int(j_site))
+        if key not in delta_p_cache:
+            delta_p_cache[key] = _clean_poly(p_i(key[0]) + ((-1.0) * p_i(key[1])), prune_eps)
+        return delta_p_cache[key]
+
+    def delta_p_power(i_site: int, j_site: int, exponent: int) -> PauliPolynomial:
+        power = int(exponent)
+        if power < 1:
+            raise ValueError("delta_p_power exponent must be >= 1")
+        key = (int(i_site), int(j_site), power)
+        if key in delta_p_power_cache:
+            return delta_p_power_cache[key]
+        base = delta_p_ij(i_site, j_site)
+        if power == 1:
+            delta_p_power_cache[key] = base
+            return base
+        acc = base
+        for _ in range(1, power):
+            acc = _mul_clean(acc, base, prune_eps)
+        delta_p_power_cache[key] = acc
+        return acc
+
+    def bond_p_sum(i_site: int, j_site: int) -> PauliPolynomial:
+        key = (int(i_site), int(j_site))
+        if key not in bond_p_sum_cache:
+            bond_p_sum_cache[key] = _clean_poly(p_i(key[0]) + p_i(key[1]), prune_eps)
+        return bond_p_sum_cache[key]
+
+    def bond_sq_sum(i_site: int, j_site: int) -> PauliPolynomial:
+        key = (int(i_site), int(j_site))
+        if key not in bond_sq_sum_cache:
+            bond_sq_sum_cache[key] = _clean_poly(sq_i(key[0]) + sq_i(key[1]), prune_eps)
+        return bond_sq_sum_cache[key]
+
+    def pair_sq_ij(i_site: int, j_site: int) -> PauliPolynomial:
+        key = (int(i_site), int(j_site))
+        if key not in pair_sq_cache:
+            pair_create = _mul_clean(bdag_i(key[0]), bdag_i(key[1]), prune_eps, enforce_real=False)
+            pair_annih = _mul_clean(b_i(key[0]), b_i(key[1]), prune_eps, enforce_real=False)
+            pair_sq_cache[key] = _clean_poly((1j * pair_create) + ((-1j) * pair_annih), prune_eps)
+        return pair_sq_cache[key]
 
     # (A) local conditional displacement dressing
     if include_disp:
@@ -342,7 +443,7 @@ def _make_paop_core(
                 prune_eps=prune_eps,
             )
 
-    edges = bravais_nearest_neighbor_edges(n_sites, pbc=periodic) if (include_hopdrag or include_curdrag or include_hop2) else []
+    edges = bravais_nearest_neighbor_edges(n_sites, pbc=periodic) if (include_hopdrag or include_curdrag or include_hop2 or include_curdrag3 or include_hop4 or include_bond_disp or include_hop_sq or include_pair_sq) else []
 
     # (C) dressed hopping K_{ij}(P_i - P_j)
     if include_hopdrag:
@@ -351,7 +452,7 @@ def _make_paop_core(
             _append_operator(
                 pool,
                 f"paop_hopdrag({i},{j})",
-                _normalize_poly(k_ij(i, j) * (p_i(i) + ((-1.0) * p_i(j))), normalization),
+                _normalize_poly(_mul_clean(k_ij(i, j), delta_p_ij(i, j), prune_eps), normalization),
                 split_paulis=split_paulis,
                 prune_eps=prune_eps,
             )
@@ -363,7 +464,7 @@ def _make_paop_core(
             _append_operator(
                 pool,
                 f"paop_curdrag({i},{j})",
-                _normalize_poly(j_ij(i, j) * (p_i(i) + ((-1.0) * p_i(j))), normalization),
+                _normalize_poly(_mul_clean(j_ij(i, j), delta_p_ij(i, j), prune_eps), normalization),
                 split_paulis=split_paulis,
                 prune_eps=prune_eps,
             )
@@ -372,14 +473,96 @@ def _make_paop_core(
     if include_hop2:
         for edge in edges:
             i, j = int(edge[0]), int(edge[1])
-            delta_p = p_i(i) + ((-1.0) * p_i(j))
-            hop2_poly = k_ij(i, j) * (delta_p * delta_p)
+            hop2_poly = _mul_clean(k_ij(i, j), delta_p_power(i, j, 2), prune_eps)
             if drop_hop2_phonon_identity:
                 hop2_poly = _drop_terms_with_identity_on_qubits(hop2_poly, phonon_qubits)
             _append_operator(
                 pool,
                 f"paop_hop2({i},{j})",
                 _normalize_poly(hop2_poly, normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    # (E3) LF third-order odd current channel J_{ij}(P_i - P_j)^3
+    if include_curdrag3:
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            _append_operator(
+                pool,
+                f"paop_curdrag3({i},{j})",
+                _normalize_poly(_mul_clean(j_ij(i, j), delta_p_power(i, j, 3), prune_eps), normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    # (E4) LF fourth-order even hopping channel K_{ij}(P_i - P_j)^4
+    if include_hop4:
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            hop4_poly = _mul_clean(k_ij(i, j), delta_p_power(i, j, 4), prune_eps)
+            hop4_poly = _drop_terms_with_identity_on_qubits(hop4_poly, phonon_qubits)
+            _append_operator(
+                pool,
+                f"paop_hop4({i},{j})",
+                _normalize_poly(hop4_poly, normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    # (Bdisp) bond-conditioned symmetric displacement K_{ij}(P_i + P_j)
+    if include_bond_disp:
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            _append_operator(
+                pool,
+                f"paop_bond_disp({i},{j})",
+                _normalize_poly(_mul_clean(k_ij(i, j), bond_p_sum(i, j), prune_eps), normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    # (HSQ) hopping-conditioned local squeeze K_{ij}(S_i + S_j)
+    if include_hop_sq:
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            _append_operator(
+                pool,
+                f"paop_hop_sq({i},{j})",
+                _normalize_poly(_mul_clean(k_ij(i, j), bond_sq_sum(i, j), prune_eps), normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    # (PSQ) two-mode phonon pair squeeze i(b_i^† b_j^† - b_i b_j)
+    if include_pair_sq:
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            _append_operator(
+                pool,
+                f"paop_pair_sq({i},{j})",
+                _normalize_poly(pair_sq_ij(i, j), normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    # (S) local phonon squeeze generator S_i and density-conditioned variants
+    if include_sq:
+        for site in range(n_sites):
+            _append_operator(
+                pool,
+                f"paop_sq(site={site})",
+                _normalize_poly(sq_i(site), normalization),
+                split_paulis=split_paulis,
+                prune_eps=prune_eps,
+            )
+
+    if include_dens_sq:
+        for site in range(n_sites):
+            _append_operator(
+                pool,
+                f"paop_dens_sq(site={site})",
+                _normalize_poly(_mul_clean(shifted_density(site), sq_i(site), prune_eps), normalization),
                 split_paulis=split_paulis,
                 prune_eps=prune_eps,
             )
@@ -409,6 +592,22 @@ def _make_paop_core(
                         prune_eps=prune_eps,
                     )
 
+    if include_cloud_sq and cloud_radius >= 0:
+        radius = int(cloud_radius)
+        for i_site in range(n_sites):
+            for j_site in range(n_sites):
+                if i_site == j_site:
+                    continue
+                if _distance_1d(i_site, j_site, n_sites, periodic) > radius:
+                    continue
+                _append_operator(
+                    pool,
+                    f"paop_cloud_sq(site={i_site}->phonon={j_site})",
+                    _normalize_poly(_mul_clean(shifted_density(i_site), sq_i(j_site), prune_eps), normalization),
+                    split_paulis=split_paulis,
+                    prune_eps=prune_eps,
+                )
+
     # (F) LF doublon-conditioned phonon translation D_i p_j / D_i x_j
     if (include_doublon_translation_p or include_doublon_translation_x) and cloud_radius >= 0:
         radius = int(cloud_radius)
@@ -421,6 +620,21 @@ def _make_paop_core(
                         pool,
                         f"paop_dbl_p(site={i_site}->phonon={j_site})",
                         _normalize_poly(doublon_i(i_site) * p_i(j_site), normalization),
+                        split_paulis=split_paulis,
+                        prune_eps=prune_eps,
+                    )
+
+    if (include_doublon_sq or include_doublon_translation_x) and cloud_radius >= 0:
+        radius = int(cloud_radius)
+        for i_site in range(n_sites):
+            for j_site in range(n_sites):
+                if _distance_1d(i_site, j_site, n_sites, periodic) > radius:
+                    continue
+                if include_doublon_sq:
+                    _append_operator(
+                        pool,
+                        f"paop_dbl_sq(site={i_site}->phonon={j_site})",
+                        _normalize_poly(_mul_clean(doublon_i(i_site), sq_i(j_site), prune_eps), normalization),
                         split_paulis=split_paulis,
                         prune_eps=prune_eps,
                     )
@@ -469,7 +683,14 @@ def make_pool(
       - paop_lf (alias to paop_lf_std)
       - paop_lf_std
       - paop_lf2_std
+      - paop_lf3_std
+      - paop_lf4_std
       - paop_lf_full
+      - paop_sq_std
+      - paop_sq_full
+      - paop_bond_disp_std
+      - paop_hop_sq_std
+      - paop_pair_sq_std
     """
     mode = str(name).strip().lower()
     if mode == "paop":
@@ -477,24 +698,72 @@ def make_pool(
     if mode == "paop_lf":
         mode = "paop_lf_std"
 
-    if mode not in {"paop_min", "paop_std", "paop_full", "paop_lf_std", "paop_lf2_std", "paop_lf_full"}:
+    if mode not in {
+        "paop_min",
+        "paop_std",
+        "paop_full",
+        "paop_lf_std",
+        "paop_lf2_std",
+        "paop_lf3_std",
+        "paop_lf4_std",
+        "paop_lf_full",
+        "paop_sq_std",
+        "paop_sq_full",
+        "paop_bond_disp_std",
+        "paop_hop_sq_std",
+        "paop_pair_sq_std",
+    }:
         raise ValueError(
             "PAOP pool name must be one of paop, paop_min, paop_std, paop_full, "
-            "paop_lf, paop_lf_std, paop_lf2_std, paop_lf_full."
+            "paop_lf, paop_lf_std, paop_lf2_std, paop_lf3_std, paop_lf4_std, "
+            "paop_lf_full, paop_sq_std, paop_sq_full, paop_bond_disp_std, paop_hop_sq_std, paop_pair_sq_std."
         )
 
     include_disp = True
     include_doublon = mode == "paop_full"
-    include_hopdrag = mode in {"paop_std", "paop_full", "paop_lf_std", "paop_lf2_std", "paop_lf_full"}
-    include_curdrag = mode in {"paop_lf_std", "paop_lf2_std", "paop_lf_full"}
-    include_hop2 = mode in {"paop_lf2_std", "paop_lf_full"}
+    include_hopdrag = mode in {
+        "paop_std",
+        "paop_full",
+        "paop_lf_std",
+        "paop_lf2_std",
+        "paop_lf3_std",
+        "paop_lf4_std",
+        "paop_lf_full",
+        "paop_sq_std",
+        "paop_sq_full",
+        "paop_bond_disp_std",
+        "paop_hop_sq_std",
+        "paop_pair_sq_std",
+    }
+    include_curdrag = mode in {
+        "paop_lf_std",
+        "paop_lf2_std",
+        "paop_lf3_std",
+        "paop_lf4_std",
+        "paop_lf_full",
+        "paop_sq_std",
+        "paop_sq_full",
+        "paop_bond_disp_std",
+        "paop_hop_sq_std",
+        "paop_pair_sq_std",
+    }
+    include_hop2 = mode in {"paop_lf2_std", "paop_lf3_std", "paop_lf4_std", "paop_lf_full"}
+    include_curdrag3 = mode in {"paop_lf3_std", "paop_lf4_std"}
+    include_hop4 = mode in {"paop_lf4_std"}
+    include_bond_disp = mode in {"paop_bond_disp_std"}
+    include_hop_sq = mode in {"paop_hop_sq_std"}
+    include_pair_sq = mode in {"paop_pair_sq_std"}
     drop_hop2_phonon_identity = include_hop2
     include_extended = mode in {"paop_full", "paop_lf_full"}
     include_cloud_x = mode in {"paop_full", "paop_lf_full"}
     include_dbl_p = mode == "paop_lf_full"
     include_dbl_x = mode == "paop_lf_full"
+    include_sq = mode in {"paop_sq_std", "paop_sq_full"}
+    include_dens_sq = mode in {"paop_sq_std", "paop_sq_full"}
+    include_cloud_sq = mode == "paop_sq_full"
+    include_dbl_sq = mode == "paop_sq_full"
     radius = max(0, int(paop_r))
-    if include_extended and radius == 0:
+    if (include_extended or include_cloud_sq or include_dbl_sq) and radius == 0:
         radius = 1
 
     return _make_paop_core(
@@ -509,12 +778,21 @@ def make_pool(
         include_hopdrag=include_hopdrag,
         include_curdrag=include_curdrag,
         include_hop2=include_hop2,
+        include_curdrag3=include_curdrag3,
+        include_hop4=include_hop4,
+        include_bond_disp=include_bond_disp,
+        include_hop_sq=include_hop_sq,
+        include_pair_sq=include_pair_sq,
         drop_hop2_phonon_identity=drop_hop2_phonon_identity,
         include_extended_cloud=include_extended,
         cloud_radius=radius,
         include_cloud_x=include_cloud_x,
         include_doublon_translation_p=include_dbl_p,
         include_doublon_translation_x=include_dbl_x,
+        include_sq=include_sq,
+        include_dens_sq=include_dens_sq,
+        include_cloud_sq=include_cloud_sq,
+        include_doublon_sq=include_dbl_sq,
         split_paulis=bool(paop_split_paulis),
         prune_eps=float(paop_prune_eps),
         normalization=str(paop_normalization),

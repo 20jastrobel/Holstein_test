@@ -4,17 +4,21 @@ from pathlib import Path
 import json
 import sys
 
+import numpy as np
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import pipelines.hardcoded.hh_vqe_from_adapt_family as replay_mod
 from pipelines.hardcoded.hh_vqe_from_adapt_family import (
     RunConfig,
     _build_cfg,
+    _build_pool_for_family,
     _resolve_family,
     _resolve_family_from_metadata,
+    build_replay_ansatz_context,
     parse_args,
 )
 
@@ -139,6 +143,81 @@ def test_resolve_family_uses_settings_adapt_pool() -> None:
     assert src == "settings.adapt_pool"
 
 
+def test_resolve_family_accepts_new_experimental_paop_tokens() -> None:
+    for token in (
+        "paop_lf3_std",
+        "paop_lf4_std",
+        "paop_sq_std",
+        "paop_sq_full",
+        "paop_bond_disp_std",
+        "paop_hop_sq_std",
+        "paop_pair_sq_std",
+    ):
+        fam, src = _resolve_family_from_metadata({"adapt_vqe": {"pool_type": token}})
+        assert fam == token
+        assert src == "adapt_vqe.pool_type"
+
+
+def test_resolve_family_accepts_new_vlf_sq_tokens() -> None:
+    for token in ("vlf_only", "sq_only", "vlf_sq", "sq_dens_only", "vlf_sq_dens"):
+        fam, src = _resolve_family_from_metadata({"adapt_vqe": {"pool_type": token}})
+        assert fam == token
+        assert src == "adapt_vqe.pool_type"
+
+
+def test_build_pool_for_family_materializes_new_paop_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(
+        replay_mod,
+        "_build_paop_pool",
+        lambda *args, **kwargs: [type("_T", (), {"label": f"{kwargs.get('pool_key', args[5])}:term"})()],
+    )
+    for token in (
+        "paop_lf3_std",
+        "paop_lf4_std",
+        "paop_sq_std",
+        "paop_sq_full",
+        "paop_bond_disp_std",
+        "paop_hop_sq_std",
+        "paop_pair_sq_std",
+    ):
+        pool, meta = _build_pool_for_family(cfg, family=token, h_poly=object())
+        assert len(pool) == 1
+        assert meta["family"] == token
+
+
+def test_build_pool_for_family_materializes_new_vlf_sq_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(
+        replay_mod,
+        "_build_vlf_sq_pool",
+        lambda *args, **kwargs: (
+            [type("_T", (), {"label": f"{kwargs.get('pool_key', args[5])}:macro"})()],
+            {"family": kwargs.get('pool_key', args[5]), "parameter_count": 1},
+        ),
+    )
+    for token in ("vlf_only", "sq_only", "vlf_sq", "sq_dens_only", "vlf_sq_dens"):
+        pool, meta = _build_pool_for_family(cfg, family=token, h_poly=object())
+        assert len(pool) == 1
+        assert meta["family"] == token
+        assert meta["family_kind"] == "macro_probe"
+
+
+def test_build_pool_for_family_rejects_split_paulis_for_vlf_sq(
+    tmp_path: Path,
+) -> None:
+    cfg = _mk_cfg(tmp_path)
+    cfg = cfg.__class__(**{**cfg.__dict__, "paop_split_paulis": True})
+    with pytest.raises(ValueError, match="do not support --paop-split-paulis"):
+        _build_pool_for_family(cfg, family="vlf_sq", h_poly=object())
+
+
 def test_resolve_family_uses_nested_selected_generator_metadata() -> None:
     fam, src = _resolve_family_from_metadata(
         {
@@ -222,3 +301,166 @@ def test_resolve_family_rejects_malformed_contract(tmp_path: Path) -> None:
             }
         }
     )
+
+
+def test_build_replay_ansatz_context_retries_with_full_meta_on_missing_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mk_cfg(tmp_path, generator_family="match_adapt", fallback_family="full_meta")
+    payload = {
+        "adapt_vqe": {"operators": ["g0"], "optimal_point": [0.1]},
+        "initial_state": {"handoff_state_kind": "prepared_state"},
+    }
+    family_info = {
+        "requested": "match_adapt",
+        "resolved": "paop_lf_std",
+        "resolution_source": "selected_generator_metadata.family_id",
+        "fallback_family": "full_meta",
+        "fallback_used": False,
+        "warning": None,
+    }
+    calls: list[str] = []
+
+    class _FakeAnsatz:
+        def __init__(self, *, terms: list[object], reps: int, nq: int) -> None:
+            self.terms = list(terms)
+            self.num_parameters = int(len(terms) * reps)
+
+        def prepare_state(self, theta: np.ndarray, psi_ref: np.ndarray) -> np.ndarray:
+            return np.asarray(psi_ref, dtype=complex)
+
+    def _fake_build(
+        _cfg: RunConfig,
+        *,
+        family: str,
+        h_poly: object,
+        adapt_labels: list[str],
+        payload: dict[str, object] | None = None,
+    ) -> tuple[list[object], dict[str, object], int]:
+        del _cfg, h_poly, adapt_labels, payload
+        calls.append(str(family))
+        if family == "paop_lf_std":
+            raise ValueError(
+                "ADAPT operators are not present in the resolved replay family pool. "
+                "Missing examples: ['g0']"
+            )
+        assert family == "full_meta"
+        return ["term0"], {"family": "full_meta", "raw_total": 7}, 7
+
+    monkeypatch.setattr(replay_mod, "_build_replay_terms_for_family", _fake_build)
+    monkeypatch.setattr(replay_mod, "PoolTermwiseAnsatz", _FakeAnsatz)
+    monkeypatch.setattr(
+        replay_mod,
+        "_build_replay_seed_theta_policy",
+        lambda adapt_theta, reps, policy, handoff_state_kind: (np.zeros(int(reps), dtype=float), "residual_only"),
+    )
+    monkeypatch.setattr(replay_mod, "expval_pauli_polynomial", lambda psi, h_poly: 0.25)
+
+    replay_ctx = build_replay_ansatz_context(
+        cfg,
+        payload_in=payload,
+        psi_ref=np.array([1.0 + 0.0j, 0.0 + 0.0j], dtype=complex),
+        h_poly=object(),
+        family_info=family_info,
+        e_exact=0.2,
+    )
+
+    assert calls == ["paop_lf_std", "full_meta"]
+    assert replay_ctx["family_resolved"] == "full_meta"
+    assert replay_ctx["family_terms_count"] == 7
+    assert replay_ctx["pool_meta"]["family"] == "full_meta"
+    assert replay_ctx["family_info"]["resolved"] == "full_meta"
+    assert replay_ctx["family_info"]["resolution_source"] == "fallback_family_missing_labels"
+    assert replay_ctx["family_info"]["fallback_used"] is True
+    assert "retrying replay with fallback family 'full_meta'" in str(replay_ctx["family_info"]["warning"])
+
+
+def test_run_records_effective_family_after_replay_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mk_cfg(tmp_path, generator_family="match_adapt", fallback_family="full_meta")
+    psi_ref = np.array([1.0 + 0.0j, 0.0 + 0.0j], dtype=complex)
+
+    class _FakeAnsatz:
+        def __init__(self, *, terms: list[object], reps: int, nq: int) -> None:
+            del terms, reps, nq
+            self.num_parameters = 2
+
+        def prepare_state(self, theta: np.ndarray, psi_ref_in: np.ndarray) -> np.ndarray:
+            del theta
+            return np.asarray(psi_ref_in, dtype=complex)
+
+    monkeypatch.setattr(replay_mod, "_read_input_state_and_payload", lambda path: (psi_ref, {}))
+    monkeypatch.setattr(
+        replay_mod,
+        "_resolve_family",
+        lambda cfg_in, payload_in: {
+            "requested": "match_adapt",
+            "resolved": "paop_lf_std",
+            "resolution_source": "selected_generator_metadata.family_id",
+            "fallback_family": "full_meta",
+            "fallback_used": False,
+            "warning": None,
+        },
+    )
+    monkeypatch.setattr(replay_mod, "_build_hh_hamiltonian", lambda cfg_in: object())
+    monkeypatch.setattr(replay_mod, "_resolve_exact_energy_from_payload", lambda payload_in: 0.0)
+    monkeypatch.setattr(
+        replay_mod,
+        "build_replay_ansatz_context",
+        lambda cfg_in, **kwargs: {
+            "adapt_labels": ["g0"],
+            "adapt_theta": np.array([0.1], dtype=float),
+            "handoff_state_kind": "prepared_state",
+            "provenance_source": "explicit",
+            "seed_theta": np.zeros(2, dtype=float),
+            "resolved_seed_policy": "residual_only",
+            "family_info": {
+                "requested": "match_adapt",
+                "resolved": "full_meta",
+                "resolution_source": "fallback_family_missing_labels",
+                "fallback_family": "full_meta",
+                "fallback_used": True,
+                "warning": "Resolved replay family could not represent the ADAPT-selected labels; retrying replay with fallback family 'full_meta'.",
+            },
+            "family_resolved": "full_meta",
+            "family_terms_count": 7,
+            "pool_meta": {"family": "full_meta", "raw_total": 7},
+            "replay_terms": ["term0"],
+            "ansatz": _FakeAnsatz(terms=["term0"], reps=2, nq=1),
+            "nq": 1,
+            "psi_seed": psi_ref.copy(),
+            "seed_energy": 0.25,
+            "seed_delta_abs": 0.25,
+            "seed_relative_abs": 0.25,
+        },
+    )
+    monkeypatch.setattr(
+        replay_mod,
+        "vqe_minimize",
+        lambda *args, **kwargs: type(
+            "_Res",
+            (),
+            {
+                "theta": np.zeros(2, dtype=float),
+                "energy": 0.1,
+                "success": True,
+                "message": "ok",
+                "nfev": 1,
+                "nit": 1,
+                "best_restart": 0,
+            },
+        )(),
+    )
+
+    result = replay_mod.run(cfg)
+    written = json.loads(cfg.output_json.read_text(encoding="utf-8"))
+
+    assert result["generator_family"]["resolved"] == "full_meta"
+    assert result["generator_family"]["fallback_used"] is True
+    assert result["replay_contract"]["generator_family"]["resolved"] == "full_meta"
+    assert result["replay_contract"]["generator_family"]["resolution_source"] == "fallback_family_missing_labels"
+    assert written["generator_family"]["resolved"] == "full_meta"
+    assert written["replay_contract"]["generator_family"]["resolved"] == "full_meta"

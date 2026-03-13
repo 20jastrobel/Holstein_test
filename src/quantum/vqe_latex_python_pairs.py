@@ -2171,9 +2171,15 @@ def vqe_minimize(
             }
         )
 
-        if energy < best_energy:
-            best_energy = energy
-            best_theta = theta_opt
+        candidate_energy = float(restart_best if np.isfinite(restart_best) else energy)
+        candidate_theta = (
+            np.asarray(restart_best_theta, dtype=float)
+            if restart_best_theta is not None
+            else np.asarray(theta_opt, dtype=float)
+        )
+        if candidate_energy < best_energy:
+            best_energy = float(candidate_energy)
+            best_theta = candidate_theta
             best_restart = r
             best_nfev = nfev
             best_nit = nit

@@ -36,6 +36,7 @@ from pipelines.hardcoded.adapt_pipeline import (
     _build_hh_uccsd_fermion_lifted_pool,
     _build_hva_pool,
     _build_paop_pool,
+    _build_vlf_sq_pool,
     _deduplicate_pool_terms,
     _deduplicate_pool_terms_lightweight,
 )
@@ -71,7 +72,19 @@ EXPLICIT_FAMILIES = {
     "paop_lf",
     "paop_lf_std",
     "paop_lf2_std",
+    "paop_lf3_std",
+    "paop_lf4_std",
     "paop_lf_full",
+    "paop_sq_std",
+    "paop_sq_full",
+    "paop_bond_disp_std",
+    "paop_hop_sq_std",
+    "paop_pair_sq_std",
+    "vlf_only",
+    "sq_only",
+    "vlf_sq",
+    "sq_dens_only",
+    "vlf_sq_dens",
     "pool_a",
     "pool_b",
 }
@@ -466,7 +479,23 @@ def _build_pool_for_family(cfg: RunConfig, *, family: str, h_poly: Any) -> tuple
         out_meta["dedup_total"] = int(len(pool))
         return list(pool), out_meta
 
-    if family_key in {"paop", "paop_min", "paop_std", "paop_full", "paop_lf", "paop_lf_std", "paop_lf2_std", "paop_lf_full"}:
+    if family_key in {
+        "paop",
+        "paop_min",
+        "paop_std",
+        "paop_full",
+        "paop_lf",
+        "paop_lf_std",
+        "paop_lf2_std",
+        "paop_lf3_std",
+        "paop_lf4_std",
+        "paop_lf_full",
+        "paop_sq_std",
+        "paop_sq_full",
+        "paop_bond_disp_std",
+        "paop_hop_sq_std",
+        "paop_pair_sq_std",
+    }:
         pool = _build_paop_pool(
             n_sites,
             int(cfg.n_ph_max),
@@ -482,6 +511,29 @@ def _build_pool_for_family(cfg: RunConfig, *, family: str, h_poly: Any) -> tuple
         )
         out_meta = dict(base_meta)
         out_meta["dedup_total"] = int(len(pool))
+        return list(pool), out_meta
+
+    if family_key in {"vlf_only", "sq_only", "vlf_sq", "sq_dens_only", "vlf_sq_dens"}:
+        pool, vlf_meta = _build_vlf_sq_pool(
+            n_sites,
+            int(cfg.n_ph_max),
+            str(cfg.boson_encoding),
+            str(cfg.ordering),
+            str(cfg.boundary),
+            family_key,
+            int(cfg.paop_r),
+            bool(cfg.paop_split_paulis),
+            float(cfg.paop_prune_eps),
+            str(cfg.paop_normalization),
+            num_particles,
+        )
+        out_meta = dict(base_meta)
+        out_meta.update({
+            "family_kind": "macro_probe",
+            "shell_radius_requested": int(cfg.paop_r),
+            **dict(vlf_meta),
+            "dedup_total": int(len(pool)),
+        })
         return list(pool), out_meta
 
     if family_key == "pool_a":
@@ -559,6 +611,59 @@ def _build_pool_for_family(cfg: RunConfig, *, family: str, h_poly: Any) -> tuple
         return dedup, out_meta
 
     raise ValueError(f"Unsupported generator family: {family_key}")
+
+
+def _build_pool_recipe(
+    cfg: RunConfig,
+    *,
+    base_family: str,
+    extra_families: Sequence[str],
+    h_poly: Any,
+) -> tuple[list[AnsatzTerm], dict[str, Any]]:
+    base_key = _canonical_family(base_family)
+    if base_key is None:
+        raise ValueError(f"Unsupported base_family '{base_family}'.")
+
+    normalized_extra: list[str] = []
+    seen_extra: set[str] = set()
+    for raw in extra_families:
+        extra_key = _canonical_family(raw)
+        if extra_key is None:
+            raise ValueError(f"Unsupported extra_family '{raw}'.")
+        if extra_key == base_key:
+            raise ValueError(f"extra_family '{extra_key}' duplicates base_family '{base_key}'.")
+        if extra_key in seen_extra:
+            raise ValueError(f"Duplicate extra_family '{extra_key}' is not allowed.")
+        seen_extra.add(extra_key)
+        normalized_extra.append(extra_key)
+
+    combined_raw: list[AnsatzTerm] = []
+    family_blocks: list[dict[str, Any]] = []
+    raw_counts_by_family: dict[str, int] = {}
+    combined_recipe = [base_key] + list(normalized_extra)
+    for block_index, family_key in enumerate(combined_recipe):
+        block_terms, block_meta = _build_pool_for_family(cfg, family=family_key, h_poly=h_poly)
+        role = "base" if block_index == 0 else "extra"
+        combined_raw.extend(list(block_terms))
+        raw_counts_by_family[family_key] = int(len(block_terms))
+        family_blocks.append(
+            {
+                "family": str(family_key),
+                "role": str(role),
+                "block_index": int(block_index),
+                "raw_term_count": int(len(block_terms)),
+                "meta": dict(block_meta),
+            }
+        )
+    dedup_pool = _dedup_terms(combined_raw, n_ph_max=int(cfg.n_ph_max))
+    return dedup_pool, {
+        "base_family": str(base_key),
+        "extra_families": list(normalized_extra),
+        "raw_counts_by_family": dict(raw_counts_by_family),
+        "family_blocks": family_blocks,
+        "combined_raw_total": int(len(combined_raw)),
+        "combined_dedup_total": int(len(dedup_pool)),
+    }
 
 
 def _read_input_state_and_payload(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
@@ -1174,6 +1279,30 @@ def _build_full_meta_replay_terms_sparse(
     return replay_terms, meta
 
 
+def _build_replay_terms_for_family(
+    cfg: RunConfig,
+    *,
+    family: str,
+    h_poly: Any,
+    adapt_labels: Sequence[str],
+    payload: Mapping[str, Any] | None = None,
+) -> tuple[list[AnsatzTerm], dict[str, Any], int]:
+    resolved_family = str(family)
+    if resolved_family == "full_meta" and int(cfg.n_ph_max) >= 2:
+        replay_terms, pool_meta = _build_full_meta_replay_terms_sparse(
+            cfg,
+            h_poly=h_poly,
+            adapt_labels=adapt_labels,
+            payload=payload,
+        )
+        family_terms_count = int(pool_meta.get("raw_total", 0))
+    else:
+        pool, pool_meta = _build_pool_for_family(cfg, family=resolved_family, h_poly=h_poly)
+        replay_terms = _build_replay_terms_from_adapt_labels(pool, adapt_labels, payload=payload)
+        family_terms_count = int(len(pool))
+    return replay_terms, dict(pool_meta), int(family_terms_count)
+
+
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -1380,6 +1509,7 @@ def build_replay_ansatz_context(
     adapt_labels, adapt_theta = _extract_adapt_operator_theta_sequence(payload_in)
     handoff_state_kind, provenance_source = _infer_handoff_state_kind(payload_in)
     contract = _extract_replay_contract(payload_in)
+    family_effective = dict(family_info)
     effective_seed_policy = str(cfg.replay_seed_policy)
     contract_seed_policy: str | None = None
     contract_seed_policy_resolved: str | None = None
@@ -1416,19 +1546,43 @@ def build_replay_ansatz_context(
                 f"'{contract_seed_policy_resolved}' conflicts with payload policy "
                 f"'{resolved_seed_policy}' for handoff_state_kind='{handoff_state_kind}'."
             )
-    family_resolved = str(family_info["resolved"])
-    if family_resolved == "full_meta" and int(cfg.n_ph_max) >= 2:
-        replay_terms, pool_meta = _build_full_meta_replay_terms_sparse(
+    family_resolved = str(family_effective["resolved"])
+    try:
+        replay_terms, pool_meta, family_terms_count = _build_replay_terms_for_family(
             cfg,
+            family=family_resolved,
             h_poly=h_poly,
             adapt_labels=adapt_labels,
             payload=payload_in,
         )
-        family_terms_count = int(pool_meta.get("raw_total", 0))
-    else:
-        pool, pool_meta = _build_pool_for_family(cfg, family=family_resolved, h_poly=h_poly)
-        replay_terms = _build_replay_terms_from_adapt_labels(pool, adapt_labels, payload=payload_in)
-        family_terms_count = int(len(pool))
+    except ValueError as exc:
+        missing_label_error = "ADAPT operators are not present in the resolved replay family pool."
+        fallback_family = family_effective.get("fallback_family", None)
+        can_retry_full_meta = (
+            str(exc).startswith(missing_label_error)
+            and isinstance(fallback_family, str)
+            and str(fallback_family) == "full_meta"
+            and family_resolved != "full_meta"
+        )
+        if not can_retry_full_meta:
+            raise
+        replay_terms, pool_meta, family_terms_count = _build_replay_terms_for_family(
+            cfg,
+            family="full_meta",
+            h_poly=h_poly,
+            adapt_labels=adapt_labels,
+            payload=payload_in,
+        )
+        family_effective["resolved"] = "full_meta"
+        family_effective["resolution_source"] = "fallback_family_missing_labels"
+        family_effective["fallback_used"] = True
+        warning = family_effective.get("warning", None)
+        retry_warning = (
+            "Resolved replay family could not represent the ADAPT-selected labels; "
+            "retrying replay with fallback family 'full_meta'."
+        )
+        family_effective["warning"] = retry_warning if warning in (None, "") else f"{warning} {retry_warning}"
+        family_resolved = "full_meta"
 
     nq = int(2 * int(cfg.L) + int(cfg.L) * int(boson_qubits_per_site(int(cfg.n_ph_max), str(cfg.boson_encoding))))
     ansatz = PoolTermwiseAnsatz(terms=replay_terms, reps=int(cfg.reps), nq=nq)
@@ -1449,6 +1603,7 @@ def build_replay_ansatz_context(
         "provenance_source": str(provenance_source),
         "seed_theta": np.asarray(seed_theta, dtype=float).copy(),
         "resolved_seed_policy": str(resolved_seed_policy),
+        "family_info": dict(family_effective),
         "family_resolved": str(family_resolved),
         "family_terms_count": int(family_terms_count),
         "pool_meta": dict(pool_meta),
@@ -1504,6 +1659,7 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
         family_info=family_info,
         e_exact=float(e_exact),
     )
+    family_info = dict(replay_ctx["family_info"])
     adapt_labels = [str(x) for x in replay_ctx["adapt_labels"]]
     adapt_theta = np.asarray(replay_ctx["adapt_theta"], dtype=float)
     handoff_state_kind = str(replay_ctx["handoff_state_kind"])
@@ -1527,8 +1683,15 @@ def run(cfg: RunConfig, diagnostics_out: dict[str, Any] | None = None) -> dict[s
     replay_terms = list(replay_ctx["replay_terms"])
     ansatz = replay_ctx["ansatz"]
     nq = int(replay_ctx["nq"])
+    if bool(family_info.get("fallback_used", False)) and str(family_info.get("resolved")) != str(family_resolved):
+        family_info["resolved"] = str(family_resolved)
+    if str(family_info.get("resolved")) == "full_meta" and str(family_info.get("resolution_source")) == "fallback_family_missing_labels":
+        logger.log(
+            "Replay family fallback applied: initial resolved family could not represent "
+            "the ADAPT-selected labels; using full_meta for replay reconstruction."
+        )
     logger.log(
-        f"Pool built: family={family_info['resolved']} family_terms={family_terms_count} "
+        f"Pool built: family={family_resolved} family_terms={family_terms_count} "
         f"adapt_depth={len(adapt_labels)} replay_terms={len(replay_terms)} npar={ansatz.num_parameters}"
     )
     psi_seed = np.asarray(replay_ctx["psi_seed"], dtype=complex).reshape(-1)

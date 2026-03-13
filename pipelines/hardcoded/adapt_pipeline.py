@@ -154,8 +154,10 @@ from pipelines.hardcoded.hh_continuation_pruning import (
 
 try:
     from src.quantum.operator_pools import make_pool as make_paop_pool
+    from src.quantum.operator_pools.vlf_sq import build_vlf_sq_pool as build_vlf_sq_family
 except Exception as exc:  # pragma: no cover - defensive fallback
     make_paop_pool = None
+    build_vlf_sq_family = None
     _PAOP_IMPORT_ERROR = str(exc)
 else:
     _PAOP_IMPORT_ERROR = ""
@@ -793,6 +795,38 @@ def _build_paop_pool(
         num_particles=tuple(num_particles),
     )
     return [AnsatzTerm(label=label, polynomial=poly) for label, poly in pool_specs]
+
+
+def _build_vlf_sq_pool(
+    num_sites: int,
+    n_ph_max: int,
+    boson_encoding: str,
+    ordering: str,
+    boundary: str,
+    pool_key: str,
+    paop_r: int,
+    paop_split_paulis: bool,
+    paop_prune_eps: float,
+    paop_normalization: str,
+    num_particles: tuple[int, int],
+) -> tuple[list[AnsatzTerm], dict[str, Any]]:
+    if build_vlf_sq_family is None:
+        raise RuntimeError(f"VLF/SQ pool requested but operator_pools module unavailable: {_PAOP_IMPORT_ERROR}")
+    if bool(paop_split_paulis):
+        raise ValueError("VLF/SQ macro families do not support --paop-split-paulis; keep grouped macro generators intact.")
+    pool_specs, meta = build_vlf_sq_family(
+        pool_key,
+        num_sites=int(num_sites),
+        num_particles=tuple(num_particles),
+        n_ph_max=int(n_ph_max),
+        boson_encoding=str(boson_encoding),
+        ordering=str(ordering),
+        boundary=str(boundary),
+        shell_radius=None,
+        prune_eps=float(paop_prune_eps),
+        normalization=str(paop_normalization),
+    )
+    return [AnsatzTerm(label=label, polynomial=poly) for label, poly in pool_specs], dict(meta)
 
 
 def _deduplicate_pool_terms(pool: list[AnsatzTerm]) -> list[AnsatzTerm]:
@@ -1914,7 +1948,23 @@ def _run_hardcoded_adapt_vqe(
                 num_particles,
             )
             return _deduplicate_pool_terms(list(uccsd_lifted_pool) + list(paop_pool)), "hardcoded_adapt_vqe_uccsd_paop_lf_full"
-        if key in {"paop", "paop_min", "paop_std", "paop_full", "paop_lf", "paop_lf_std", "paop_lf2_std", "paop_lf_full"}:
+        if key in {
+            "paop",
+            "paop_min",
+            "paop_std",
+            "paop_full",
+            "paop_lf",
+            "paop_lf_std",
+            "paop_lf2_std",
+            "paop_lf3_std",
+            "paop_lf4_std",
+            "paop_lf_full",
+            "paop_sq_std",
+            "paop_sq_full",
+            "paop_bond_disp_std",
+            "paop_hop_sq_std",
+            "paop_pair_sq_std",
+        }:
             paop_pool = _build_paop_pool(
                 int(num_sites),
                 int(n_ph_max),
@@ -1956,12 +2006,29 @@ def _run_hardcoded_adapt_vqe(
                 seen.add(sig)
                 dedup_pool.append(term)
             return dedup_pool, f"hardcoded_adapt_vqe_{key}"
+        if key in {"vlf_only", "sq_only", "vlf_sq", "sq_dens_only", "vlf_sq_dens"}:
+            vlf_pool, _vlf_meta = _build_vlf_sq_pool(
+                int(num_sites),
+                int(n_ph_max),
+                str(boson_encoding),
+                str(ordering),
+                str(boundary),
+                key,
+                int(paop_r),
+                bool(paop_split_paulis),
+                float(paop_prune_eps),
+                str(paop_normalization),
+                num_particles,
+            )
+            return list(vlf_pool), f"hardcoded_adapt_vqe_{key}"
         if key == "full_hamiltonian":
             return _build_full_hamiltonian_pool(h_poly, normalize_coeff=True), "hardcoded_adapt_vqe_full_hamiltonian_hh"
         raise ValueError(
             "For problem='hh', supported ADAPT pools are: "
             "hva, full_meta, uccsd_paop_lf_full, paop, paop_min, paop_std, paop_full, "
-            "paop_lf, paop_lf_std, paop_lf2_std, paop_lf_full, full_hamiltonian"
+            "paop_lf, paop_lf_std, paop_lf2_std, paop_lf3_std, paop_lf4_std, "
+            "paop_lf_full, paop_sq_std, paop_sq_full, paop_bond_disp_std, paop_hop_sq_std, paop_pair_sq_std, "
+            "vlf_only, sq_only, vlf_sq, sq_dens_only, vlf_sq_dens, full_hamiltonian"
         )
 
     pool_stage_family: list[str] = []
@@ -5250,7 +5317,19 @@ def parse_args() -> argparse.Namespace:
             "paop_lf",
             "paop_lf_std",
             "paop_lf2_std",
+            "paop_lf3_std",
+            "paop_lf4_std",
             "paop_lf_full",
+            "paop_sq_std",
+            "paop_sq_full",
+            "paop_bond_disp_std",
+            "paop_hop_sq_std",
+            "paop_pair_sq_std",
+            "vlf_only",
+            "sq_only",
+            "vlf_sq",
+            "sq_dens_only",
+            "vlf_sq_dens",
         ],
         default=None,
         help=(

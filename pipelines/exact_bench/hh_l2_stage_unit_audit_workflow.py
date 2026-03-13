@@ -486,38 +486,63 @@ def _adapt_stage_spec(stage_result: StageExecutionResult) -> StageAuditSpec:
     if len(selected_ops) != int(theta_final.size):
         raise ValueError("ADAPT selected ops / theta size mismatch.")
     acceptance_events = _adapt_acceptance_events(stage_result.adapt_payload)
-    if len(acceptance_events) != len(selected_ops):
+    seed_prefix_depth = int(len(selected_ops) - len(acceptance_events))
+    if seed_prefix_depth < 0:
         raise ValueError(
-            "ADAPT acceptance-event count does not match final selected-operator count. "
+            "ADAPT acceptance-event count exceeds final selected-operator count. "
             f"events={len(acceptance_events)} final={len(selected_ops)}"
         )
-    final_order_event_indices: list[int] = []
+
+    mixed_order: list[int] = [-(idx + 1) for idx in range(seed_prefix_depth)]
     prefix_orders_raw: list[tuple[int, ...]] = []
     for event_index, event in enumerate(acceptance_events):
-        pos = max(0, min(len(final_order_event_indices), int(event["effective_position"])))
-        final_order_event_indices.insert(pos, int(event_index))
-        prefix_orders_raw.append(tuple(int(x) for x in final_order_event_indices))
-    expected_labels = [str(op.label) for op in selected_ops]
+        pos = max(0, min(len(mixed_order), int(event["effective_position"])))
+        mixed_order.insert(pos, int(event_index))
+        prefix_orders_raw.append(tuple(int(x) for x in mixed_order if int(x) >= 0))
+
+    final_order_event_indices = [int(x) for x in mixed_order if int(x) >= 0]
+    final_order_positions = [idx for idx, marker in enumerate(mixed_order) if int(marker) >= 0]
+    if len(final_order_event_indices) != len(acceptance_events):
+        raise ValueError("ADAPT mixed-order reconstruction lost accepted-event markers.")
+    if final_order_positions != list(range(seed_prefix_depth, len(selected_ops))):
+        raise ValueError(
+            "ADAPT stage-unit audit requires accepted insertions to remain after the seeded prefix. "
+            f"seed_prefix_depth={seed_prefix_depth} final_event_positions={final_order_positions[:8]}"
+        )
+
+    psi_stage_ref = np.asarray(psi_ref, dtype=complex).reshape(-1)
+    for prefix_index in range(seed_prefix_depth):
+        seed_op = selected_ops[int(prefix_index)]
+        psi_stage_ref = _apply_single_polynomial(
+            np.asarray(psi_stage_ref, dtype=complex).reshape(-1),
+            seed_op.polynomial,
+            float(theta_final[prefix_index]),
+        )
+    psi_stage_ref = _normalize_state(psi_stage_ref)
+
+    expected_labels = [str(op.label) for op in selected_ops[seed_prefix_depth:]]
     actual_labels = [str(acceptance_events[idx]["base_label"]) for idx in final_order_event_indices]
     if actual_labels != expected_labels:
         raise ValueError(
-            "ADAPT acceptance-order reconstruction does not match final operator order. "
+            "ADAPT acceptance-order reconstruction does not match final accepted-operator order. "
             f"reconstructed={actual_labels[:8]} expected={expected_labels[:8]}"
         )
+
     units_by_event_index: dict[int, AuditUnit] = {}
-    for final_order_index, event_index in enumerate(final_order_event_indices):
+    for accepted_offset, event_index in enumerate(final_order_event_indices):
+        full_order_index = int(seed_prefix_depth + accepted_offset)
         event = acceptance_events[int(event_index)]
-        op = selected_ops[int(final_order_index)]
+        op = selected_ops[int(full_order_index)]
         units_by_event_index[int(event_index)] = _make_unit(
             stage="adapt_vqe",
             unit_index=int(event_index + 1),
             unit_kind="accepted_operator_insertion",
             unit_label=f"accept{int(event_index + 1)}:{str(op.label)}",
             base_label=str(op.label),
-            theta_value=float(theta_final[final_order_index]),
+            theta_value=float(theta_final[full_order_index]),
             polynomials=[op.polynomial],
             insertion_position=int(event["effective_position"]),
-            final_order_index=int(final_order_index),
+            final_order_index=int(full_order_index),
         )
     units = tuple(units_by_event_index[idx] for idx in range(len(acceptance_events)))
     full_order_ids = tuple(units_by_event_index[idx].unit_id for idx in final_order_event_indices)
@@ -527,18 +552,19 @@ def _adapt_stage_spec(stage_result: StageExecutionResult) -> StageAuditSpec:
     )
     return StageAuditSpec(
         stage="adapt_vqe",
-        reference_state=np.asarray(psi_ref, dtype=complex).reshape(-1),
+        reference_state=np.asarray(psi_stage_ref, dtype=complex).reshape(-1),
         expected_full_state=np.asarray(stage_result.psi_adapt, dtype=complex).reshape(-1),
         units_in_acceptance_order=units,
         full_order_ids=full_order_ids,
         prefix_order_ids=prefix_order_ids,
-        reference_energy=_state_energy(stage_result.hmat, psi_ref),
+        reference_energy=_state_energy(stage_result.hmat, psi_stage_ref),
         stage_metadata={
             "pool_type": str(adapt_ctx.get("pool_type", stage_result.adapt_payload.get("pool_type", "unknown"))),
             "continuation_mode": str(
                 adapt_ctx.get("continuation_mode", stage_result.adapt_payload.get("continuation_mode", "unknown"))
             ),
             "ansatz_depth": int(len(units)),
+            "seed_prefix_depth": int(seed_prefix_depth),
         },
     )
 

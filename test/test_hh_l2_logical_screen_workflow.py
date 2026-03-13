@@ -23,6 +23,15 @@ def _screen_cfg(
     points: tuple[wf.HamiltonianPoint, ...] | None = None,
     seed_count: int = 3,
     include_prefix_50: bool = False,
+    warm_vqe_reps_override: int | None = None,
+    warm_vqe_restarts_override: int | None = None,
+    warm_vqe_maxiter_override: int | None = None,
+    adapt_max_depth_override: int | None = None,
+    adapt_drop_min_depth_override: int | None = None,
+    adapt_maxiter_override: int | None = None,
+    final_vqe_reps_override: int | None = None,
+    final_vqe_restarts_override: int | None = None,
+    final_vqe_maxiter_override: int | None = None,
 ) -> wf.LogicalScreenConfig:
     if points is None:
         points = (wf.HamiltonianPoint(t=1.0, u=4.0, dv=0.0, omega0=1.0, g_ep=1.0),)
@@ -39,6 +48,15 @@ def _screen_cfg(
         adapt_pool="paop_lf_std",
         adapt_continuation_mode="phase3_v1",
         include_prefix_50=bool(include_prefix_50),
+        warm_vqe_reps_override=warm_vqe_reps_override,
+        warm_vqe_restarts_override=warm_vqe_restarts_override,
+        warm_vqe_maxiter_override=warm_vqe_maxiter_override,
+        adapt_max_depth_override=adapt_max_depth_override,
+        adapt_drop_min_depth_override=adapt_drop_min_depth_override,
+        adapt_maxiter_override=adapt_maxiter_override,
+        final_vqe_reps_override=final_vqe_reps_override,
+        final_vqe_restarts_override=final_vqe_restarts_override,
+        final_vqe_maxiter_override=final_vqe_maxiter_override,
     )
 
 
@@ -142,6 +160,36 @@ def test_select_median_records_is_deterministic_under_ties() -> None:
     assert selected[0].baseline_delta_abs == pytest.approx(0.2)
 
 
+
+def test_build_screen_staged_cfg_applies_optional_budget_overrides(tmp_path: Path) -> None:
+    screen_cfg = _screen_cfg(
+        tmp_path,
+        warm_vqe_reps_override=5,
+        warm_vqe_restarts_override=6,
+        warm_vqe_maxiter_override=2500,
+        adapt_max_depth_override=120,
+        adapt_drop_min_depth_override=30,
+        adapt_maxiter_override=3333,
+        final_vqe_reps_override=4,
+        final_vqe_restarts_override=6,
+        final_vqe_maxiter_override=2800,
+    )
+    point = screen_cfg.points[0]
+
+    staged_cfg, _audit_cfg, seeds, _run_dir = wf.build_screen_staged_cfg(screen_cfg, point=point, seed_index=0)
+
+    assert seeds.seed_index == 1
+    assert staged_cfg.warm_start.reps == 5
+    assert staged_cfg.warm_start.restarts == 6
+    assert staged_cfg.warm_start.maxiter == 2500
+    assert staged_cfg.adapt.max_depth == 120
+    assert staged_cfg.adapt.drop_min_depth == 30
+    assert staged_cfg.adapt.maxiter == 3333
+    assert staged_cfg.replay.reps == 4
+    assert staged_cfg.replay.restarts == 6
+    assert staged_cfg.replay.maxiter == 2800
+
+
 def test_run_screen_emits_baselines_and_median_seed_ablations(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -204,6 +252,9 @@ def test_run_screen_emits_baselines_and_median_seed_ablations(
                 "removal_penalty": 0.002,
                 "delta_energy_from_previous": 0.003,
             },
+            "accepted_insertion_count": 3,
+            "seed_prefix_depth": 2,
+            "final_adapt_depth": 5,
             "audit_extrema": {
                 "warm": {"min_delta_energy_from_previous": 0.05, "min_removal_penalty": 0.06},
                 "adapt": {"min_delta_energy_from_previous": 0.003, "min_removal_penalty": 0.002},
@@ -277,6 +328,10 @@ def test_run_screen_emits_baselines_and_median_seed_ablations(
         "tail_drop_1",
         "drop_weakest_accepted",
     }
+    assert {row["final_adapt_depth"] for row in rows} == {5}
+    assert {row["accepted_insertion_count"] for row in rows} == {3}
+    assert {row["accepted_operator_count"] for row in rows} == {3}
+    assert {row["seed_prefix_depth"] for row in rows} == {2}
 
     drop_row = next(row for row in ablation_rows if row["ablation_id"] == "drop_weakest_accepted")
     drop_payload = json.loads(Path(drop_row["handoff_input_json"]).read_text(encoding="utf-8"))

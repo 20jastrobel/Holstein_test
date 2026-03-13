@@ -79,6 +79,15 @@ class LogicalScreenConfig:
     adapt_pool: str | None
     adapt_continuation_mode: str
     include_prefix_50: bool = False
+    warm_vqe_reps_override: int | None = None
+    warm_vqe_restarts_override: int | None = None
+    warm_vqe_maxiter_override: int | None = None
+    adapt_max_depth_override: int | None = None
+    adapt_drop_min_depth_override: int | None = None
+    adapt_maxiter_override: int | None = None
+    final_vqe_reps_override: int | None = None
+    final_vqe_restarts_override: int | None = None
+    final_vqe_maxiter_override: int | None = None
 
 
 @dataclass
@@ -335,7 +344,7 @@ def _summarize_stage_baseline(stage_result: StageExecutionResult, *, last_k: int
         "warm_to_adapt_energy_drop": float(warm_energy - adapt_energy),
         "adapt_to_replay_energy_drop": float(adapt_energy - final_energy),
         "warm_to_replay_energy_drop": float(warm_energy - final_energy),
-        "accepted_operator_count": int(len(stage_result.adapt_payload.get("operators", []))),
+        "final_adapt_depth": int(len(stage_result.adapt_payload.get("operators", []))),
         "history_length": int(len(history)),
         "rescue_count": int(len(rescue_history)) if isinstance(rescue_history, Sequence) else 0,
         **marginal,
@@ -427,12 +436,24 @@ def _build_audit_context(
             units_in_acceptance_order=getattr(adapt_spec, "units_in_acceptance_order", []),
             adapt_rows=adapt_rows,
         )
+    adapt_stage_metadata = (
+        dict(getattr(adapt_spec, "stage_metadata", {}))
+        if isinstance(getattr(adapt_spec, "stage_metadata", {}), Mapping)
+        else {}
+    )
+    seed_prefix_depth = int(adapt_stage_metadata.get("seed_prefix_depth", 0)) if adapt_spec is not None else 0
+    accepted_insertion_count = int(len(adapt_rows))
+    final_adapt_depth = int(len(stage_result.adapt_payload.get("operators", [])))
     return {
         "payload": payload,
         "audit_json": Path(audit_cfg.output_json),
         "audit_csv": Path(audit_cfg.output_csv),
         "rows_by_stage": rows_by_stage,
         "weakest_adapt_unit": weakest,
+        "adapt_stage_metadata": adapt_stage_metadata,
+        "seed_prefix_depth": int(seed_prefix_depth),
+        "accepted_insertion_count": int(accepted_insertion_count),
+        "final_adapt_depth": int(final_adapt_depth),
         "audit_extrema": {
             "warm": _stage_row_extrema(rows_by_stage.get("warm_start", [])),
             "adapt": _stage_row_extrema(rows_by_stage.get("adapt_vqe", [])),
@@ -468,9 +489,63 @@ def build_screen_staged_cfg(
     staged_cfg = build_locked_staged_hh_audit_config(audit_cfg)
     staged_cfg = replace(
         staged_cfg,
-        warm_start=replace(staged_cfg.warm_start, seed=int(seeds.warm_seed)),
-        adapt=replace(staged_cfg.adapt, seed=int(seeds.adapt_seed)),
-        replay=replace(staged_cfg.replay, seed=int(seeds.final_seed)),
+        warm_start=replace(
+            staged_cfg.warm_start,
+            seed=int(seeds.warm_seed),
+            reps=(
+                int(screen_cfg.warm_vqe_reps_override)
+                if screen_cfg.warm_vqe_reps_override is not None
+                else int(staged_cfg.warm_start.reps)
+            ),
+            restarts=(
+                int(screen_cfg.warm_vqe_restarts_override)
+                if screen_cfg.warm_vqe_restarts_override is not None
+                else int(staged_cfg.warm_start.restarts)
+            ),
+            maxiter=(
+                int(screen_cfg.warm_vqe_maxiter_override)
+                if screen_cfg.warm_vqe_maxiter_override is not None
+                else int(staged_cfg.warm_start.maxiter)
+            ),
+        ),
+        adapt=replace(
+            staged_cfg.adapt,
+            seed=int(seeds.adapt_seed),
+            max_depth=(
+                int(screen_cfg.adapt_max_depth_override)
+                if screen_cfg.adapt_max_depth_override is not None
+                else int(staged_cfg.adapt.max_depth)
+            ),
+            drop_min_depth=(
+                int(screen_cfg.adapt_drop_min_depth_override)
+                if screen_cfg.adapt_drop_min_depth_override is not None
+                else staged_cfg.adapt.drop_min_depth
+            ),
+            maxiter=(
+                int(screen_cfg.adapt_maxiter_override)
+                if screen_cfg.adapt_maxiter_override is not None
+                else int(staged_cfg.adapt.maxiter)
+            ),
+        ),
+        replay=replace(
+            staged_cfg.replay,
+            seed=int(seeds.final_seed),
+            reps=(
+                int(screen_cfg.final_vqe_reps_override)
+                if screen_cfg.final_vqe_reps_override is not None
+                else int(staged_cfg.replay.reps)
+            ),
+            restarts=(
+                int(screen_cfg.final_vqe_restarts_override)
+                if screen_cfg.final_vqe_restarts_override is not None
+                else int(staged_cfg.replay.restarts)
+            ),
+            maxiter=(
+                int(screen_cfg.final_vqe_maxiter_override)
+                if screen_cfg.final_vqe_maxiter_override is not None
+                else int(staged_cfg.replay.maxiter)
+            ),
+        ),
         warm_checkpoint=replace(
             staged_cfg.warm_checkpoint,
             state_export_dir=run_dir / "state_export",
@@ -731,6 +806,9 @@ def _build_screen_row(
     replay_exact = replay_payload.get("exact", {}) if isinstance(replay_payload, Mapping) else {}
     weakest = audit_ctx.get("weakest_adapt_unit", None) if isinstance(audit_ctx, Mapping) else None
     audit_extrema = audit_ctx.get("audit_extrema", {}) if isinstance(audit_ctx, Mapping) else {}
+    final_adapt_depth = int(stage_metrics.get("final_adapt_depth", 0))
+    accepted_insertion_count = int(audit_ctx.get("accepted_insertion_count", 0)) if isinstance(audit_ctx, Mapping) else 0
+    seed_prefix_depth = int(audit_ctx.get("seed_prefix_depth", 0)) if isinstance(audit_ctx, Mapping) else 0
     row = {
         "point_id": str(point.point_id()),
         "t": float(point.t),
@@ -749,7 +827,10 @@ def _build_screen_row(
         "ablation_removed_operator_count": int(len(plan.removed_operator_indices)),
         "ablation_removed_operator_indices": [int(i) for i in plan.removed_operator_indices],
         "ablation_removed_label": plan.removed_label,
-        "accepted_operator_count": int(stage_metrics.get("accepted_operator_count", 0)),
+        "final_adapt_depth": int(final_adapt_depth),
+        "accepted_insertion_count": int(accepted_insertion_count),
+        "accepted_operator_count": int(accepted_insertion_count),
+        "seed_prefix_depth": int(seed_prefix_depth),
         "warm_energy": float(stage_metrics.get("warm_energy", float("nan"))),
         "warm_exact_energy": float(stage_metrics.get("warm_exact_energy", float("nan"))),
         "warm_delta_abs": float(stage_metrics.get("warm_delta_abs", float("nan"))),
@@ -910,7 +991,7 @@ def run_hh_l2_logical_screen(screen_cfg: LogicalScreenConfig) -> dict[str, Any]:
                 ablation_id="full_replay_baseline",
                 ablation_kind="baseline",
                 description="Canonical staged matched-family replay baseline.",
-                keep_operator_indices=tuple(range(int(stage_metrics.get("accepted_operator_count", 0)))),
+                keep_operator_indices=tuple(range(int(stage_metrics.get("final_adapt_depth", 0)))),
                 removed_operator_indices=tuple(),
             )
             baseline_row = _build_screen_row(
@@ -961,7 +1042,7 @@ def run_hh_l2_logical_screen(screen_cfg: LogicalScreenConfig) -> dict[str, Any]:
                 "warm_to_adapt_energy_drop",
                 "adapt_to_replay_energy_drop",
                 "warm_to_replay_energy_drop",
-                "accepted_operator_count",
+                "final_adapt_depth",
                 "history_length",
                 "last_k",
                 "last_k_tail_count",
@@ -991,6 +1072,9 @@ def run_hh_l2_logical_screen(screen_cfg: LogicalScreenConfig) -> dict[str, Any]:
             "audit_csv": Path(record.audit_cfg.output_csv),
             "weakest_adapt_unit": record.weakest_adapt_unit,
             "audit_extrema": dict(record.audit_extrema),
+            "final_adapt_depth": int(record.baseline_row.get("final_adapt_depth", 0)),
+            "accepted_insertion_count": int(record.baseline_row.get("accepted_insertion_count", 0)),
+            "seed_prefix_depth": int(record.baseline_row.get("seed_prefix_depth", 0)),
         }
         plans = _build_replay_ablation_plans(
             handoff_payload=handoff_payload,
@@ -1044,11 +1128,22 @@ def run_hh_l2_logical_screen(screen_cfg: LogicalScreenConfig) -> dict[str, Any]:
             "adapt_pool": screen_cfg.adapt_pool,
             "adapt_continuation_mode": str(screen_cfg.adapt_continuation_mode),
             "include_prefix_50": bool(screen_cfg.include_prefix_50),
+            "warm_vqe_reps_override": screen_cfg.warm_vqe_reps_override,
+            "warm_vqe_restarts_override": screen_cfg.warm_vqe_restarts_override,
+            "warm_vqe_maxiter_override": screen_cfg.warm_vqe_maxiter_override,
+            "adapt_max_depth_override": screen_cfg.adapt_max_depth_override,
+            "adapt_drop_min_depth_override": screen_cfg.adapt_drop_min_depth_override,
+            "adapt_maxiter_override": screen_cfg.adapt_maxiter_override,
+            "final_vqe_reps_override": screen_cfg.final_vqe_reps_override,
+            "final_vqe_restarts_override": screen_cfg.final_vqe_restarts_override,
+            "final_vqe_maxiter_override": screen_cfg.final_vqe_maxiter_override,
             "core_ablation_ids": list(_CORE_ABLATION_IDS),
             "points": [asdict(point) for point in screen_cfg.points],
         },
         "metric_semantics": {
-            "accepted_operator_count": "Final accepted ADAPT operator count from the canonical staged baseline.",
+            "final_adapt_depth": "Total final ADAPT operator count in the canonical staged baseline, including any seeded prefix operators.",
+            "accepted_insertion_count": "Number of audited accepted ADAPT insertions beyond any seeded prefix.",
+            "accepted_operator_count": "Alias for accepted_insertion_count kept for first-pass CSV compatibility.",
             "last_k_marginal_gains": "Tail of ADAPT delta_abs_drop_from_prev values from accepted iterations only.",
             "stall_step_count": "Count of ADAPT history rows with drop_low_signal or depth_rollback or nonpositive marginal gain.",
             "weakest_adapt_removal_penalty": "Smallest fixed-parameter ADAPT audit removal penalty chosen for single-operator replay ablation.",
@@ -1095,6 +1190,15 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default="phase3_v1",
     )
     parser.add_argument("--include-prefix-50", action="store_true")
+    parser.add_argument("--warm-vqe-reps", type=int, default=None)
+    parser.add_argument("--warm-vqe-restarts", type=int, default=None)
+    parser.add_argument("--warm-vqe-maxiter", type=int, default=None)
+    parser.add_argument("--adapt-max-depth", type=int, default=None)
+    parser.add_argument("--adapt-drop-min-depth", type=int, default=None)
+    parser.add_argument("--adapt-maxiter", type=int, default=None)
+    parser.add_argument("--final-vqe-reps", type=int, default=None)
+    parser.add_argument("--final-vqe-restarts", type=int, default=None)
+    parser.add_argument("--final-vqe-maxiter", type=int, default=None)
     parser.add_argument("--screen-tag", type=str, default=_DEFAULT_SCREEN_TAG)
     parser.add_argument("--run-root", type=Path, default=_DEFAULT_RUN_ROOT)
     parser.add_argument("--output-json", type=Path, default=_DEFAULT_OUTPUT_JSON)
@@ -1107,6 +1211,15 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> LogicalScreenConfig:
     seed_count = int(args.seed_count)
     if seed_count <= 0 or (seed_count % 2) == 0:
         raise ValueError("--seed-count must be a positive odd integer so a unique median seed exists.")
+
+    def _maybe_positive_int(raw: Any, *, flag: str) -> int | None:
+        if raw is None:
+            return None
+        value = int(raw)
+        if value <= 0:
+            raise ValueError(f"{flag} must be a positive integer when provided.")
+        return value
+
     points = resolve_screen_points(
         point_preset=str(args.point_preset),
         raw_points=(None if args.points is None else str(args.points)),
@@ -1126,6 +1239,15 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> LogicalScreenConfig:
         adapt_pool=(None if args.adapt_pool is None else str(args.adapt_pool)),
         adapt_continuation_mode=str(args.adapt_continuation_mode),
         include_prefix_50=bool(args.include_prefix_50),
+        warm_vqe_reps_override=_maybe_positive_int(args.warm_vqe_reps, flag="--warm-vqe-reps"),
+        warm_vqe_restarts_override=_maybe_positive_int(args.warm_vqe_restarts, flag="--warm-vqe-restarts"),
+        warm_vqe_maxiter_override=_maybe_positive_int(args.warm_vqe_maxiter, flag="--warm-vqe-maxiter"),
+        adapt_max_depth_override=_maybe_positive_int(args.adapt_max_depth, flag="--adapt-max-depth"),
+        adapt_drop_min_depth_override=_maybe_positive_int(args.adapt_drop_min_depth, flag="--adapt-drop-min-depth"),
+        adapt_maxiter_override=_maybe_positive_int(args.adapt_maxiter, flag="--adapt-maxiter"),
+        final_vqe_reps_override=_maybe_positive_int(args.final_vqe_reps, flag="--final-vqe-reps"),
+        final_vqe_restarts_override=_maybe_positive_int(args.final_vqe_restarts, flag="--final-vqe-restarts"),
+        final_vqe_maxiter_override=_maybe_positive_int(args.final_vqe_maxiter, flag="--final-vqe-maxiter"),
     )
 
 

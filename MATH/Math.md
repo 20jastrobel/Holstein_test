@@ -1339,14 +1339,27 @@ In code, these are built from phonon ladder operators on the site’s phonon reg
 - `p_i(site) = i*(b_i^† - b_i)` gives \(P_i\),
 - `x_i(site)` multiplies `boson_displacement_operator(..., which="x")` so \(x_i=b_i+b_i^\dagger\).
 
-### 10.1.3 Doublon primitive
+### 10.1.3 Local squeeze primitive
+
+The newly added squeeze-like phonon primitive used by the probe families is
+$$
+S_i=i\left((\hat b_i^{\dagger})^2-\hat b_i^2\right).
+$$
+
+In code this is built as
+$$
+S_i=i\,\hat b_i^{\dagger}\hat b_i^{\dagger}-i\,\hat b_i\hat b_i,
+$$
+with intermediate polynomial products cleaned by the same PAOP pruning / real-coefficient rules used for the other generators.
+
+### 10.1.4 Doublon primitive
 
 The local doublon primitive is the explicit operator from Section 3.3:
 $$
 \hat d_i=\frac{1}{4}\Bigl(I-Z_{p_{i\uparrow}}-Z_{p_{i\downarrow}}+Z_{p_{i\uparrow}}Z_{p_{i\downarrow}}\Bigr).
 $$
 
-### 10.1.4 Even hopping channel
+### 10.1.5 Even hopping channel
 
 The even hopping channel is
 $$
@@ -1356,7 +1369,7 @@ K_{ij}=\sum_{\sigma}\left(
 \right).
 $$
 
-### 10.1.5 Odd current channel
+### 10.1.6 Odd current channel
 
 The odd current channel is
 $$
@@ -1414,34 +1427,77 @@ $$
 \mathcal O_{\mathrm{hop2},ij}=K_{ij}(P_i-P_j)^2.
 $$
 
-### 10.2.6 Extended cloud channels
+In the implementation, this family drops terms that are identity on every phonon qubit after the polynomial is formed, so the retained generator keeps explicit phonon support.
+
+### 10.2.6 Third-order odd current channel
+
+The newly added LF third-order odd channel is
+$$
+\mathcal O_{\mathrm{curdrag3},ij}=J_{ij}(P_i-P_j)^3.
+$$
+
+The concrete builder label is
+- `paop_curdrag3(i,j)`.
+
+### 10.2.7 Fourth-order even hopping channel
+
+The newly added LF fourth-order even channel is
+$$
+\mathcal O_{\mathrm{hop4},ij}=K_{ij}(P_i-P_j)^4.
+$$
+
+As with `hop2`, the implementation drops terms that are identity on all phonon qubits after the product is expanded and cleaned.
+
+The concrete builder label is
+- `paop_hop4(i,j)`.
+
+### 10.2.8 Local squeeze channels
+
+The newly added squeeze-family channels are
+$$
+\mathcal O_{\mathrm{sq},i}=S_i,
+\qquad
+\mathcal O_{\mathrm{dens\_sq},i}=\tilde n_i S_i.
+$$
+
+The concrete builder labels are
+- `paop_sq(site=i)`,
+- `paop_dens_sq(site=i)`.
+
+### 10.2.9 Extended cloud channels
 
 For cloud radius `R`, the implemented extended cloud channels are
 $$
 \mathcal O_{\mathrm{cloud\_p},i\to j}=\tilde n_i P_j,
 \qquad
 \mathcal O_{\mathrm{cloud\_x},i\to j}=\tilde n_i x_j,
+\qquad
+\mathcal O_{\mathrm{cloud\_sq},i\to j}=\tilde n_i S_j,
 $$
 with the distance gate `\operatorname{dist}(i,j)\le R`.
 
 The concrete operator labels emitted by the builder are
 - `paop_cloud_p(site=i->phonon=j)`,
-- `paop_cloud_x(site=i->phonon=j)`.
+- `paop_cloud_x(site=i->phonon=j)`,
+- `paop_cloud_sq(site=i->phonon=j)`.
 
-For `paop_full`/`paop_lf_full`, effective radius is forced to at least 1 (`--paop-r=0` maps to nearest-neighbor cloud support).
+For `paop_full`, `paop_lf_full`, and `paop_sq_full`, effective radius is forced to at least 1 (`--paop-r=0` maps to nearest-neighbor cloud support).
 
-### 10.2.7 Doublon-translation channels
+### 10.2.10 Doublon-translation and doublon-squeeze channels
 
-The implemented doublon-translation channels are
+The implemented doublon-conditioned phonon channels are
 $$
 \mathcal O_{\mathrm{dbl\_p},i\to j}=\hat d_i P_j,
 \qquad
-\mathcal O_{\mathrm{dbl\_x},i\to j}=\hat d_i x_j.
+\mathcal O_{\mathrm{dbl\_x},i\to j}=\hat d_i x_j,
+\qquad
+\mathcal O_{\mathrm{dbl\_sq},i\to j}=\hat d_i S_j.
 $$
 
 The concrete labels are
 - `paop_dbl_p(site=i->phonon=j)`,
-- `paop_dbl_x(site=i->phonon=j)`.
+- `paop_dbl_x(site=i->phonon=j)`,
+- `paop_dbl_sq(site=i->phonon=j)`.
 
 ## 10.3 Pool-family map
 
@@ -1454,7 +1510,13 @@ The current pool-family map is:
 - `paop_full` = `disp + doublon + hopdrag + cloud_p + cloud_x`
 - `paop_lf_std` = `disp + hopdrag + curdrag`
 - `paop_lf2_std` = `disp + hopdrag + curdrag + hop2`
+- `paop_lf3_std` = `paop_lf2_std + curdrag3`  *(experimental / offline-probe-only)*
+- `paop_lf4_std` = `paop_lf3_std + hop4`  *(experimental / offline-probe-only)*
 - `paop_lf_full` = `disp + hopdrag + curdrag + hop2 + cloud_p + cloud_x + dbl_p + dbl_x`
+- `paop_sq_std` = `disp + hopdrag + curdrag + sq + dens_sq`  *(experimental / offline-probe-only)*
+- `paop_sq_full` = `paop_sq_std + cloud_sq + dbl_sq`  *(experimental / offline-probe-only)*
+
+These four newly added probe families are opt-in exact-noiseless / local-analysis surfaces. They are not the canonical staged default and they are not folded into the default `full_meta` staging preset.
 
 The implementation then optionally applies
 
@@ -1470,7 +1532,233 @@ $$
 g_m^{(n)}=i\langle\psi^{(n)}|[\hat H,A_m]|\psi^{(n)}\rangle.
 $$
 
-This document keeps that primitive, but the implemented HH stack now adds pool construction, staged continuation, shortlist scoring, and handoff provenance on top of it.
+On the compiled production path this is evaluated as
+$$
+g_m^{(n)}=2\,\Im\langle H\psi^{(n)}\mid A_m\psi^{(n)}\rangle,
+$$
+with
+$$
+|\psi^{(n)}\rangle=
+\exp(-i\theta_n A_{m_n})\cdots \exp(-i\theta_1 A_{m_1})|\psi_{\mathrm{ref}}\rangle.
+$$
+
+So the implemented ADAPT selector is still gradient-based at its core, but in the staged HH path the raw gradient is wrapped in a scored selection workflow rather than used by a naked `argmax |g|` alone.
+
+### 10.4.1 Legacy fallback selector
+
+If phase-1 continuation scoring is disabled, the selector reduces to the legacy rule
+$$
+m_{\star}=\arg\max_{m\in\mathcal P_{\mathrm{avail}}}|g_m^{(n)}|.
+$$
+
+If repeated operator reuse is allowed, the live code applies the repeat-biased surrogate
+$$
+\widetilde s_m^{\mathrm{repeat}}
+=\frac{|g_m^{(n)}|}{1+\beta\,c_m},
+\qquad
+\beta=1.5,
+$$
+where `c_m` is the prior selection count of pool element `m`. The chosen legacy operator is then
+$$
+m_{\star}=\arg\max_{m\in\mathcal P_{\mathrm{avail}}}\widetilde s_m^{\mathrm{repeat}}.
+$$
+
+### 10.4.2 Phase-1 cheap candidate universe
+
+When phase-1 scoring is enabled, the code first sorts the available pool by descending gradient magnitude and keeps the cheap pre-shortlist
+$$
+\mathcal C_{64}
+=\text{top-}\min\{64,|\mathcal P_{\mathrm{avail}}|\}\text{ candidates ranked by }|g_m^{(n)}|.
+$$
+
+Write the append position as
+$$
+p_{\mathrm{app}}=n,
+$$
+where `n` is the current ADAPT depth / parameter count.
+
+For a tentative insertion position `p`, the reoptimization-active window is built from the current parameter vector `\theta` by the implemented window policy:
+
+1. keep the newest `w_{\mathrm{eff}}=\min\{w,n\}` indices,
+2. among older indices, optionally keep the top-`k` by descending `|\theta_j|`, tie-breaking by ascending index.
+
+So the active refit set is
+$$
+W_{\mathrm{refit}}(p)=W_{\mathrm{newest}}\cup W_{\mathrm{top}|\theta|}.
+$$
+
+### 10.4.3 Phase-1 feature build and gating
+
+For each candidate-position pair `(m,p)` in the cheap phase-1 scan, the code builds a feature object containing
+
+- signed and absolute gradients `g_m`, `|g_m|`,
+- lower-confidence gradient `g_{\mathrm{lcb}}`,
+- compile-cost proxy,
+- measurement-cache proxy,
+- predicted active refit window,
+- family/stage metadata,
+- symmetry/leakage metadata.
+
+The stage gate is
+$$
+\Gamma_{\mathrm{stage}}(m)=
+\begin{cases}
+1, & \text{stage = residual},\\
+1, & \text{stage = core/seed and } m \notin \mathcal P_{\mathrm{residual}},\\
+0, & \text{stage = core/seed and } m \in \mathcal P_{\mathrm{residual}}.
+\end{cases}
+$$
+
+The leakage hard gate is
+$$
+\Gamma_{\mathrm{leak}}(m)=
+\begin{cases}
+0, & \text{candidate symmetry spec has } \texttt{hard\_guard=true},\\
+1, & \text{otherwise}.
+\end{cases}
+$$
+
+If either gate is closed, the candidate score is set to `-\infty`.
+
+The compile-cost oracle used inside the score is explicitly
+$$
+D_{\mathrm{proxy}}
+=n_{\mathrm{new\,pauli}}
++n_{\mathrm{rot}}
++|p_{\mathrm{app}}-p|
++|W_{\mathrm{refit}}(p)|.
+$$
+
+The grouped measurement-cache audit tracks
+$$
+G_{\mathrm{new}},\qquad S_{\mathrm{new}},\qquad R_{\mathrm{reuse}},
+$$
+for new groups, new nominal-shot burden, and grouped-reuse miss count respectively.
+
+In the current live phase-1 path the builder uses
+$$
+\sigma=0,
+\qquad
+F_{\mathrm{phase1}}=|g_m^{(n)}|,
+$$
+so the current cheap-path lower-confidence gradient is simply
+$$
+g_{\mathrm{lcb}}=|g_m^{(n)}|.
+$$
+
+The cheap score itself is `simple_v1` from Section 10.6.1.
+
+### 10.4.4 Position probing and trough detection
+
+The selector does not always append. Outside the residual stage, it probes alternate insertion positions when one of the implemented triggers fires:
+
+- drop plateau,
+- `eps_grad` plus flat finite-angle behavior,
+- repeated-family flatness.
+
+If probing is enabled, the allowed candidate positions are
+$$
+\mathcal P_{\mathrm{probe}}
+=\{p_{\mathrm{app}},0\}\cup W_{\mathrm{refit}}(p_{\mathrm{app}}),
+$$
+truncated to the configured maximum number of probe positions.
+
+The implementation then evaluates `simple_v1` over all `(m,p)` pairs with
+$$
+m\in\mathcal C_{64},
+\qquad
+p\in\mathcal P_{\mathrm{probe}}.
+$$
+
+The trough detector compares the best append score against the best non-append score. A trough is declared when
+$$
+g_{\mathrm{lcb}}^{\mathrm{nonappend}}>0
+$$
+and either
+$$
+S_{\mathrm{nonappend}}\ge \mu\,S_{\mathrm{append}},
+$$
+or
+$$
+S_{\mathrm{append}}<\tau_{\mathrm{append}}
+\quad\text{and}\quad
+S_{\mathrm{nonappend}}\ge \tau_{\mathrm{append}},
+$$
+where `\mu` is the configured probe-margin ratio and `\tau_{\mathrm{append}}` is the append-admit threshold.
+
+### 10.4.5 Phase-2 shortlist and full reranking
+
+If phase-2/full scoring is enabled, the phase-1 records are reduced again by the cheap-score shortlist rule
+$$
+N_{\mathrm{short}}
+=\min\left\{
+N,
+N_{\max},
+\left\lceil f_{\mathrm{short}}N\right\rceil
+\right\},
+$$
+where
+
+- `N` is the number of cheap records,
+- `N_max = shortlist_size`,
+- `f_short = shortlist_fraction`.
+
+The retained shortlist is the top `N_short` records ranked by
+
+1. descending cheap score,
+2. descending `simple_score`,
+3. ascending pool index,
+4. ascending insertion position.
+
+For each shortlisted record the code then rebuilds a richer feature set:
+
+- recompute the candidate gradient on the current state,
+- compute exact tangent-norm metric `F_metric`,
+- compute novelty `\nu` against the active window,
+- compute the curvature proxy `(\hat h,b,H_{\mathrm{window}})`,
+- add motif bonus and lifetime-cost terms when enabled,
+- optionally replace a macro-generator by its best runtime-split child.
+
+So the full record score is `full_v2` from Section 10.6.3, not the cheap `simple_v1` score.
+
+### 10.4.6 Optional greedy batch selection
+
+In core stage, if phase-2 batching is enabled, the code greedily builds a near-degenerate batch instead of taking only one record immediately.
+
+For records `a` and `b`, the compatibility penalty is
+$$
+\Pi(a,b)=w_{\mathrm{ov}}\,O(a,b)
++w_{\mathrm{comm}}\,N(a,b)
++w_{\mathrm{curv}}\,C(a,b)
++w_{\mathrm{sched}}\,S(a,b),
+$$
+where
+
+- `O(a,b)` is support-overlap Jaccard score,
+- `N(a,b)` is the noncommutation indicator,
+- `C(a,b)` is cross-curvature / tangent-overlap penalty,
+- `S(a,b)` is active-window overlap.
+
+A candidate `r` is admitted into the growing batch `\mathcal B` only if
+$$
+S_{\mathrm{full}}(r)-\sum_{b\in\mathcal B}\Pi(r,b)>0,
+$$
+and, once a top record exists, only if it is also near-degenerate with the current best score:
+$$
+S_{\mathrm{full}}(r)\ge \eta_{\mathrm{deg}}\,S_{\mathrm{full}}^{\mathrm{top}}.
+$$
+
+The selected batch is capped by the configured batch-size limits, and the top-ranked record in that batch still supplies the primary insertion position and headline selection score.
+
+### 10.4.7 Effective selector by mode
+
+So the currently implemented ADAPT selection criterion is mode-dependent:
+
+- `legacy`: choose the largest `|g|` (or repeat-biased `|g|` when repeats are allowed),
+- `phase1_v1`: choose the `(m,p)` pair with maximal `simple_v1` over the probed positions,
+- `phase2_v1` / `phase3_v1`: cheap-rank by `simple_v1`, shortlist, rerank by `full_v2`, and optionally batch-select compatible near-degenerate records in core stage.
+
+This is the present-tense repo behavior. The selection surface is therefore no longer just “pick the largest commutator gradient,” even though the gradient remains the primitive signal under every mode.
 
 ## 10.5 Current HH pool composition rules
 
@@ -1480,7 +1768,8 @@ The active HH ADAPT surface in `pipelines/hardcoded/adapt_pipeline.py` supports
 - `full_meta`,
 - `uccsd_paop_lf_full`,
 - `paop`, `paop_min`, `paop_std`, `paop_full`,
-- `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf_full`,
+- `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf3_std`, `paop_lf4_std`, `paop_lf_full`,
+- `paop_sq_std`, `paop_sq_full`,
 - `full_hamiltonian`.
 
 For staged HH continuation modes `phase1_v1`, `phase2_v1`, and `phase3_v1`, the code enforces
@@ -1497,7 +1786,7 @@ with
 $$
 \mathcal P_{\mathrm{core}}=\mathcal P_{\mathrm{paop\_lf\_std}},
 \qquad
-\mathcal P_{\mathrm{residual}}=\mathcal P_{\mathrm{full\_meta}}\setminus \mathcal P_{\mathrm{core}}.
+\mathcal P_{\mathrm{residual}}=\mathcal P_{\mathrm{full\_meta}}\backslash \mathcal P_{\mathrm{core}}.
 $$
 
 ## 10.6 Implemented continuation scoring
@@ -1531,6 +1820,20 @@ For the currently implemented family defaults in `build_symmetry_spec`,
 - `paop`, `paop_*`, `uccsd`, `hva`, and `core` receive `\ell=0`,
 - `residual`, `full_meta`, and `full_hamiltonian` receive `\ell=0.1`,
 - uncategorized families fall back to `\ell=0.2`.
+
+The live `simple_v1` defaults from `SimpleScoreConfig` are
+$$
+\lambda_F=1.0,
+\qquad
+\lambda_{\mathrm{compile}}=0.05,
+\qquad
+\lambda_{\mathrm{measure}}=0.02,
+\qquad
+\lambda_{\mathrm{leak}}=0.0,
+\qquad
+z_\alpha=0.0.
+$$
+So on the current production path there is no extra confidence shrinkage beyond the raw `|g|` term.
 
 ### 10.6.2 Trust-region drop proxy
 
@@ -1640,6 +1943,62 @@ $$
 where `N_rem` is the remaining-evaluations proxy. In the implemented `remaining_depth` mode,
 $$
 N_{\mathrm{rem}}=d_{\max}-d+1.
+$$
+
+The live `full_v2` defaults from `FullScoreConfig` are
+$$
+z_\alpha=0,
+\quad
+\lambda_F=1,
+\quad
+\lambda_H=10^{-6},
+\quad
+\rho=0.25,
+\quad
+\eta_L=0,
+\quad
+\gamma_N=1,
+$$
+$$
+w_D=0.2,
+\quad
+w_G=0.15,
+\quad
+w_C=0.15,
+\quad
+w_P=0.1,
+\quad
+w_c=0.1,
+\quad
+w_{\mathrm{life}}=0.05,
+\quad
+w_{\mathrm{motif}}=0.05,
+$$
+with normalization references
+$$
+D_{\mathrm{ref}}=G_{\mathrm{ref}}=S_{\mathrm{ref}}=P_{\mathrm{ref}}=R_{\mathrm{ref}}=1.
+$$
+The live shortlist / batching defaults are
+$$
+f_{\mathrm{short}}=0.2,
+\qquad
+N_{\max}=12,
+\qquad
+N_{\mathrm{batch,target}}=2,
+\qquad
+N_{\mathrm{batch,cap}}=3,
+\qquad
+\eta_{\mathrm{deg}}=0.9.
+$$
+The live compatibility weights are
+$$
+w_{\mathrm{ov}}=0.4,
+\qquad
+w_{\mathrm{comm}}=0.2,
+\qquad
+w_{\mathrm{curv}}=0.2,
+\qquad
+w_{\mathrm{sched}}=0.2.
 $$
 
 This is the implemented “useful predicted drop divided by burden” surface, not a future plan.

@@ -240,6 +240,51 @@ def test_extract_adapt_units_uses_acceptance_order_and_insertion_history() -> No
 
 
 
+def test_extract_adapt_units_treats_seeded_prefix_as_stage_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    final_selected_ops = [
+        _DummyAnsatzTerm("seed_0", _DummyPoly("e")),
+        _DummyAnsatzTerm("seed_1", _DummyPoly("e")),
+        _DummyAnsatzTerm("B", _DummyPoly("x")),
+        _DummyAnsatzTerm("A", _DummyPoly("z")),
+    ]
+
+    def _fake_apply(psi: np.ndarray, polynomial: _DummyPoly, theta_value: float) -> np.ndarray:
+        _ = polynomial
+        rolled = np.roll(np.asarray(psi, dtype=complex), 1)
+        return wf._normalize_state(np.asarray(rolled, dtype=complex) * complex(1.0 + theta_value, 0.0))
+
+    monkeypatch.setattr(wf, "_apply_single_polynomial", _fake_apply)
+    stage_result = _stage_result(
+        adapt_ctx={
+            "selected_ops": final_selected_ops,
+            "theta": np.asarray([0.9, 0.8, 0.2, 0.1]),
+            "reference_state": _basis(2, 0),
+            "pool_type": "paop_lf_std",
+            "continuation_mode": "phase3_v1",
+        },
+        adapt_payload={
+            "history": [
+                {"selected_op": "A", "selected_position": 2},
+                {"selected_op": "B", "selected_position": 2},
+            ]
+        },
+        psi_adapt=_basis(2, 0),
+    )
+
+    spec = wf._adapt_stage_spec(stage_result)
+    units_by_id = {unit.unit_id: unit for unit in spec.units_in_acceptance_order}
+
+    assert spec.stage_metadata["seed_prefix_depth"] == 2
+    assert [unit.base_label for unit in spec.units_in_acceptance_order] == ["A", "B"]
+    assert [unit.theta_value for unit in spec.units_in_acceptance_order] == pytest.approx([0.1, 0.2])
+    assert [unit.final_order_index for unit in spec.units_in_acceptance_order] == [3, 2]
+    assert [units_by_id[unit_id].base_label for unit_id in spec.full_order_ids] == ["B", "A"]
+    assert [
+        [units_by_id[unit_id].base_label for unit_id in order_ids]
+        for order_ids in spec.prefix_order_ids
+    ] == [["A"], ["B", "A"]]
+
+
 def test_compute_stage_audit_rows_prefix_and_removal_penalties(monkeypatch: pytest.MonkeyPatch) -> None:
     x_poly = _DummyPoly("x", matrix=np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex))
     i_poly = _DummyPoly("e", matrix=np.eye(2, dtype=complex))

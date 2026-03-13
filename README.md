@@ -173,6 +173,7 @@ graph TB
 
 - `hubbard` pools: `uccsd`, `cse`, `full_hamiltonian`.
 - `hh` pools: `hva`, `full_hamiltonian`, `paop_min`, `paop_std`, `paop_full`, `paop_lf` (`paop_lf_std` alias), `paop_lf2_std`, `paop_lf_full`.
+- Experimental offline/local exact-noiseless probe families: `paop_lf3_std`, `paop_lf4_std`, `paop_sq_std`, `paop_sq_full`.
 - HH staged continuation default for new agent work: `phase3_v1` start from the narrow HH core and runtime-resolve depth-0 HH ADAPT to `paop_lf_std`.
 - HH built-in combined preset: `uccsd_paop_lf_full` = `uccsd_lifted + paop_lf_full` (deduplicated) via one CLI value.
 - HH full-meta preset: `full_meta` = `uccsd_lifted + hva + paop_full + paop_lf_full` (deduplicated) via one CLI value; keep it as a compatibility/broad-pool preset and replay fallback, not the default depth-0 staged HH pool.
@@ -181,6 +182,7 @@ graph TB
 - `paop_std`: displacement plus dressed-hopping (`hopdrag`) operators.
 - `paop_full`: `paop_std` plus doublon dressing and extended cloud operators.
 - `paop_lf_std`: `paop_std` plus LF-leading odd channel (`curdrag`).
+- These experimental families are opt-in only; they are not part of the canonical staged default and are not folded into default `full_meta`.
 - HH merge behavior (when `g_ep != 0`): merge `hva` + `hh_termwise_augmented` + selected `paop_*` pool, then deduplicate by polynomial signature.
 
 ### Compiled speedup stack note (2026-03-04)
