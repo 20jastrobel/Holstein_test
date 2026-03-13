@@ -35,6 +35,17 @@ class CandidateFeatures:
     trough_detected: bool
     simple_score: float | None
     score_version: str
+    F_raw: float | None = None
+    Q_window: list[list[float]] | None = None
+    q_window: list[float] | None = None
+    h_raw: float | None = None
+    b_mixed: list[float] | None = None
+    H_window_hessian: list[list[float]] | None = None
+    M_window: list[list[float]] | None = None
+    h_eff: float | None = None
+    F_red: float | None = None
+    q_reduced: list[float] | None = None
+    ridge_used: float | None = None
     h_hat: float | None = None
     b_hat: list[float] | None = None
     H_window: list[list[float]] | None = None
@@ -43,10 +54,11 @@ class CandidateFeatures:
     new_shot_cost: float = 0.0
     opt_dim_cost: float = 0.0
     reuse_count_cost: float = 0.0
+    family_repeat_cost: float = 0.0
     full_v2_score: float | None = None
     shortlist_rank: int | None = None
     shortlist_size: int | None = None
-    actual_fallback_mode: str = "simple_v1_only"
+    actual_fallback_mode: str = "screen_only"
     compatibility_penalty_total: float = 0.0
     generator_id: str | None = None
     template_id: str | None = None

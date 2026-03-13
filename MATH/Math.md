@@ -1686,7 +1686,7 @@ S_{\mathrm{nonappend}}\ge \tau_{\mathrm{append}},
 $$
 where `\mu` is the configured probe-margin ratio and `\tau_{\mathrm{append}}` is the append-admit threshold.
 
-### 10.4.5 Phase-2 shortlist and full reranking
+### 10.4.5 Phase-2 shortlist and append-only full reranking
 
 If phase-2/full scoring is enabled, the phase-1 records are reduced again by the cheap-score shortlist rule
 $$
@@ -1708,57 +1708,34 @@ The retained shortlist is the top `N_short` records ranked by
 1. descending cheap score,
 2. descending `simple_score`,
 3. ascending pool index,
-4. ascending insertion position.
+4. ascending append position.
 
-For each shortlisted record the code then rebuilds a richer feature set:
+For each shortlisted record the code now rebuilds a richer append-only feature set:
 
-- recompute the candidate gradient on the current state,
-- compute exact tangent-norm metric `F_metric`,
-- compute novelty `\nu` against the active window,
-- compute the curvature proxy `(\hat h,b,H_{\mathrm{window}})`,
-- add motif bonus and lifetime-cost terms when enabled,
+- recompute the append gradient on the current state,
+- build the exact inherited-window parameter tangents of the current scaffold,
+- build the exact inherited-window Hessian block,
+- build the candidate self-curvature and mixed candidate-window Hessian vector,
+- form the reduced-path metric and reduced-path novelty,
 - optionally replace a macro-generator by its best runtime-split child.
 
-So the full record score is `full_v2` from Section 10.6.3, not the cheap `simple_v1` score.
+The expensive phase-2 rerank is therefore no longer a tangent-overlap / Schur proxy. It is the reduced-path score of Section 10.6.3.
 
-### 10.4.6 Optional greedy batch selection
-
-In core stage, if phase-2 batching is enabled, the code greedily builds a near-degenerate batch instead of taking only one record immediately.
-
-For records `a` and `b`, the compatibility penalty is
-$$
-\Pi(a,b)=w_{\mathrm{ov}}\,O(a,b)
-+w_{\mathrm{comm}}\,N(a,b)
-+w_{\mathrm{curv}}\,C(a,b)
-+w_{\mathrm{sched}}\,S(a,b),
-$$
-where
-
-- `O(a,b)` is support-overlap Jaccard score,
-- `N(a,b)` is the noncommutation indicator,
-- `C(a,b)` is cross-curvature / tangent-overlap penalty,
-- `S(a,b)` is active-window overlap.
-
-A candidate `r` is admitted into the growing batch `\mathcal B` only if
-$$
-S_{\mathrm{full}}(r)-\sum_{b\in\mathcal B}\Pi(r,b)>0,
-$$
-and, once a top record exists, only if it is also near-degenerate with the current best score:
-$$
-S_{\mathrm{full}}(r)\ge \eta_{\mathrm{deg}}\,S_{\mathrm{full}}^{\mathrm{top}}.
-$$
-
-The selected batch is capped by the configured batch-size limits, and the top-ranked record in that batch still supplies the primary insertion position and headline selection score.
-
-### 10.4.7 Effective selector by mode
+### 10.4.6 Effective selector by mode
 
 So the currently implemented ADAPT selection criterion is mode-dependent:
 
 - `legacy`: choose the largest `|g|` (or repeat-biased `|g|` when repeats are allowed),
-- `phase1_v1`: choose the `(m,p)` pair with maximal `simple_v1` over the probed positions,
-- `phase2_v1` / `phase3_v1`: cheap-rank by `simple_v1`, shortlist, rerank by `full_v2`, and optionally batch-select compatible near-degenerate records in core stage.
+- `phase1_v1`: append-only cheap-rank by `simple_v1` and admit one candidate,
+- `phase2_v1` / `phase3_v1`: append-only cheap-rank by `simple_v1`, shortlist, rerank by `full_v2`, and admit exactly one candidate.
 
-This is the present-tense repo behavior. The selection surface is therefore no longer just “pick the largest commutator gradient,” even though the gradient remains the primitive signal under every mode.
+In the staged HH continuation path there is now
+
+- no non-append position search,
+- no trough rescue into non-append positions,
+- no greedy batch selection,
+- no active motif add-on term in the score,
+- no active leakage factor in the score.
 
 ## 10.5 Current HH pool composition rules
 
@@ -1791,217 +1768,155 @@ $$
 
 ## 10.6 Implemented continuation scoring
 
-The older continuation discussion is replaced here by the actual implemented score surfaces.
+The active staged HH continuation surface is the append-only, refit-aware reduced-path score.
 
 ### 10.6.1 `simple_v1`
 
-If the stage and leakage gates are open, the simple score is
+The cheap append-only screen uses the lower-confidence append slope
+$$
+g_{\mathrm{lcb}}=\max\{|g|-z_{\alpha}\sigma,0\},
+$$
+and the raw append tangent norm
+$$
+F_{\mathrm{raw}}=\|t_m\|^2.
+$$
+
+If the stage gate is open, the cheap score is
 $$
 S_{\mathrm{simple}}
 =
-|g|
-+\lambda_F F
--\lambda_{\mathrm{compile}} C_{\mathrm{proxy}}
--\lambda_{\mathrm{measure}}(G_{\mathrm{new}}+S_{\mathrm{new}}+R_{\mathrm{reuse}})
--\lambda_{\mathrm{leak}}\ell.
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\frac{g_{\mathrm{lcb}}^2}{2\lambda_F F_{\mathrm{raw}}}
+\frac{1}{K_{\mathrm{screen}}},
+$$
+with
+$$
+K_{\mathrm{screen}}
+=
+1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c.
 $$
 
 Here
 
-- `F` is the current metric proxy. In the phase-2/phase-3 shortlist path it is the tangent norm proxy `F_metric`; before that upgrade it defaults to the phase-1 proxy already stored on the candidate feature,
-- `C_proxy` is the compiled-position cost proxy,
-- `G_new` is the number of newly introduced measurement-group keys under the grouped-label reuse audit,
-- `S_new` is the associated nominal shot proxy. In the current statevector pipeline this remains a measurement-burden accounting scalar, not a device-only hardware counter,
-- `R_reuse` is the grouped-reuse cache-miss burden. In the current implementation it is stored separately even when it numerically tracks `G_new`,
-- `\ell` is the leakage penalty. Here this is not measured hardware leakage; it is the static `leakage_risk` attached to the generator symmetry metadata in `pipelines/hardcoded/hh_continuation_symmetry.py`.
+- `D_life` is the compiled-burden proxy, lifetime-weighted when that mode is enabled,
+- `G_new` is new grouped-measurement burden,
+- `C_new` is new nominal shot burden,
+- `c` is the same-family streak burden, not grouped-measurement reuse.
 
-For the currently implemented family defaults in `build_symmetry_spec`,
+So the active screen no longer uses
 
-- `paop`, `paop_*`, `uccsd`, `hva`, and `core` receive `\ell=0`,
-- `residual`, `full_meta`, and `full_hamiltonian` receive `\ell=0.1`,
-- uncategorized families fall back to `\ell=0.2`.
+- raw `|g|` in place of `g_lcb`,
+- leakage terms,
+- motif bonuses,
+- optimizer-dimension penalties,
+- non-append position maximization.
 
-The live `simple_v1` defaults from `SimpleScoreConfig` are
+### 10.6.2 Reduced-path geometry and curvature
+
+Let `W_m` denote the inherited window that will actually be refit after admitting candidate `m`.
+The code computes the true current parameter tangents of that ordered scaffold,
+not the naive bare-generator actions on the final state.
+
+If `t_m` is the horizontal append tangent and `\{t_j\}_{j\in W_m}` are the horizontal inherited-window tangents, then
 $$
-\lambda_F=1.0,
+F_{\mathrm{raw}}=\langle t_m,t_m\rangle,
 \qquad
-\lambda_{\mathrm{compile}}=0.05,
+(Q_m)_{jk}=\operatorname{Re}\langle t_j,t_k\rangle,
 \qquad
-\lambda_{\mathrm{measure}}=0.02,
-\qquad
-\lambda_{\mathrm{leak}}=0.0,
-\qquad
-z_\alpha=0.0.
-$$
-So on the current production path there is no extra confidence shrinkage beyond the raw `|g|` term.
-
-### 10.6.2 Trust-region drop proxy
-
-The full score first builds the lower-confidence gradient
-$$
-g_{\mathrm{lcb}}=\max\{ |g|-z_{\alpha}\sigma,\,0\}.
+(q_m)_j=\operatorname{Re}\langle t_j,t_m\rangle.
 $$
 
-Then it constructs the trust-region drop proxy
+The exact local quadratic model over append parameter `\alpha` and inherited-window displacement `\delta\theta_{W_m}` is
 $$
-\Delta E_{\mathrm{TR}}=
+E(\alpha,\delta\theta_{W_m})
+\approx
+E_0+g_m\alpha+\frac12 h_m\alpha^2
++\alpha b_m^\top \delta\theta_{W_m}
++\frac12 \delta\theta_{W_m}^\top H_{W_m}\,\delta\theta_{W_m}.
+$$
+
+The code symmetrizes the inherited-window Hessian block and forms the positive-definite model
+$$
+M_m=\frac12(H_{W_m}+H_{W_m}^{\top})+\lambda_H I,
+$$
+with ridge growth when needed until the solve is numerically stable. The code records the effective ridge used.
+
+Then the reduced curvature and reduced-path metric are
+$$
+\widetilde h_m=h_m-b_m^{\top}M_m^{-1}b_m,
+$$
+$$
+F_m^{\mathrm{red}}
+=
+F_{\mathrm{raw}}-2q_m^{\top}M_m^{-1}b_m+b_m^{\top}M_m^{-1}Q_mM_m^{-1}b_m.
+$$
+
+The reduced-path overlap is
+$$
+q_m^{\mathrm{red}}=q_m-Q_mM_m^{-1}b_m,
+$$
+and the implemented novelty is the Tikhonov-regularized quantity
+$$
+\nu_m
+=
+\operatorname{clip}_{[0,1]}
+\left(
+1-
+\frac{(q_m^{\mathrm{red}})^{\top}(Q_m+\varepsilon_{\mathrm{nov}}I)^{-1}q_m^{\mathrm{red}}}{F_m^{\mathrm{red}}}
+\right).
+$$
+
+So the active novelty is reduced-path novelty, not raw candidate novelty.
+
+### 10.6.3 `full_v2`
+
+The full append-only score is
+$$
+S_{\mathrm{full}}
+=
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\,\nu_m^{\gamma_N}
+\,\frac{\Delta E_{\mathrm{TR}}}{K},
+$$
+with
+$$
+K=1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c,
+$$
+and trust-region drop
+$$
+\Delta E_{\mathrm{TR}}
+=
+\max_{|\alpha|\le \rho/\sqrt{F_m^{\mathrm{red}}}}
+\left[
+ g_{\mathrm{lcb}}|\alpha|-
+ \frac12\max(\widetilde h_m,0)\alpha^2
+\right].
+$$
+
+Equivalently,
+$$
+\Delta E_{\mathrm{TR}}
+=
 \begin{cases}
-0, & g_{\mathrm{lcb}}\le 0 \text{ or } F\le 0,\\
-\frac{1}{2}\frac{g_{\mathrm{lcb}}^2}{h_{\mathrm{eff}}}, & h_{\mathrm{eff}}>0 \text{ and } \frac{g_{\mathrm{lcb}}}{h_{\mathrm{eff}}}\le \frac{\rho}{\sqrt F},\\
-g_{\mathrm{lcb}}\alpha_{\max}-\frac{1}{2}h_{\mathrm{eff}}\alpha_{\max}^2,
-& \alpha_{\max}=\frac{\rho}{\sqrt F}, \text{ otherwise.}
-\end{cases}
-$$
-
-The implemented effective curvature proxy is
-$$
-h_{\mathrm{eff}}=
-\begin{cases}
-\lambda_F F, & \hat h \text{ is unavailable},\\
-\max\{0,\hat h\}, & \hat h \text{ is available but } b \text{ or } H_{\mathrm{window}} \text{ is unavailable},\\
-\max\{0,\hat h-b^{\top}(H_{\mathrm{window}}+\lambda_H I)^{-1}b\},
+\dfrac{g_{\mathrm{lcb}}^2}{2\max(\widetilde h_m,0)},
+& \max(\widetilde h_m,0)>0\ \text{and}\ \dfrac{g_{\mathrm{lcb}}}{\max(\widetilde h_m,0)}\le \dfrac{\rho}{\sqrt{F_m^{\mathrm{red}}}},\\[1.2ex]
+\dfrac{\rho g_{\mathrm{lcb}}}{\sqrt{F_m^{\mathrm{red}}}}
+-\dfrac{\rho^2\max(\widetilde h_m,0)}{2F_m^{\mathrm{red}}},
 & \text{otherwise.}
 \end{cases}
 $$
 
-Here
+So the active staged HH score is now
 
-- `\hat h` is stored as `h_hat` and defaults to the current `F_metric`,
-- `b` is stored as `b_hat` and contains overlaps between the candidate tangent and the active-window tangents,
-- `H_window` is stored as `H_window` and is the Gram matrix of active-window tangents,
-- when optimizer-memory preconditioner data is present, the code adds a diagonal regularizer to `H_window` before solving the Schur-style correction.
-
-### 10.6.3 `full_v2`
-
-The implemented full score is
-$$
-S_{\mathrm{full}}
-=
-\exp(-\eta_L \ell)
-\,\nu^{\gamma_N}
-\,\frac{\Delta E_{\mathrm{TR}}}{K}
-+w_{\mathrm{motif}}\,m,
-$$
-with
-$$
-K=
-1
-+w_D\frac{D}{D_{\mathrm{ref}}}
-+w_G\frac{G_{\mathrm{new}}}{G_{\mathrm{ref}}}
-+w_C\frac{S_{\mathrm{new}}}{S_{\mathrm{ref}}}
-+w_P\frac{P_{\mathrm{opt}}}{P_{\mathrm{ref}}}
-+w_c\frac{R_{\mathrm{reuse}}}{R_{\mathrm{ref}}}
-+w_{\mathrm{life}}\,K_{\mathrm{life}}.
-$$
-
-The novelty factor is the implemented tangent-space novelty oracle
-$$
-\nu
-=
-\mathrm{clip}_{[0,1]}
-\left(
-1-\frac{b^{\top}(H_{\mathrm{window}}+\varepsilon_{\mathrm{nov}}I)^{-1}b}{F}
-\right).
-$$
-
-So `\nu` is not merely “a term has not been used yet.” It is high when the candidate tangent points outside the span of the current active-window tangents, and it drops toward `0` when the candidate is largely redundant with that span. If the active window is empty, the implementation sets `\nu=1`.
-
-The motif bonus `m` is also metadata-based. The code matches the current generator against stored motif records by
-
-- `family_id`,
-- `template_id`,
-- `support_site_offsets`,
-- boundary behavior.
-
-So the implemented motif transfer rewards generators that match previously useful HH continuation motifs. It is not a literal string-completion rule such as “`XY` appeared before, therefore prefer `Z` next.”
-
-The burden terms in `K` are the currently implemented proxies:
-
-- `D` is the depth-cost proxy,
-- `G_new` is new grouped-measurement burden,
-- `S_new` is the nominal shot burden,
-- `P_opt = |\texttt{refit\_window\_indices}|` is the active local reoptimization dimension, so it can vary with insertion position and window policy,
-- `R_reuse` is the grouped-reuse burden.
-
-When lifetime costing is enabled, the code uses
-$$
-K_{\mathrm{life}}
-=
-N_{\mathrm{rem}}
-\left(
-\frac{D}{D_{\mathrm{ref}}}
-\;+\;
-\frac{G_{\mathrm{new}}}{G_{\mathrm{ref}}}
-\;+\;
-\frac{S_{\mathrm{new}}}{S_{\mathrm{ref}}}
-\;+\;
-\frac{R_{\mathrm{reuse}}}{R_{\mathrm{ref}}}
-\;+\;
-\frac{P_{\mathrm{opt}}}{P_{\mathrm{ref}}}
-\right),
-$$
-where `N_rem` is the remaining-evaluations proxy. In the implemented `remaining_depth` mode,
-$$
-N_{\mathrm{rem}}=d_{\max}-d+1.
-$$
-
-The live `full_v2` defaults from `FullScoreConfig` are
-$$
-z_\alpha=0,
-\quad
-\lambda_F=1,
-\quad
-\lambda_H=10^{-6},
-\quad
-\rho=0.25,
-\quad
-\eta_L=0,
-\quad
-\gamma_N=1,
-$$
-$$
-w_D=0.2,
-\quad
-w_G=0.15,
-\quad
-w_C=0.15,
-\quad
-w_P=0.1,
-\quad
-w_c=0.1,
-\quad
-w_{\mathrm{life}}=0.05,
-\quad
-w_{\mathrm{motif}}=0.05,
-$$
-with normalization references
-$$
-D_{\mathrm{ref}}=G_{\mathrm{ref}}=S_{\mathrm{ref}}=P_{\mathrm{ref}}=R_{\mathrm{ref}}=1.
-$$
-The live shortlist / batching defaults are
-$$
-f_{\mathrm{short}}=0.2,
-\qquad
-N_{\max}=12,
-\qquad
-N_{\mathrm{batch,target}}=2,
-\qquad
-N_{\mathrm{batch,cap}}=3,
-\qquad
-\eta_{\mathrm{deg}}=0.9.
-$$
-The live compatibility weights are
-$$
-w_{\mathrm{ov}}=0.4,
-\qquad
-w_{\mathrm{comm}}=0.2,
-\qquad
-w_{\mathrm{curv}}=0.2,
-\qquad
-w_{\mathrm{sched}}=0.2.
-$$
-
-This is the implemented “useful predicted drop divided by burden” surface, not a future plan.
+- append-only,
+- one admitted operator per step,
+- exact inherited-window tangent geometry,
+- exact inherited-window Hessian block,
+- exact mixed candidate-window curvature,
+- Tikhonov-regularized solves,
+- no active leakage term,
+- no active motif add-on,
+- no greedy batch rule.
 
 ## 10.7 Stage controller
 

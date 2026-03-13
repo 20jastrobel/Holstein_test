@@ -1750,7 +1750,13 @@ class TestHHPhase1Continuation:
         assert payload["continuation"]["mode"] == "phase1_v1"
         assert "stage_events" in payload["continuation"]
         for row in payload.get("history", []):
-            assert row["refit_window_indices"] == row["reopt_active_indices"]
+            assert row["positions_considered"] == [row["selected_position"]]
+            assert row["selected_positions"] == [row["selected_position"]]
+            assert bool(row["batch_selected"]) is False
+            assert row["selection_mode"] != "simple_v1_probe"
+            assert row["refit_window_indices"] == [
+                idx for idx in row["reopt_active_indices"] if idx != row["selected_position"]
+            ]
 
 
 class TestHHPhase2Continuation:
@@ -1805,7 +1811,13 @@ class TestHHPhase2Continuation:
         assert "optimizer_memory" in payload["continuation"]
         assert payload["continuation"]["optimizer_memory"]["parameter_count"] == payload["num_parameters"]
         for row in payload.get("history", []):
-            assert row["refit_window_indices"] == row["reopt_active_indices"]
+            assert row["positions_considered"] == [row["selected_position"]]
+            assert row["selected_positions"] == [row["selected_position"]]
+            assert bool(row["batch_selected"]) is False
+            assert row["selection_mode"] not in {"full_v2_batch", "full_v2_batch_split"}
+            assert row["refit_window_indices"] == [
+                idx for idx in row["reopt_active_indices"] if idx != row["selected_position"]
+            ]
             assert "full_v2_score" in row
             assert "shortlisted_records" in row
             assert "optimizer_memory_source" in row
@@ -1871,7 +1883,13 @@ class TestHHPhase3Continuation:
         assert payload["scaffold_fingerprint_lite"]["selected_generator_ids"]
         assert payload["compile_cost_proxy_summary"]["version"] == "phase3_v1_proxy"
         for row in payload.get("history", []):
-            assert row["refit_window_indices"] == row["reopt_active_indices"]
+            assert row["positions_considered"] == [row["selected_position"]]
+            assert row["selected_positions"] == [row["selected_position"]]
+            assert bool(row["batch_selected"]) is False
+            assert row["selection_mode"] not in {"full_v2_batch", "full_v2_batch_split", "rescue_overlap", "rescue_overlap_split"}
+            assert row["refit_window_indices"] == [
+                idx for idx in row["reopt_active_indices"] if idx != row["selected_position"]
+            ]
             assert "generator_id" in row
             assert "symmetry_mode" in row
             assert "lifetime_cost_mode" in row
