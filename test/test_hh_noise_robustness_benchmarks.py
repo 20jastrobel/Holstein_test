@@ -226,6 +226,7 @@ def test_cfqm_proxy_cost_is_deterministic() -> None:
         drive_provider_exyz=None,
         active_coeff_tol=1e-12,
         coeff_drop_abs_tol=0.0,
+        cfqm_stage_exp="pauli_suzuki2",
     )
     c1 = _compute_time_dynamics_proxy_cost(**kwargs)
     c2 = _compute_time_dynamics_proxy_cost(**kwargs)
@@ -245,6 +246,7 @@ def test_suzuki_and_cfqm_proxy_cost_sanity() -> None:
         drive_provider_exyz=None,
         active_coeff_tol=1e-12,
         coeff_drop_abs_tol=0.0,
+        cfqm_stage_exp="pauli_suzuki2",
     )
     suz = _compute_time_dynamics_proxy_cost(method="suzuki2", **base_kwargs)
     cfq = _compute_time_dynamics_proxy_cost(method="cfqm4", **base_kwargs)
@@ -258,6 +260,23 @@ def test_suzuki_and_cfqm_proxy_cost_sanity() -> None:
         }
         assert int(rec["term_exp_count_total"]) >= 0
         assert int(rec["depth_proxy_total"]) == int(rec["pauli_rot_count_total"])
+
+
+def test_cfqm_proxy_cost_rejects_numerical_only_stage_exp_for_hardware_path() -> None:
+    with pytest.raises(ValueError, match="pauli_suzuki2"):
+        _compute_time_dynamics_proxy_cost(
+            method="cfqm4",
+            t_final=1.0,
+            trotter_steps=1,
+            drive_t0=0.0,
+            drive_time_sampling="midpoint",
+            ordered_labels_exyz=["z"],
+            static_coeff_map_exyz={"z": 0.5 + 0.0j},
+            drive_provider_exyz=None,
+            active_coeff_tol=1e-12,
+            coeff_drop_abs_tol=0.0,
+            cfqm_stage_exp="dense_expm",
+        )
 
 
 def _generic_backend_2q():
@@ -331,6 +350,7 @@ def test_patch_snapshot_replay_is_executable_through_noisy_method_trajectory(tmp
         "layout_lock_key": "bench_patch_replay_shared",
         "method": "suzuki2",
         "benchmark_active_coeff_tol": 1e-12,
+        "cfqm_stage_exp": "pauli_suzuki2",
         "cfqm_coeff_drop_abs_tol": 0.0,
     }
 
@@ -722,6 +742,7 @@ def test_run_paired_anchor_method_trajectory_set_reuses_same_lock_context(
         layout_lock_key="paired:shared",
         method="cfqm4",
         benchmark_active_coeff_tol=1e-12,
+        cfqm_stage_exp="pauli_suzuki2",
         cfqm_coeff_drop_abs_tol=0.0,
         noisy_mode_timeout_s=120,
         profile_name="static",
@@ -751,6 +772,8 @@ def test_run_paired_anchor_method_trajectory_set_reuses_same_lock_context(
     }
     suppressed_call = next(rec for rec in mode_calls if str(rec["kwargs"]["noise_mode"]) == "qpu_suppressed")
     assert suppressed_call["kwargs"]["runtime_twirling_config"] == payload["runtime_twirling_config"]
+    assert all(str(rec["kwargs"]["cfqm_stage_exp"]) == "pauli_suzuki2" for rec in mode_calls)
+    assert suppressed_call["kwargs"]["cfqm_stage_exp"] == "pauli_suzuki2"
     assert suppressed_row["runtime_execution_bundle"]["twirling_enable_gates"] is True
     assert suppressed_row["runtime_execution_bundle"]["twirling_num_randomizations"] == 16
     assert suppressed_row["runtime_execution_bundle"]["suppression_components"] == [
@@ -821,6 +844,7 @@ def test_run_paired_anchor_method_trajectory_set_fails_explicitly_for_missing_fr
             layout_lock_key="paired:frozen",
             method="cfqm4",
             benchmark_active_coeff_tol=1e-12,
+            cfqm_stage_exp="pauli_suzuki2",
             cfqm_coeff_drop_abs_tol=0.0,
             noisy_mode_timeout_s=120,
             profile_name="static",

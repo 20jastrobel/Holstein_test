@@ -172,6 +172,24 @@ def test_cli_parses_new_noise_plumbing_flags() -> None:
     assert str(args.runtime_twirling_strategy) == "active"
 
 
+def test_cli_parses_cfqm_hardware_flags() -> None:
+    args = parse_args(
+        [
+            "--L",
+            "2",
+            "--propagator",
+            "cfqm4",
+            "--cfqm-stage-exp",
+            "pauli_suzuki2",
+            "--cfqm-coeff-drop-abs-tol",
+            "1e-9",
+        ]
+    )
+    assert str(args.propagator) == "cfqm4"
+    assert str(args.cfqm_stage_exp) == "pauli_suzuki2"
+    assert float(args.cfqm_coeff_drop_abs_tol) == pytest.approx(1e-9)
+
+
 def test_cli_parses_layout_lock_and_imported_theta_flags() -> None:
     args = parse_args(
         [

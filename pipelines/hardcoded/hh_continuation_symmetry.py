@@ -48,7 +48,7 @@ def build_symmetry_spec(
     mitigation_mode_key = normalize_phase3_symmetry_mitigation_mode(mitigation_mode)
     if family_key in _LOW_RISK_FAMILIES:
         leakage_risk = 0.0
-    elif family_key in {"residual", "full_meta", "full_hamiltonian"}:
+    elif family_key in {"residual", "full_meta", "all_hh_meta_v1", "full_hamiltonian"}:
         leakage_risk = 0.1
     else:
         leakage_risk = 0.2

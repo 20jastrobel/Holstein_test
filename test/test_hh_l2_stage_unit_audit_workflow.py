@@ -123,6 +123,23 @@ def test_build_locked_staged_hh_audit_config_pins_l2_nph2_repo_minimums() -> Non
     assert cfg.default_provenance["audit_locked_profile"] == "AGENTS.hh_L2_nph2.audit_locked_profile"
 
 
+def test_build_locked_staged_hh_audit_config_respects_ordering_and_boundary_override() -> None:
+    cfg = wf.build_locked_staged_hh_audit_config(
+        wf.AuditWorkflowConfig(ordering="interleaved", boundary="periodic")
+    )
+
+    assert str(cfg.physics.ordering) == "interleaved"
+    assert str(cfg.physics.boundary) == "periodic"
+    assert cfg.default_provenance["audit_ordering"] == "audit.fixed=interleaved"
+    assert cfg.default_provenance["audit_boundary"] == "audit.fixed=periodic"
+
+
+def test_parse_cli_args_propagates_ordering_and_boundary() -> None:
+    cfg = wf.parse_cli_args(["--ordering", "interleaved", "--boundary", "periodic"])
+
+    assert cfg.ordering == "interleaved"
+    assert cfg.boundary == "periodic"
+
 
 def test_extract_warm_termwise_units_in_layer_major_order() -> None:
     ansatz = _DummyTermwiseAnsatz(

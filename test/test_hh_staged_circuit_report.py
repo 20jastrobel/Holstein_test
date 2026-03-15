@@ -196,3 +196,63 @@ def test_section_writer_emits_representative_and_expanded_views(
     assert "matched-family replay" in joined_titles
     assert "SUZUKI2 dynamics macro-step" in joined_titles
     assert "CFQM4 dynamics macro-step" in joined_titles
+
+
+def test_build_stage_circuit_report_artifacts_skip_cfqm_when_stage_exp_is_numerical_only(monkeypatch) -> None:
+    cfg = wf.resolve_staged_hh_config(parse_staged_args(["--L", "2", "--skip-pdf"]))
+    stage_result = _simple_stage_result()
+
+    monkeypatch.setattr(
+        wf,
+        "transpile_circuit_metrics",
+        lambda circuit, **kwargs: {
+            "target": {"backend_name": kwargs.get("backend_name")},
+            "raw": {"depth": 1, "count_2q": 0, "cx_count": 0},
+            "expanded_once": {"depth": 2, "count_2q": 0, "cx_count": 0},
+            "transpiled": {"depth": 3, "count_2q": 0, "cx_count": 0},
+        },
+    )
+    report_payload = wf.build_stage_circuit_report_artifacts(stage_result, cfg)
+
+    cfqm_bundle = report_payload["dynamics"]["cfqm4"]
+    assert cfqm_bundle["circuit"] is None
+    assert cfqm_bundle["metadata"]["circuitization"]["supported"] is False
+    assert "pauli_suzuki2" in str(cfqm_bundle["metadata"]["circuitization"]["reason"])
+    assert cfqm_bundle["metadata"]["trajectory_circuit_metrics"]["dynamics_only"]["skipped"] is True
+
+
+def test_build_stage_circuit_report_artifacts_include_trajectory_transpile_metrics(monkeypatch) -> None:
+    cfg = wf.resolve_staged_hh_config(
+        parse_staged_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--circuit-backend-name",
+                "FakeGuadalupeV2",
+                "--circuit-use-fake-backend",
+                "--cfqm-stage-exp",
+                "pauli_suzuki2",
+            ]
+        )
+    )
+    stage_result = _simple_stage_result()
+
+    def _fake_transpile(circuit, **kwargs):
+        return {
+            "target": {"backend_name": kwargs["backend_name"]},
+            "raw": {"depth": 1, "count_2q": 0, "cx_count": 0},
+            "expanded_once": {"depth": 2, "count_2q": 1, "cx_count": 1},
+            "transpiled": {"depth": 7, "count_2q": 3, "cx_count": 3},
+        }
+
+    monkeypatch.setattr(wf, "transpile_circuit_metrics", _fake_transpile)
+    report_payload = wf.build_stage_circuit_report_artifacts(stage_result, cfg)
+
+    assert report_payload["transpile_target"]["backend_name"] == "FakeGuadalupeV2"
+    suz_metrics = report_payload["dynamics"]["suzuki2"]["metadata"]["trajectory_circuit_metrics"]["dynamics_only"]
+    cfqm_metrics = report_payload["dynamics"]["cfqm4"]["metadata"]["trajectory_circuit_metrics"]["dynamics_only"]
+    assert suz_metrics["transpiled"]["count_2q"] == 3
+    assert suz_metrics["transpiled"]["depth"] == 7
+    assert cfqm_metrics["transpiled"]["cx_count"] == 3
+    assert report_payload["stages"]["warm_start"]["metadata"]["transpile_metrics"]["transpiled"]["depth"] == 7

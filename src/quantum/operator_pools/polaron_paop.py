@@ -6,6 +6,7 @@ existing Pauli-layer operators from the repository math stack.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 
 from src.quantum.hubbard_latex_python_pairs import (
@@ -19,6 +20,16 @@ from src.quantum.hubbard_latex_python_pairs import (
 )
 from src.quantum.pauli_polynomial_class import PauliPolynomial, fermion_minus_operator, fermion_plus_operator
 from src.quantum.qubitization_module import PauliTerm
+
+
+@dataclass(frozen=True)
+class PhononMotifSpec:
+    label: str
+    family: str
+    poly: PauliPolynomial
+    sites: tuple[int, ...]
+    bonds: tuple[tuple[int, int], ...]
+    uses_sq: bool
 
 
 def _to_signature(poly: PauliPolynomial, tol: float = 1e-12) -> tuple[tuple[str, float], ...]:
@@ -189,6 +200,188 @@ def _drop_terms_with_identity_on_qubits(poly: PauliPolynomial, qubits: tuple[int
         keep.add_term(PauliTerm(nq, ps=word, pc=complex(term.p_coeff)))
     keep._reduce()
     return keep
+
+
+def make_phonon_motifs(
+    family: str,
+    *,
+    num_sites: int,
+    n_ph_max: int,
+    boson_encoding: str,
+    boundary: str,
+    prune_eps: float = 0.0,
+    normalization: str = "none",
+) -> list[PhononMotifSpec]:
+    family_key = str(family).strip().lower()
+    if family_key not in {"paop_lf_std", "paop_lf2_std", "paop_bond_disp_std"}:
+        raise ValueError(
+            "Phonon motif family must be one of paop_lf_std, paop_lf2_std, paop_bond_disp_std."
+        )
+
+    n_sites = int(num_sites)
+    if n_sites <= 0:
+        return []
+
+    n_ph_max_i = int(n_ph_max)
+    boson_encoding_i = str(boson_encoding)
+    periodic = str(boundary).strip().lower() == "periodic"
+    qpb = boson_qubits_per_site(n_ph_max_i, boson_encoding_i)
+    nq = 2 * n_sites + n_sites * qpb
+    phonon_qubits = tuple(range(2 * n_sites, nq))
+    repr_mode = "JW"
+
+    phonon_qubit_cache: dict[int, tuple[int, ...]] = {}
+    b_cache: dict[int, PauliPolynomial] = {}
+    bdag_cache: dict[int, PauliPolynomial] = {}
+    p_cache: dict[int, PauliPolynomial] = {}
+    delta_p_cache: dict[tuple[int, int], PauliPolynomial] = {}
+    delta_p_power_cache: dict[tuple[int, int, int], PauliPolynomial] = {}
+    bond_p_sum_cache: dict[tuple[int, int], PauliPolynomial] = {}
+
+    def local_qubits(site: int) -> tuple[int, ...]:
+        key = int(site)
+        if key not in phonon_qubit_cache:
+            phonon_qubit_cache[key] = tuple(
+                phonon_qubit_indices_for_site(
+                    key,
+                    n_sites=n_sites,
+                    qpb=qpb,
+                    fermion_qubits=2 * n_sites,
+                )
+            )
+        return phonon_qubit_cache[key]
+
+    def b_i(site: int) -> PauliPolynomial:
+        key = int(site)
+        if key not in b_cache:
+            b_cache[key] = boson_operator(
+                repr_mode,
+                nq,
+                local_qubits(key),
+                which="b",
+                n_ph_max=n_ph_max_i,
+                encoding=boson_encoding_i,
+            )
+        return b_cache[key]
+
+    def bdag_i(site: int) -> PauliPolynomial:
+        key = int(site)
+        if key not in bdag_cache:
+            bdag_cache[key] = boson_operator(
+                repr_mode,
+                nq,
+                local_qubits(key),
+                which="bdag",
+                n_ph_max=n_ph_max_i,
+                encoding=boson_encoding_i,
+            )
+        return bdag_cache[key]
+
+    def p_i(site: int) -> PauliPolynomial:
+        key = int(site)
+        if key not in p_cache:
+            p_cache[key] = _clean_poly((1j * bdag_i(key)) + ((-1j) * b_i(key)), prune_eps)
+        return p_cache[key]
+
+    def delta_p_ij(i_site: int, j_site: int) -> PauliPolynomial:
+        key = (int(i_site), int(j_site))
+        if key not in delta_p_cache:
+            delta_p_cache[key] = _clean_poly(p_i(key[0]) + ((-1.0) * p_i(key[1])), prune_eps)
+        return delta_p_cache[key]
+
+    def delta_p_power(i_site: int, j_site: int, exponent: int) -> PauliPolynomial:
+        power = int(exponent)
+        if power < 1:
+            raise ValueError("delta_p_power exponent must be >= 1")
+        key = (int(i_site), int(j_site), power)
+        if key in delta_p_power_cache:
+            return delta_p_power_cache[key]
+        base = delta_p_ij(i_site, j_site)
+        if power == 1:
+            delta_p_power_cache[key] = base
+            return base
+        acc = base
+        for _ in range(1, power):
+            acc = _mul_clean(acc, base, prune_eps)
+        delta_p_power_cache[key] = acc
+        return acc
+
+    def bond_p_sum(i_site: int, j_site: int) -> PauliPolynomial:
+        key = (int(i_site), int(j_site))
+        if key not in bond_p_sum_cache:
+            bond_p_sum_cache[key] = _clean_poly(p_i(key[0]) + p_i(key[1]), prune_eps)
+        return bond_p_sum_cache[key]
+
+    motifs: list[PhononMotifSpec] = []
+
+    def _append_motif(
+        *,
+        label: str,
+        poly: PauliPolynomial,
+        sites: tuple[int, ...],
+        bonds: tuple[tuple[int, int], ...] = (),
+        uses_sq: bool = False,
+        drop_phonon_identity: bool = False,
+    ) -> None:
+        poly_out = poly
+        if drop_phonon_identity:
+            poly_out = _drop_terms_with_identity_on_qubits(poly_out, phonon_qubits)
+        poly_out = _clean_poly(poly_out, prune_eps)
+        poly_out = _normalize_poly(poly_out, normalization)
+        poly_out = _clean_poly(poly_out, prune_eps)
+        if not poly_out.return_polynomial():
+            return
+        bonds_canon = tuple(sorted({tuple(sorted((int(i), int(j)))) for i, j in bonds}))
+        motifs.append(
+            PhononMotifSpec(
+                label=str(label),
+                family=family_key,
+                poly=poly_out,
+                sites=tuple(sorted({int(site) for site in sites})),
+                bonds=bonds_canon,
+                uses_sq=bool(uses_sq),
+            )
+        )
+
+    for site in range(n_sites):
+        _append_motif(
+            label=f"p(site={site})",
+            poly=p_i(site),
+            sites=(site,),
+        )
+
+    edges = bravais_nearest_neighbor_edges(n_sites, pbc=periodic)
+    for edge in edges:
+        i, j = int(edge[0]), int(edge[1])
+        _append_motif(
+            label=f"delta_p({i},{j})",
+            poly=delta_p_ij(i, j),
+            sites=(i, j),
+            bonds=((i, j),),
+        )
+
+    if family_key == "paop_lf2_std":
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            _append_motif(
+                label=f"delta_p2({i},{j})",
+                poly=delta_p_power(i, j, 2),
+                sites=(i, j),
+                bonds=((i, j),),
+                drop_phonon_identity=True,
+            )
+
+    if family_key == "paop_bond_disp_std":
+        for edge in edges:
+            i, j = int(edge[0]), int(edge[1])
+            _append_motif(
+                label=f"bond_p_sum({i},{j})",
+                poly=bond_p_sum(i, j),
+                sites=(i, j),
+                bonds=((i, j),),
+            )
+
+    return motifs
 
 
 def _make_paop_core(

@@ -101,6 +101,8 @@ def write_handoff_state_bundle(
     pre_prune_scaffold: dict[str, Any] | None = None,
     replay_contract_hint: dict[str, Any] | None = None,
     replay_contract: dict[str, Any] | None = None,
+    vqe_payload: dict[str, Any] | None = None,
+    seed_provenance: dict[str, Any] | None = None,
     amplitude_cutoff: float = 1e-14,
 ) -> None:
     """Write an adapt_json-compatible HH handoff bundle."""
@@ -184,8 +186,12 @@ def write_handoff_state_bundle(
         continuation_block["replay_contract_hint"] = dict(replay_contract_hint)
     if continuation_block:
         payload["continuation"] = continuation_block
+    if isinstance(vqe_payload, dict):
+        payload["vqe"] = dict(vqe_payload)
     if isinstance(meta, dict):
         payload["meta"] = dict(meta)
+    if isinstance(seed_provenance, dict):
+        payload["seed_provenance"] = dict(seed_provenance)
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

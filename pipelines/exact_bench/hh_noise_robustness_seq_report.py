@@ -32,9 +32,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import PauliEvolutionGate
 from qiskit.quantum_info import SparsePauliOp
-from qiskit.synthesis import SuzukiTrotter
 
 from docs.reports.pdf_utils import (
     HAS_MATPLOTLIB,
@@ -49,6 +47,10 @@ from docs.reports.pdf_utils import (
 from docs.reports.qiskit_circuit_report import (
     build_cfqm_time_dependent_circuit as _shared_build_cfqm_time_dependent_circuit,
     build_suzuki2_time_dependent_circuit as _shared_build_suzuki2_time_dependent_circuit,
+    build_time_dynamics_circuit as _shared_build_time_dynamics_circuit,
+    compute_time_dynamics_proxy_cost as _shared_compute_time_dynamics_proxy_cost,
+    time_dynamics_circuitization_reason as _shared_time_dynamics_circuitization_reason,
+    warn_time_dynamics_circuit_semantics as _shared_warn_time_dynamics_circuit_semantics,
 )
 from docs.reports.report_labels import (
     report_method_label,
@@ -493,6 +495,7 @@ def _run_paired_anchor_method_trajectory_set(
     layout_lock_key: str,
     method: str,
     benchmark_active_coeff_tol: float,
+    cfqm_stage_exp: str,
     cfqm_coeff_drop_abs_tol: float,
     noisy_mode_timeout_s: int,
     profile_name: str,
@@ -551,6 +554,7 @@ def _run_paired_anchor_method_trajectory_set(
         "layout_lock_key": str(layout_lock_key),
         "method": str(method),
         "benchmark_active_coeff_tol": float(benchmark_active_coeff_tol),
+        "cfqm_stage_exp": str(cfqm_stage_exp),
         "cfqm_coeff_drop_abs_tol": float(cfqm_coeff_drop_abs_tol),
     }
     mode_specs = [
@@ -1290,6 +1294,7 @@ def _build_cfqm_time_dependent_circuit(
     trotter_steps: int,
     drive_t0: float,
     coeff_drop_abs_tol: float,
+    cfqm_stage_exp: str,
 ) -> QuantumCircuit:
     return _shared_build_cfqm_time_dependent_circuit(
         method=method,
@@ -1301,6 +1306,7 @@ def _build_cfqm_time_dependent_circuit(
         trotter_steps=trotter_steps,
         drive_t0=drive_t0,
         coeff_drop_abs_tol=coeff_drop_abs_tol,
+        cfqm_stage_exp=cfqm_stage_exp,
     )
 
 
@@ -1356,68 +1362,21 @@ def _compute_time_dynamics_proxy_cost(
     drive_provider_exyz: Any | None,
     active_coeff_tol: float,
     coeff_drop_abs_tol: float,
+    cfqm_stage_exp: str,
 ) -> dict[str, int]:
-    method_norm = str(method).strip().lower()
-    if method_norm not in _NOISY_METHODS_ALLOWED:
-        raise ValueError(f"Unsupported noisy method {method!r}.")
-    if int(trotter_steps) < 1:
-        raise ValueError("trotter_steps must be >= 1")
-    if float(t_final) < 0.0:
-        raise ValueError("t_final must be >= 0")
-
-    total_term = 0
-    total_cx = 0
-    total_sq = 0
-    dt = float(t_final) / float(trotter_steps)
-
-    if method_norm == "suzuki2":
-        for step_idx in range(int(trotter_steps)):
-            t_sample = _time_sample(step_idx, dt, str(drive_time_sampling))
-            raw = {} if drive_provider_exyz is None else dict(drive_provider_exyz(float(drive_t0) + float(t_sample)))
-            merged: dict[str, complex] = {}
-            for lbl in ordered_labels_exyz:
-                merged[lbl] = complex(static_coeff_map_exyz.get(lbl, 0.0 + 0.0j)) + complex(raw.get(lbl, 0.0))
-            active = _active_labels_exyz(merged, ordered_labels_exyz, float(active_coeff_tol))
-            sweep = _compute_sweep_proxy_cost(active)
-            total_term += int(sweep["term_exp_count"])
-            total_cx += int(sweep["cx_proxy"])
-            total_sq += int(sweep["sq_proxy"])
-    else:
-        scheme = get_cfqm_scheme(str(method_norm))
-        c_nodes = [float(x) for x in scheme["c"]]
-        a_rows = [[float(v) for v in row] for row in scheme["a"]]
-        s_static = [float(v) for v in scheme["s_static"]]
-
-        for step_idx in range(int(trotter_steps)):
-            t_abs = float(drive_t0) + float(step_idx) * float(dt)
-            drive_maps_exyz: list[dict[str, complex]] = []
-            for c_j in c_nodes:
-                t_node = float(t_abs) + float(c_j) * float(dt)
-                raw = {} if drive_provider_exyz is None else dict(drive_provider_exyz(float(t_node)))
-                drive_maps_exyz.append({str(k): complex(v) for k, v in raw.items()})
-
-            for k, a_row in enumerate(a_rows):
-                stage_map = _build_cfqm_stage_map_exyz(
-                    ordered_labels_exyz=list(ordered_labels_exyz),
-                    static_coeff_map_exyz=dict(static_coeff_map_exyz),
-                    drive_maps_exyz=drive_maps_exyz,
-                    a_row=[float(v) for v in a_row],
-                    s_static=float(s_static[k]),
-                    coeff_drop_abs_tol=float(coeff_drop_abs_tol),
-                )
-                active = _active_labels_exyz(stage_map, ordered_labels_exyz, float(active_coeff_tol))
-                sweep = _compute_sweep_proxy_cost(active)
-                total_term += int(sweep["term_exp_count"])
-                total_cx += int(sweep["cx_proxy"])
-                total_sq += int(sweep["sq_proxy"])
-
-    return {
-        "term_exp_count_total": int(total_term),
-        "pauli_rot_count_total": int(total_term),
-        "cx_proxy_total": int(total_cx),
-        "sq_proxy_total": int(total_sq),
-        "depth_proxy_total": int(total_term),
-    }
+    return _shared_compute_time_dynamics_proxy_cost(
+        method=method,
+        t_final=t_final,
+        trotter_steps=trotter_steps,
+        drive_t0=drive_t0,
+        drive_time_sampling=drive_time_sampling,
+        ordered_labels_exyz=ordered_labels_exyz,
+        static_coeff_map_exyz=static_coeff_map_exyz,
+        drive_provider_exyz=drive_provider_exyz,
+        active_coeff_tol=active_coeff_tol,
+        coeff_drop_abs_tol=coeff_drop_abs_tol,
+        cfqm_stage_exp=cfqm_stage_exp,
+    )
 
 
 def _run_noisy_suzuki_trajectory(
@@ -1723,6 +1682,7 @@ def _run_noisy_method_trajectory(
     layout_lock_key: str | None,
     method: str,
     benchmark_active_coeff_tol: float,
+    cfqm_stage_exp: str,
     cfqm_coeff_drop_abs_tol: float,
 ) -> dict[str, Any]:
     t_wall_start = float(time.perf_counter())
@@ -1736,6 +1696,20 @@ def _run_noisy_method_trajectory(
         num_sites=int(L),
         nq_total=int(nq),
         ordering=str(ordering),
+    )
+    drive_time_sampling = str(
+        "midpoint" if drive_profile is None else drive_profile.get("time_sampling", "midpoint")
+    )
+    circuitization_reason = _shared_time_dynamics_circuitization_reason(
+        method=str(method_norm),
+        cfqm_stage_exp=str(cfqm_stage_exp),
+    )
+    if circuitization_reason is not None:
+        raise ValueError(str(circuitization_reason))
+    _shared_warn_time_dynamics_circuit_semantics(
+        method=str(method_norm),
+        cfqm_stage_exp=str(cfqm_stage_exp),
+        drive_time_sampling=str(drive_time_sampling),
     )
 
     initial_circuit = QuantumCircuit(int(nq))
@@ -1804,31 +1778,19 @@ def _run_noisy_method_trajectory(
         noisy_oracle.prime_layout(initial_circuit)
         for t_val in times:
             t_circ0 = float(time.perf_counter())
-            if method_norm == "suzuki2":
-                qc_t = _build_suzuki2_time_dependent_circuit(
-                    initial_circuit=initial_circuit,
-                    ordered_labels_exyz=ordered_labels_exyz,
-                    static_coeff_map_exyz=static_coeff_map_exyz,
-                    drive_provider_exyz=drive_provider_exyz,
-                    time_value=float(t_val),
-                    trotter_steps=int(trotter_steps),
-                    drive_t0=float(0.0 if drive_profile is None else drive_profile.get("t0", 0.0)),
-                    drive_time_sampling=str(
-                        "midpoint" if drive_profile is None else drive_profile.get("time_sampling", "midpoint")
-                    ),
-                )
-            else:
-                qc_t = _build_cfqm_time_dependent_circuit(
-                    method=str(method_norm),
-                    initial_circuit=initial_circuit,
-                    ordered_labels_exyz=ordered_labels_exyz,
-                    static_coeff_map_exyz=static_coeff_map_exyz,
-                    drive_provider_exyz=drive_provider_exyz,
-                    time_value=float(t_val),
-                    trotter_steps=int(trotter_steps),
-                    drive_t0=float(0.0 if drive_profile is None else drive_profile.get("t0", 0.0)),
-                    coeff_drop_abs_tol=float(cfqm_coeff_drop_abs_tol),
-                )
+            qc_t = _shared_build_time_dynamics_circuit(
+                method=str(method_norm),
+                initial_circuit=initial_circuit,
+                ordered_labels_exyz=ordered_labels_exyz,
+                static_coeff_map_exyz=static_coeff_map_exyz,
+                drive_provider_exyz=drive_provider_exyz,
+                time_value=float(t_val),
+                trotter_steps=int(trotter_steps),
+                drive_t0=float(0.0 if drive_profile is None else drive_profile.get("t0", 0.0)),
+                drive_time_sampling=str(drive_time_sampling),
+                cfqm_stage_exp=str(cfqm_stage_exp),
+                cfqm_coeff_drop_abs_tol=float(cfqm_coeff_drop_abs_tol),
+            )
             circuit_build_s_total += float(time.perf_counter() - t_circ0)
 
             if drive_provider_exyz is None:
@@ -1974,14 +1936,13 @@ def _run_noisy_method_trajectory(
         t_final=float(t_final),
         trotter_steps=int(trotter_steps),
         drive_t0=float(0.0 if drive_profile is None else drive_profile.get("t0", 0.0)),
-        drive_time_sampling=str(
-            "midpoint" if drive_profile is None else drive_profile.get("time_sampling", "midpoint")
-        ),
+        drive_time_sampling=str(drive_time_sampling),
         ordered_labels_exyz=list(ordered_labels_exyz),
         static_coeff_map_exyz=dict(static_coeff_map_exyz),
         drive_provider_exyz=drive_provider_exyz,
         active_coeff_tol=float(benchmark_active_coeff_tol),
         coeff_drop_abs_tol=float(cfqm_coeff_drop_abs_tol),
+        cfqm_stage_exp=str(cfqm_stage_exp),
     )
     benchmark_runtime = {
         "wall_total_s": float(time.perf_counter() - t_wall_start),
@@ -2011,6 +1972,14 @@ def _run_noisy_method_trajectory(
             "mitigation": dict(mitigation_config),
             "runtime_twirling": dict(runtime_twirling_config),
             "symmetry_mitigation": dict(symmetry_mitigation_config),
+        },
+        "dynamics_config": {
+            "method": str(method_norm),
+            "t_final": float(t_final),
+            "num_times": int(num_times),
+            "trotter_steps": int(trotter_steps),
+            "cfqm_stage_exp": str(cfqm_stage_exp),
+            "cfqm_coeff_drop_abs_tol": float(cfqm_coeff_drop_abs_tol),
         },
         "trajectory": rows,
         "delta_uncertainty": _trajectory_delta_uncertainty(rows),
@@ -5246,6 +5215,7 @@ def main(argv: list[str] | None = None) -> None:
                         "layout_lock_key": stable_noise_hash({"scope": "robustness_dynamics", "profile": str(profile_name), "mode_token": _layout_lock_mode_token(str(mode)), "L": int(args.L), "backend_profile": (None if args.backend_profile is None else str(args.backend_profile)), "backend_name": (None if args.backend_name is None else str(args.backend_name)), "seed": int(args.noise_seed)}, prefix="benchcell"),
                         "method": str(method),
                         "benchmark_active_coeff_tol": float(args.benchmark_active_coeff_tol),
+                        "cfqm_stage_exp": str(args.cfqm_stage_exp),
                         "cfqm_coeff_drop_abs_tol": float(args.cfqm_coeff_drop_abs_tol),
                     }
                     mode_result = _run_noisy_mode_isolated(
@@ -5312,6 +5282,7 @@ def main(argv: list[str] | None = None) -> None:
                         layout_lock_key=str(paired_layout_lock_key),
                         method=str(method),
                         benchmark_active_coeff_tol=float(args.benchmark_active_coeff_tol),
+                        cfqm_stage_exp=str(args.cfqm_stage_exp),
                         cfqm_coeff_drop_abs_tol=float(args.cfqm_coeff_drop_abs_tol),
                         noisy_mode_timeout_s=int(args.noisy_mode_timeout_s),
                         profile_name=str(profile_name),

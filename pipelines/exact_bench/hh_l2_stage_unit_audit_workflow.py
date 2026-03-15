@@ -49,6 +49,8 @@ class AuditWorkflowConfig:
     warm_ansatz: str = "hh_hva_ptw"
     adapt_pool: str | None = "paop_lf_std"
     adapt_continuation_mode: str = "phase3_v1"
+    ordering: str = "blocked"
+    boundary: str = "open"
 
 
 @dataclass(frozen=True)
@@ -174,9 +176,9 @@ def build_locked_staged_hh_audit_config(workflow_cfg: AuditWorkflowConfig) -> St
         "--warm-ansatz",
         str(workflow_cfg.warm_ansatz),
         "--ordering",
-        "blocked",
+        str(workflow_cfg.ordering),
         "--boundary",
-        "open",
+        str(workflow_cfg.boundary),
         "--adapt-continuation-mode",
         str(workflow_cfg.adapt_continuation_mode),
         "--phase1-no-prune",
@@ -224,8 +226,8 @@ def build_locked_staged_hh_audit_config(workflow_cfg: AuditWorkflowConfig) -> St
         default_provenance={
             **dict(base_cfg.default_provenance),
             "audit_locked_profile": "AGENTS.hh_L2_nph2.audit_locked_profile",
-            "audit_ordering": "audit.fixed=blocked",
-            "audit_boundary": "audit.fixed=open",
+            "audit_ordering": f"audit.fixed={str(workflow_cfg.ordering)}",
+            "audit_boundary": f"audit.fixed={str(workflow_cfg.boundary)}",
             "audit_adapt_pool": (
                 "audit.fixed=paop_lf_std" if workflow_cfg.adapt_pool is None else "cli"
             ),
@@ -806,8 +808,8 @@ def build_audit_payload(
                 "final_restarts": 4,
                 "final_maxiter": 1500,
                 "optimizer": "SPSA",
-                "ordering": "blocked",
-                "boundary": "open",
+                "ordering": str(staged_cfg.physics.ordering),
+                "boundary": str(staged_cfg.physics.boundary),
                 "adapt_pool": staged_cfg.adapt.pool,
                 "adapt_continuation_mode": staged_cfg.adapt.continuation_mode,
                 "adapt_max_depth": staged_cfg.adapt.max_depth,
@@ -879,6 +881,8 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--g-ep", type=float, default=1.0, dest="g_ep")
     parser.add_argument("--warm-ansatz", choices=["hh_hva", "hh_hva_ptw"], default="hh_hva_ptw")
     parser.add_argument("--adapt-pool", type=str, default="paop_lf_std")
+    parser.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
+    parser.add_argument("--boundary", choices=["open", "periodic"], default="open")
     parser.add_argument(
         "--adapt-continuation-mode",
         choices=["legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
@@ -904,6 +908,8 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> AuditWorkflowConfig:
         warm_ansatz=str(args.warm_ansatz),
         adapt_pool=(None if args.adapt_pool is None else str(args.adapt_pool)),
         adapt_continuation_mode=str(args.adapt_continuation_mode),
+        ordering=str(args.ordering),
+        boundary=str(args.boundary),
     )
 
 

@@ -130,13 +130,22 @@ Notes:
 For agent-run HH workflows, use this stage contract:
 
 1. Warm-start stage: conventional VQE with intermediate HH ansatz `hh_hva_ptw`.
-2. ADAPT stage: follow the target pool curriculum from `MATH/IMPLEMENT_SOON.md`:
+   - `hh_hva_ptw` is the canonical staged default.
+   - `hh_hva` remains an explicit override only.
+2. Optional seed-refine stage: when `--seed-refine-family` is set, run one
+   explicit-family conventional VQE refine stage between warm-start and ADAPT.
+   - Supported v1 families: `uccsd_otimes_paop_lf_std`,
+     `uccsd_otimes_paop_lf2_std`, `uccsd_otimes_paop_bond_disp_std`.
+   - This stage materializes the requested explicit family directly; it does
+     **not** use `match_adapt` and does **not** auto-fallback to `full_meta`.
+   - If refine fails, abort before ADAPT.
+3. ADAPT stage: follow the target pool curriculum from `MATH/IMPLEMENT_SOON.md`:
    start from a narrow HH physics-aligned pool and do **not** open `full_meta`
    at depth 0; treat `full_meta` only as controlled residual enrichment after
    plateau diagnosis.
    - Canonical stage selection mode for new HH agent-directed runs is `phase3_v1` (phase1_v1 and phase2_v1 remain opt-in).
-3. ADAPT -> final VQE switch: apply an energy-drop switching criterion (see "ADAPT continuation stop policy (energy-first, mandatory for agent runs)").
-4. Final VQE replay: initialize from ADAPT state and replay with the same variational generator family ADAPT used (`--generator-family match_adapt`, fallback `full_meta`), using `vqe_reps=L` by default.
+4. ADAPT -> final VQE switch: apply an energy-drop switching criterion (see "ADAPT continuation stop policy (energy-first, mandatory for agent runs)").
+5. Final VQE replay: initialize from ADAPT state and replay with the same variational generator family ADAPT used (`--generator-family match_adapt`, fallback `full_meta`), using `vqe_reps=L` by default.
 
 Pool curriculum transition note:
 - `AGENTS target`: for this HH pool-curriculum transition, treat
@@ -153,6 +162,13 @@ CLI note:
 - Canonical continuation default for new HH staged runs is `--adapt-continuation-mode phase3_v1`.
   (`phase1_v1` and `phase2_v1` are opt-in legacy/experimental follow-ons.)
 - Legacy nearest subset remains `--adapt-pool uccsd_paop_lf_full` (`uccsd_lifted + paop_lf_full`).
+- Explicit product families for refine/replay or direct ADAPT materialization are
+  `uccsd_otimes_paop_lf_std`, `uccsd_otimes_paop_lf2_std`,
+  `uccsd_otimes_paop_bond_disp_std`.
+- Logical two-parameter variants
+  (`uccsd_otimes_paop_lf_std_seq2p`, `...lf2_std_seq2p`,
+  `...bond_disp_std_seq2p`) are additive opt-in surfaces and do not change the
+  staged `phase3_v1` default contract.
 
 Opt-in phase-3 follow-ons (keep defaults off unless explicitly requested):
 - `--phase3-runtime-split-mode shortlist_pauli_children_v1` is an optional continuation aid for HH staged ADAPT/hardcoded paths: shortlisted macro generators may be probed as single-term children, with parent/child provenance exported in continuation metadata.
@@ -550,7 +566,11 @@ projection.
 CFQM runtime semantics:
 - CFQM uses fixed scheme nodes `c_j`; legacy `--drive-time-sampling midpoint|left|right` does not change CFQM node sampling.
 - `--exact-steps-multiplier` remains reference-only (`piecewise_exact` reference refinement) and does not alter CFQM macro-step count.
+- True numerical CFQM4/CFQM6 uses `--cfqm-stage-exp expm_multiply_sparse` or `--cfqm-stage-exp dense_expm`.
 - If `--cfqm-stage-exp pauli_suzuki2` is chosen, runtime warns that inner Suzuki-2 reduces overall order to second order.
+- Hardware/report/transpile contract: circuitized CFQM artifacts are supported only when `--cfqm-stage-exp pauli_suzuki2`. That path is a circuitizable surrogate profile, not true CFQM4/CFQM6 order.
+- Numerical stage-exp modes (`expm_multiply_sparse`, `dense_expm`) stay numerical-only and must not be presented as compiled/transpiled/QPU CFQM circuits.
+- Pitfall: in this repo, a `compiled/transpiled CFQM4 circuit` can mean the `pauli_suzuki2` surrogate rather than the true numerical CFQM4 implementation.
 - Defensive checks are enabled: `dt > 0`, `n_steps >= 1`, validated CFQM scheme invariants, and finite drive coefficients (NaN/inf raises with label/time context).
 
 CFQM guardrails + policies:
@@ -563,13 +583,17 @@ CFQM guardrails + policies:
 Backend implementation note:
 - `dense_expm`: dense stage matrix + `scipy.linalg.expm`.
 - `expm_multiply_sparse`: native sparse stage matrix assembly + `scipy.sparse.linalg.expm_multiply`.
-- `pauli_suzuki2`: symmetric inner Suzuki-2 over Pauli terms (runtime order-collapse warning above).
+- `pauli_suzuki2`: symmetric inner Suzuki-2 over Pauli terms; circuitizable surrogate profile for report/transpile/hardware surfaces (runtime order-collapse warning above).
 - Shared Pauli-string action helpers for termwise exponentials live in `src/quantum/pauli_actions.py` (prevents library code from depending on pipeline modules).
 
 Diagnostics summary:
 - With `normalize=false`, observed CFQM norm drift is typically near machine precision (~1e-15 in the added regression diagnostics).
 - Nonzero `--cfqm-coeff-drop-abs-tol` can change trajectories (expected).
 - A=0 invariance remains intact when the drive provider returns exact zeros.
+
+Budgeting rule:
+- Honest CX/transpile/QPU budgets exist only for `--cfqm-stage-exp pauli_suzuki2`.
+- If you need true numerical CFQM4/CFQM6 order, stay on `expm_multiply_sparse` or `dense_expm` and do not quote compiled-circuit budgets as if they belong to the numerical backend.
 
 CFQM baseline commands (production-safe, JSON-only):
 
@@ -695,6 +719,7 @@ What it measures:
 Important benchmark profile caveat:
 - CFQM entries use `--cfqm-stage-exp pauli_suzuki2` in this benchmark so stage exponentials are represented as termwise product formulas for processor comparability.
 - This profile is for hardware-cost comparability; it is not the high-order dense/sparse CFQM stage-exp profile used for asymptotic order studies.
+- Any compiled/transpiled CFQM4 artifact from this benchmark is therefore the surrogate circuitized path, not the true numerical CFQM4 implementation.
 
 Artifacts:
 - `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_runs.json`
@@ -753,6 +778,7 @@ Fairness policy:
   - `cx_proxy`
   - `pauli_rot_count`
   - `expm_calls`
+- Interpret `exact_sparse` / `exact_dense` rows as numerical CFQM studies. Only `pauli_suzuki2` rows are honest circuitized/transpile/proxy surfaces.
 - Wall-time is grouped into near-tie bins and explicitly labeled approximate.
 - Nearest-neighbor fallback matches are appendix-only and must not be used as headline comparisons.
 
@@ -1341,10 +1367,17 @@ Notes:
 
 ### 5i) One-shot staged HH noiseless wrapper
 
-For the full noiseless chain in one command (HF -> `hh_hva_ptw` warm-start -> staged ADAPT -> matched-family replay -> Suzuki/CFQM dynamics from replay seed), use:
+For the full noiseless chain in one command
+(HF -> `hh_hva_ptw` warm-start -> optional explicit-family seed refine ->
+staged ADAPT -> matched-family replay -> Suzuki/CFQM dynamics from replay seed),
+use:
 
 ```bash
 python pipelines/hardcoded/hh_staged_noiseless.py --L 2
+
+# Optional refine insertion:
+python pipelines/hardcoded/hh_staged_noiseless.py --L 2 \
+  --seed-refine-family uccsd_otimes_paop_lf_std
 ```
 
 Wrapper contract:
@@ -1353,17 +1386,27 @@ Wrapper contract:
 - default stage effort is resolved from the HH scaling formulas in this guide,
 - when this guide does not specify separate replay optimizer effort, the wrapper reuses the warm-stage restart/maxiter scaling for replay,
 - default replay continuation mode follows ADAPT continuation mode unless explicitly overridden,
+- `--seed-refine-family` is disabled by default; when omitted, staged behavior is unchanged,
+- supported refine families are `uccsd_otimes_paop_lf_std`, `uccsd_otimes_paop_lf2_std`, and `uccsd_otimes_paop_bond_disp_std`,
+- `--seed-refine-reps` defaults to `final_reps(L)`, `--seed-refine-maxiter` defaults to `final_maxiter(L)`, and `--seed-refine-optimizer` defaults to `SPSA`,
+- when refine is enabled, the workflow runs warm -> refine -> ADAPT -> replay and exports `<state-export-prefix>_seed_refine_state.json`,
+- if the refine stage fails, the workflow aborts before ADAPT rather than silently continuing,
 - warm-stage handoff is persistent and resumable: each new best warm point rewrites `<state-export-prefix>_warm_checkpoint_state.json`,
 - when `--warm-stop-energy` and/or `--warm-stop-delta-abs` is provided, the wrapper auto-stops warm HH-VQE at the requested cutoff, writes `<state-export-prefix>_warm_cutover_state.json`, and seeds ADAPT from that JSON via the `adapt_ref_json` path,
 - when warm HH-VQE finishes below the requested cutoff, the wrapper still promotes the best persisted warm bundle to `<state-export-prefix>_warm_cutover_state.json`, logs that the cutoff was not reached, and seeds ADAPT from that JSON,
 - `--resume-from-warm-checkpoint <json>` resumes warm HH-VQE from the saved warm bundle after validating HH settings/exact-energy metadata; if that checkpoint already satisfies the cutoff, the wrapper cuts over directly,
 - `--handoff-from-warm-checkpoint <json>` skips warm HH-VQE and seeds staged ADAPT directly from the saved warm bundle after the same metadata validation,
+- staged handoff bundles may add a top-level `seed_provenance` block with
+  warm ansatz, refine family, family kind, motif families, and refine reps;
+  readers must treat a missing block as “no refine stage”,
+- replay `match_adapt` / `full_meta` resolution ignores `seed_provenance`; it is provenance only,
 - staged energy-error plots/tables use the replay exact-sector ground-state baseline, while fidelity remains against the seeded exact-reference trajectory,
 - diagnostics record `ecut_1` / `ecut_2` in the workflow payload instead of stopping mid-run.
 
 Primary artifacts:
 - workflow JSON/PDF: `artifacts/json/<tag>.json`, `artifacts/pdf/<tag>.pdf`
 - warm checkpoints/log: `<state-export-dir>/<state-export-prefix>_warm_checkpoint_state.json`, `<state-export-dir>/<state-export-prefix>_warm_cutover_state.json`, `artifacts/logs/<tag>.log`
+- optional refine state JSON: `<state-export-dir>/<state-export-prefix>_seed_refine_state.json`
 - ADAPT handoff JSON: `artifacts/json/<tag>_adapt_handoff.json`
 - replay sidecars: `artifacts/json/<tag>_replay.{json,csv}`, `artifacts/useful/L{L}/<tag>_replay.md`, `artifacts/logs/<tag>_replay.log`
 
@@ -1393,13 +1436,14 @@ Per-`L` section contents:
 - ADAPT circuit,
 - matched-family replay circuit,
 - Suzuki2 dynamics circuit,
-- CFQM4 dynamics circuit.
+- CFQM4 dynamics section.
 
 Circuit rendering semantics:
 - each stage/method includes a representative view that keeps high-level `PauliEvolutionGate` blocks intact,
-- each stage/method also includes an expanded view that performs one decomposition pass to expose readable term-level layers,
+- each stage/method also includes an expanded view that performs one decomposition pass to expose readable term-level layers when circuitization is supported,
 - dynamics pages show a single representative macro-step only, not the full unrolled `trotter_steps` chain,
-- the PDF reports the full repeat count and proxy totals (`term_exp_count_total`, `cx_proxy_total`, `sq_proxy_total`) for the complete trajectory.
+- the PDF reports the full repeat count and proxy totals (`term_exp_count_total`, `cx_proxy_total`, `sq_proxy_total`) for the complete trajectory when a circuitized path exists,
+- numerical-only CFQM (`dense_expm`, `expm_multiply_sparse`) is marked unsupported for circuit artifacts and skips representative/expanded circuit pages plus transpile/proxy summaries to avoid misleading circuit claims.
 
 Current default scope:
 - static / no-drive dynamics by default,
@@ -1423,6 +1467,43 @@ Producer outputs now stamp `initial_state.handoff_state_kind`:
 - `"reference_state"` — the statevector is a bare reference (HF, exact ground, etc.).
 
 For old payloads without this field, the replay runner infers provenance from `initial_state.source` (e.g., `"hf"` → reference, `"A_probe_final"` → prepared). If inference is ambiguous, the runner raises an error; use an explicit `--replay-seed-policy` to proceed.
+
+### 5k) HH seed benchmark surface (opt-in cross-check extension)
+
+Use `pipelines/exact_bench/cross_check_suite.py` for the pre-ADAPT seed
+comparison surface. This is additive and opt-in; it does **not** replace the
+staged HH workflow and it does **not** run the staged ADAPT follow-up itself.
+
+Single-point HH seed surface:
+
+```bash
+python pipelines/exact_bench/cross_check_suite.py \
+  --problem hh --L 2 --omega0 1.0 --g-ep 0.8 --n-ph-max 1 \
+  --hh-seed-refine-surface
+```
+
+Mini preset (`L=2,3`, `g=0.8,1.2`, with `t=1`, `U=4`, `omega0=1`, `n_ph_max=1`):
+
+```bash
+python pipelines/exact_bench/cross_check_suite.py \
+  --problem hh --hh-seed-benchmark-preset mini4
+```
+
+Surface contract:
+- default HH cross-check matrix remains `HH-Termwise`, `HH-Layerwise`, `ADAPT(full_H)`,
+- `--hh-seed-refine-surface` additively appends:
+  - `HH-PhysicalTermwise`,
+  - `HH-PhysicalTermwise + uccsd_paop_lf_full`,
+  - `HH-PhysicalTermwise + uccsd_otimes_paop_lf_std`,
+  - `HH-PhysicalTermwise + uccsd_otimes_paop_lf2_std`,
+  - `HH-PhysicalTermwise + uccsd_otimes_paop_bond_disp_std`,
+  - `HH-Layerwise + uccsd_otimes_paop_lf_std` on the smallest-system comparison only,
+- the flag is HH-only and HH cross-check remains SPSA-only,
+- sidecars keep proxy formulas sourced from `docs/reports/qiskit_circuit_report.py`,
+- primary ranking metric is energy improvement per added `cx_proxy`,
+- secondary views are energy improvement per added `depth_proxy` and per added `sq_proxy`,
+- staged ADAPT follow-up comparisons still belong in `hh_staged_noiseless.py`
+  with fixed `phase3_v1` continuation settings, not in `cross_check_suite.py`.
 
 ### 6) Compare pipeline with drive enabled
 
@@ -1612,6 +1693,11 @@ The `cmp_hubbard_{tag}_metrics.json` file includes `trajectory_deltas` with per-
 ## 11) HH noise/hardware validation (new)
 
 Use `pipelines/exact_bench/hh_noise_hardware_validation.py` to validate noisy VQE and noisy Trotter observables with one shared expectation oracle.
+
+Hardware-facing CFQM note:
+- Use `--propagator cfqm4` or `--propagator cfqm6` together with `--cfqm-stage-exp pauli_suzuki2` when you need a real circuit/transpile/hardware-faithful path.
+- `--cfqm-stage-exp expm_multiply_sparse` and `--cfqm-stage-exp dense_expm` remain numerical-only. The validation/report/transpile paths reject them for circuitized CFQM instead of silently lowering them to Suzuki.
+- Do not quote an honest CX/QPU budget for dense/sparse CFQM from this runner; those modes are rejected before circuit execution.
 
 ### 11a) Ideal baseline (HH)
 

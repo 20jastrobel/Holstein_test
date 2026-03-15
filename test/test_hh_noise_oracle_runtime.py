@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -38,6 +39,8 @@ from pipelines.exact_bench.noise_snapshot import freeze_backend_snapshot
 from src.quantum.hartree_fock_reference_state import hubbard_holstein_reference_state
 from src.quantum.qubitization_module import PauliTerm
 from src.quantum.pauli_polynomial_class import PauliPolynomial
+from src.quantum.time_propagation.cfqm_propagator import cfqm_step
+from src.quantum.time_propagation.cfqm_schemes import get_cfqm_scheme
 from src.quantum.vqe_latex_python_pairs import AnsatzTerm, HubbardHolsteinTermwiseAnsatz, apply_exp_pauli_polynomial
 
 
@@ -245,6 +248,7 @@ def test_time_dependent_macro_step_builders_return_valid_circuits_and_zero_time_
         trotter_steps=1,
         drive_t0=0.0,
         coeff_drop_abs_tol=0.0,
+        cfqm_stage_exp="pauli_suzuki2",
     )
     suzuki_zero = shared_build_suzuki2_time_dependent_circuit(
         initial_circuit=initial,
@@ -266,6 +270,7 @@ def test_time_dependent_macro_step_builders_return_valid_circuits_and_zero_time_
         trotter_steps=1,
         drive_t0=0.0,
         coeff_drop_abs_tol=0.0,
+        cfqm_stage_exp="pauli_suzuki2",
     )
 
     assert suzuki.num_qubits == 2
@@ -274,6 +279,60 @@ def test_time_dependent_macro_step_builders_return_valid_circuits_and_zero_time_
     assert cfqm.depth() >= initial.depth()
     assert Statevector.from_instruction(suzuki_zero).equiv(Statevector.from_instruction(initial))
     assert Statevector.from_instruction(cfqm_zero).equiv(Statevector.from_instruction(initial))
+
+
+def test_cfqm_circuit_builder_matches_numerical_pauli_suzuki2_stage_order() -> None:
+    ordered_labels_exyz = ["x", "z"]
+    static_coeff_map_exyz = {"z": 0.4 + 0.0j}
+
+    def _drive_provider(time_value: float) -> dict[str, complex]:
+        return {"x": complex(0.7 + (0.3 * float(time_value)))}
+
+    qc = shared_build_cfqm_time_dependent_circuit(
+        method="cfqm4",
+        initial_circuit=QuantumCircuit(1),
+        ordered_labels_exyz=ordered_labels_exyz,
+        static_coeff_map_exyz=static_coeff_map_exyz,
+        drive_provider_exyz=_drive_provider,
+        time_value=1.0,
+        trotter_steps=1,
+        drive_t0=0.0,
+        coeff_drop_abs_tol=0.0,
+        cfqm_stage_exp="pauli_suzuki2",
+    )
+    psi_circuit = np.asarray(Statevector.from_instruction(qc).data, dtype=complex).reshape(-1)
+    psi_numeric = cfqm_step(
+        psi=np.asarray([1.0, 0.0], dtype=complex),
+        t_abs=0.0,
+        dt=1.0,
+        static_coeff_map=dict(static_coeff_map_exyz),
+        drive_coeff_provider=_drive_provider,
+        ordered_labels=list(ordered_labels_exyz),
+        scheme=get_cfqm_scheme("cfqm4"),
+        config=SimpleNamespace(
+            backend="pauli_suzuki2",
+            scheme_name="cfqm4",
+            emit_inner_order_warning=False,
+        ),
+    )
+    assert abs(np.vdot(psi_numeric, psi_circuit)) > 0.9998
+
+
+def test_cfqm_circuit_builder_rejects_numerical_only_stage_exp_for_circuitization() -> None:
+    initial = QuantumCircuit(1)
+    with pytest.raises(ValueError, match="pauli_suzuki2"):
+        shared_build_cfqm_time_dependent_circuit(
+            method="cfqm4",
+            initial_circuit=initial,
+            ordered_labels_exyz=["z"],
+            static_coeff_map_exyz={"z": 0.5 + 0.0j},
+            drive_provider_exyz=None,
+            time_value=0.2,
+            trotter_steps=1,
+            drive_t0=0.0,
+            coeff_drop_abs_tol=0.0,
+            cfqm_stage_exp="dense_expm",
+        )
 
 
 def test_ideal_oracle_matches_statevector_expectation() -> None:

@@ -55,7 +55,10 @@ _build_hva_pool = _adapt_mod._build_hva_pool
 _build_paop_pool = _adapt_mod._build_paop_pool
 _build_hh_termwise_augmented_pool = _adapt_mod._build_hh_termwise_augmented_pool
 _build_hh_uccsd_fermion_lifted_pool = _adapt_mod._build_hh_uccsd_fermion_lifted_pool
+_build_hh_uccsd_paop_product_pool = _adapt_mod._build_hh_uccsd_paop_product_pool
+_build_hh_all_meta_v1_pool = _adapt_mod._build_hh_all_meta_v1_pool
 _deduplicate_pool_terms = _adapt_mod._deduplicate_pool_terms
+_polynomial_signature = _adapt_mod._polynomial_signature
 _exact_gs_energy_for_problem = _adapt_mod._exact_gs_energy_for_problem
 _compile_polynomial_action = _adapt_mod._compile_polynomial_action
 _apply_compiled_polynomial = _adapt_mod._apply_compiled_polynomial
@@ -240,6 +243,57 @@ class TestAdaptCLIParsing:
         )
         args = _adapt_mod.parse_args()
         assert str(args.adapt_pool) == "full_meta"
+
+    def test_parse_accepts_all_hh_meta_v1_pool(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["adapt_pipeline.py", "--problem", "hh", "--adapt-pool", "all_hh_meta_v1"],
+        )
+        args = _adapt_mod.parse_args()
+        assert str(args.adapt_pool) == "all_hh_meta_v1"
+
+    @pytest.mark.parametrize(
+        "pool_name",
+        [
+            "uccsd_otimes_paop_lf_std",
+            "uccsd_otimes_paop_lf2_std",
+            "uccsd_otimes_paop_bond_disp_std",
+        ],
+    )
+    def test_parse_accepts_new_uccsd_otimes_product_pools(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        pool_name: str,
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["adapt_pipeline.py", "--problem", "hh", "--adapt-pool", pool_name],
+        )
+        args = _adapt_mod.parse_args()
+        assert str(args.adapt_pool) == pool_name
+
+    @pytest.mark.parametrize(
+        "pool_name",
+        [
+            "uccsd_otimes_paop_lf_std_seq2p",
+            "uccsd_otimes_paop_lf2_std_seq2p",
+            "uccsd_otimes_paop_bond_disp_std_seq2p",
+        ],
+    )
+    def test_parse_accepts_seq2p_product_pool_for_adapt(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        pool_name: str,
+    ) -> None:
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["adapt_pipeline.py", "--problem", "hh", "--adapt-pool", pool_name],
+        )
+        args = _adapt_mod.parse_args()
+        assert str(args.adapt_pool) == pool_name
 
     def test_parse_accepts_adapt_state_backend_legacy(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
@@ -533,6 +587,99 @@ class TestPAOPPoolBuilder:
         assert callable(make_pool)
 
 
+class TestHHAllMetaV1PoolBuilder:
+    """Verify exhaustive HH union pool semantics."""
+
+    @staticmethod
+    def _hh_l2_problem(*, pbc: bool = True, g: float = 0.5, n_ph_max: int = 1):
+        n_sites = 2
+        num_particles = half_filled_num_particles(n_sites)
+        h_poly = build_hubbard_holstein_hamiltonian(
+            dims=n_sites, J=1.0, U=4.0, omega0=1.0, g=float(g),
+            n_ph_max=int(n_ph_max), boson_encoding="binary",
+            repr_mode="JW", indexing="blocked", pbc=bool(pbc),
+            include_zero_point=True,
+        )
+        return n_sites, num_particles, h_poly
+
+    def test_all_hh_meta_v1_superset_is_non_empty(self):
+        n_sites, num_particles, h_poly = self._hh_l2_problem(pbc=True, g=0.5, n_ph_max=1)
+        full_meta_pool, _full_meta_meta = _adapt_mod._build_hh_full_meta_pool(
+            h_poly=h_poly,
+            num_sites=n_sites,
+            t=1.0,
+            u=4.0,
+            omega0=1.0,
+            g_ep=0.5,
+            dv=0.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            ordering="blocked",
+            boundary="periodic",
+            paop_r=1,
+            paop_split_paulis=False,
+            paop_prune_eps=0.0,
+            paop_normalization="none",
+            num_particles=num_particles,
+        )
+        all_pool, all_meta = _build_hh_all_meta_v1_pool(
+            h_poly=h_poly,
+            num_sites=n_sites,
+            t=1.0,
+            u=4.0,
+            omega0=1.0,
+            g_ep=0.5,
+            dv=0.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            ordering="blocked",
+            boundary="periodic",
+            paop_r=1,
+            paop_split_paulis=False,
+            paop_prune_eps=0.0,
+            paop_normalization="none",
+            num_particles=num_particles,
+        )
+        assert len(full_meta_pool) > 0
+        assert len(all_pool) >= len(full_meta_pool)
+        assert int(all_meta["raw_full_hamiltonian"]) > 0
+        assert int(all_meta["raw_paop_sq_std"]) > 0
+        assert int(all_meta["raw_vlf_sq_dens"]) > 0
+
+    def test_all_hh_meta_v1_skips_empty_vlf_sq_family(self, monkeypatch: pytest.MonkeyPatch):
+        n_sites, num_particles, h_poly = self._hh_l2_problem(pbc=True, g=0.5, n_ph_max=1)
+        original = _adapt_mod._build_vlf_sq_pool
+
+        def _patched_build_vlf_sq_pool(*args, **kwargs):
+            pool_key = str(kwargs.get("pool_key", args[5] if len(args) > 5 else ""))
+            if pool_key == "sq_only":
+                raise ValueError("sq_only produced no surviving squeeze generators; n_ph_max may be too small.")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(_adapt_mod, "_build_vlf_sq_pool", _patched_build_vlf_sq_pool)
+        all_pool, all_meta = _build_hh_all_meta_v1_pool(
+            h_poly=h_poly,
+            num_sites=n_sites,
+            t=1.0,
+            u=4.0,
+            omega0=1.0,
+            g_ep=0.5,
+            dv=0.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            ordering="blocked",
+            boundary="periodic",
+            paop_r=1,
+            paop_split_paulis=False,
+            paop_prune_eps=0.0,
+            paop_normalization="none",
+            num_particles=num_particles,
+        )
+        assert len(all_pool) > 0
+        assert int(all_meta["raw_sq_only"]) == 0
+        assert int(all_meta["raw_vlf_sq_dens"]) > 0
+
+
 class TestHHUCCSDPAOPCompositePoolBuilder:
     """Verify HH composite UCCSD+PAOP(lf_full) pool semantics."""
 
@@ -594,6 +741,72 @@ class TestHHUCCSDPAOPCompositePoolBuilder:
         assert len(paop_pool) > 0
         assert len(dedup_pool) > 0
         assert len(dedup_pool) <= len(uccsd_pool) + len(paop_pool)
+        assert not any(str(op.label).startswith("uccsd_otimes_paop") for op in dedup_pool)
+
+
+class TestHHUCCSDPAOPProductPoolBuilder:
+    @staticmethod
+    def _build_product_pool(*, family_key: str, n_sites: int, n_ph_max: int = 1) -> tuple[list[AnsatzTerm], dict[str, object]]:
+        return _build_hh_uccsd_paop_product_pool(
+            num_sites=n_sites,
+            n_ph_max=n_ph_max,
+            boson_encoding="binary",
+            ordering="blocked",
+            boundary="open",
+            family_key=family_key,
+            paop_r=1,
+            paop_split_paulis=False,
+            paop_prune_eps=0.0,
+            paop_normalization="none",
+            num_particles=half_filled_num_particles(n_sites),
+        )
+
+    def test_single_parameter_product_pool_is_non_empty_and_prefixed(self) -> None:
+        pool, meta = self._build_product_pool(family_key="uccsd_otimes_paop_lf_std", n_sites=2, n_ph_max=1)
+        assert len(pool) > 0
+        assert meta["parameterization"] == "single_product"
+        assert all(str(op.label).startswith("uccsd_otimes_paop::") for op in pool)
+
+    def test_single_parameter_product_pool_orders_singles_before_doubles(self) -> None:
+        pool, _meta = self._build_product_pool(family_key="uccsd_otimes_paop_lf_std", n_sites=2, n_ph_max=1)
+        labels = [str(op.label) for op in pool]
+        single_positions = [idx for idx, label in enumerate(labels) if "uccsd_sing(" in label]
+        double_positions = [idx for idx, label in enumerate(labels) if "uccsd_dbl(" in label]
+        assert single_positions
+        assert double_positions
+        assert max(single_positions) < min(double_positions)
+
+    def test_lf_product_locality_filters_out_disjoint_local_motifs(self) -> None:
+        pool, _meta = self._build_product_pool(family_key="uccsd_otimes_paop_lf_std", n_sites=3, n_ph_max=1)
+        base = "uccsd_otimes_paop::uccsd_ferm_lifted::uccsd_sing(alpha:0->2)::paop_lf_std::"
+        labels = {str(op.label) for op in pool if str(op.label).startswith(base)}
+        assert f"{base}p(site=0)" in labels
+        assert f"{base}p(site=2)" in labels
+        assert f"{base}p(site=1)" not in labels
+
+    def test_bond_disp_product_locality_keeps_only_directly_compatible_bonds(self) -> None:
+        pool, _meta = self._build_product_pool(family_key="uccsd_otimes_paop_bond_disp_std", n_sites=3, n_ph_max=1)
+        base = "uccsd_otimes_paop::uccsd_ferm_lifted::uccsd_sing(alpha:0->2)::paop_bond_disp_std::"
+        labels = {str(op.label) for op in pool if str(op.label).startswith(base)}
+        assert f"{base}p(site=0)" in labels
+        assert f"{base}p(site=2)" in labels
+        assert not any("delta_p(" in label for label in labels)
+        assert not any("bond_p_sum(" in label for label in labels)
+
+    def test_seq2p_product_pool_preserves_pair_expansion_without_dedup_collapse(self) -> None:
+        pool, meta = self._build_product_pool(family_key="uccsd_otimes_paop_lf_std_seq2p", n_sites=3, n_ph_max=1)
+        assert meta["parameterization"] == "double_sequential"
+        assert len(pool) > 0
+        assert len(pool) % 2 == 0
+        for idx in range(0, len(pool), 2):
+            assert str(pool[idx].label).endswith("::step=ferm")
+            assert str(pool[idx + 1].label).endswith("::step=motif")
+        ferm_terms = [op for op in pool if str(op.label).endswith("::step=ferm")]
+        sig_counts: dict[tuple[tuple[str, float], ...], int] = {}
+        for op in ferm_terms:
+            sig = _polynomial_signature(op.polynomial)
+            sig_counts[sig] = sig_counts.get(sig, 0) + 1
+        assert max(sig_counts.values()) > 1
 
 
 # ============================================================================
@@ -2282,6 +2495,94 @@ class TestHHContinuationModeGatingNegative:
             assert "symmetry_mode" not in row
             assert "lifetime_cost_mode" not in row
             assert "remaining_evaluations_proxy" not in row
+
+
+class TestHHSeq2PLogicalAdapt:
+    def _hh_h(self):
+        return build_hubbard_holstein_hamiltonian(
+            dims=2,
+            J=1.0,
+            U=2.0,
+            omega0=1.0,
+            g=0.5,
+            n_ph_max=1,
+            boson_encoding="binary",
+            v_t=None,
+            v0=0.0,
+            t_eval=None,
+            repr_mode="JW",
+            indexing="blocked",
+            pbc=True,
+            include_zero_point=True,
+        )
+
+    def _run(self, **overrides):
+        defaults = dict(
+            h_poly=self._hh_h(),
+            num_sites=2,
+            ordering="blocked",
+            problem="hh",
+            adapt_pool="uccsd_otimes_paop_lf_std_seq2p",
+            t=1.0,
+            u=2.0,
+            dv=0.0,
+            boundary="periodic",
+            omega0=1.0,
+            g_ep=0.5,
+            n_ph_max=1,
+            boson_encoding="binary",
+            max_depth=1,
+            eps_grad=1e-8,
+            eps_energy=1e-8,
+            maxiter=20,
+            seed=7,
+            adapt_inner_optimizer="COBYLA",
+            allow_repeats=False,
+            finite_angle_fallback=False,
+            finite_angle=0.1,
+            finite_angle_min_improvement=1e-12,
+            adapt_continuation_mode="legacy",
+            adapt_reopt_policy="append_only",
+            disable_hh_seed=True,
+        )
+        defaults.update(overrides)
+        return _run_hardcoded_adapt_vqe(**defaults)
+
+    def test_seq2p_legacy_adapt_selects_one_logical_pair_with_two_parameters(self):
+        payload, _ = self._run()
+        assert payload["success"] is True
+        assert payload["pool_type"] == "uccsd_otimes_paop_lf_std_seq2p"
+        assert payload["logical_parameterization"] == "double_sequential"
+        assert payload["logical_operator_count"] == 1
+        assert payload["logical_operator_sizes"] == [2]
+        assert payload["expanded_operator_count"] == len(payload["operators"]) == 2
+        assert len(payload["optimal_point"]) == 2
+        row = payload["history"][0]
+        assert row["parameterization"] == "double_sequential"
+        assert row["selected_logical_size"] == 2
+        assert row["selected_op"].endswith("::step=ferm")
+        assert row["selected_ops"][0].endswith("::step=ferm")
+        assert row["selected_ops"][1].endswith("::step=motif")
+        assert row["selected_op"] == row["selected_ops"][0]
+        assert row["selected_logical_op"] == row["selected_ops"][0].rsplit("::step=", 1)[0]
+        assert row["reopt_active_indices"] == [0, 1]
+        assert row["reopt_policy_effective"] == "append_only_logical_pair"
+        assert "selected_logical_grad_abs" in row
+        assert row["selected_logical_grad_abs"] >= row["selected_grad_abs"]
+        assert len(row["selected_grad_signed_components"]) == 2
+        assert len(row["selected_grad_abs_components"]) == 2
+        assert row["init_theta_values"] == [0.0, 0.0]
+
+    def test_seq2p_windowed_reopt_keeps_both_new_parameters_active(self):
+        payload, _ = self._run(adapt_reopt_policy="windowed", adapt_window_size=1, adapt_window_topk=0)
+        row = payload["history"][0]
+        assert row["reopt_active_indices"] == [0, 1]
+        assert row["reopt_policy_effective"] == "windowed_logical_pair"
+
+    @pytest.mark.parametrize("mode", ["phase1_v1", "phase2_v1", "phase3_v1"])
+    def test_seq2p_rejected_for_staged_hh_continuation_modes(self, mode: str):
+        with pytest.raises(ValueError, match="require --adapt-continuation-mode legacy"):
+            self._run(adapt_continuation_mode=mode)
 
 
 # ────────────────────────────────────────────────────────────────────

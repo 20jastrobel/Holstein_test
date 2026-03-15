@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.quantum.operator_pools.polaron_paop import _to_signature, make_pool
+from src.quantum.operator_pools.polaron_paop import _to_signature, make_phonon_motifs, make_pool
 
 
 def _build_pool(name: str, *, n_ph_max: int) -> list[tuple[str, object]]:
@@ -92,3 +92,56 @@ def test_new_paop_family_coefficients_remain_effectively_real() -> None:
             for term in poly.return_polynomial():
                 coeff = complex(term.p_coeff)
                 assert abs(coeff.imag) <= 1e-10
+
+
+def test_make_phonon_motifs_lf_std_has_expected_order_metadata_and_boson_only_support() -> None:
+    motifs = make_phonon_motifs(
+        "paop_lf_std",
+        num_sites=2,
+        n_ph_max=1,
+        boson_encoding="binary",
+        boundary="open",
+        prune_eps=0.0,
+        normalization="none",
+    )
+    assert [motif.label for motif in motifs] == ["p(site=0)", "p(site=1)", "delta_p(0,1)"]
+    assert motifs[0].sites == (0,)
+    assert motifs[0].bonds == ()
+    assert motifs[0].uses_sq is False
+    assert motifs[-1].sites == (0, 1)
+    assert motifs[-1].bonds == ((0, 1),)
+
+    fermion_identity = "e" * 4
+    for motif in motifs:
+        for term in motif.poly.return_polynomial():
+            assert str(term.pw2strng())[-4:] == fermion_identity
+
+
+def test_make_phonon_motifs_lf2_std_adds_delta_p2_without_squeeze_flag() -> None:
+    motifs = make_phonon_motifs(
+        "paop_lf2_std",
+        num_sites=2,
+        n_ph_max=2,
+        boson_encoding="binary",
+        boundary="open",
+        prune_eps=0.0,
+        normalization="none",
+    )
+    assert any(motif.label.startswith("delta_p2(") for motif in motifs)
+    assert all(motif.uses_sq is False for motif in motifs)
+
+
+def test_make_phonon_motifs_bond_disp_adds_bond_sum_terms_with_real_coefficients() -> None:
+    motifs = make_phonon_motifs(
+        "paop_bond_disp_std",
+        num_sites=2,
+        n_ph_max=2,
+        boson_encoding="binary",
+        boundary="open",
+        prune_eps=0.0,
+        normalization="none",
+    )
+    assert any(motif.label.startswith("bond_p_sum(") for motif in motifs)
+    for motif in motifs:
+        for term in motif.poly.return_polynomial():
+            assert abs(complex(term.p_coeff).imag) <= 1e-10

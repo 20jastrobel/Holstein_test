@@ -22,6 +22,8 @@ def _screen_cfg(
     *,
     points: tuple[wf.HamiltonianPoint, ...] | None = None,
     seed_count: int = 3,
+    ordering: str = "blocked",
+    boundary: str = "open",
     include_prefix_50: bool = False,
     warm_vqe_reps_override: int | None = None,
     warm_vqe_restarts_override: int | None = None,
@@ -47,6 +49,8 @@ def _screen_cfg(
         warm_ansatz="hh_hva_ptw",
         adapt_pool="paop_lf_std",
         adapt_continuation_mode="phase3_v1",
+        ordering=str(ordering),
+        boundary=str(boundary),
         include_prefix_50=bool(include_prefix_50),
         warm_vqe_reps_override=warm_vqe_reps_override,
         warm_vqe_restarts_override=warm_vqe_restarts_override,
@@ -164,6 +168,8 @@ def test_select_median_records_is_deterministic_under_ties() -> None:
 def test_build_screen_staged_cfg_applies_optional_budget_overrides(tmp_path: Path) -> None:
     screen_cfg = _screen_cfg(
         tmp_path,
+        ordering="interleaved",
+        boundary="periodic",
         warm_vqe_reps_override=5,
         warm_vqe_restarts_override=6,
         warm_vqe_maxiter_override=2500,
@@ -188,6 +194,8 @@ def test_build_screen_staged_cfg_applies_optional_budget_overrides(tmp_path: Pat
     assert staged_cfg.replay.reps == 4
     assert staged_cfg.replay.restarts == 6
     assert staged_cfg.replay.maxiter == 2800
+    assert staged_cfg.physics.ordering == "interleaved"
+    assert staged_cfg.physics.boundary == "periodic"
 
 
 def test_run_screen_emits_baselines_and_median_seed_ablations(

@@ -237,6 +237,8 @@ def test_run_noisy_profiles_uses_final_state_and_optional_audit(
                 "--aer-noise-kind",
                 "scheduled",
                 "--allow-noisy-fallback",
+                "--cfqm-stage-exp",
+                "pauli_suzuki2",
             ]
         )
     )
@@ -252,6 +254,7 @@ def test_run_noisy_profiles_uses_final_state_and_optional_audit(
     assert all(np.allclose(rec["kwargs"]["psi_seed"], stage_result.psi_final) for rec in audit_calls)
     assert {str(rec["kwargs"]["method"]) for rec in mode_calls} == {"cfqm4"}
     assert {str(rec["kwargs"]["noise_mode"]) for rec in mode_calls} == {"ideal", "shots"}
+    assert {str(rec["kwargs"]["cfqm_stage_exp"]) for rec in mode_calls} == {"pauli_suzuki2"}
 
 
 def test_resolve_noise_runtime_twirling_flags_propagate() -> None:
@@ -338,6 +341,8 @@ def test_run_noisy_profiles_emits_paired_anchor_comparison_set(
                 "16",
                 "--runtime-twirling-strategy",
                 "active",
+                "--cfqm-stage-exp",
+                "pauli_suzuki2",
             ]
         )
     )
@@ -355,6 +360,7 @@ def test_run_noisy_profiles_emits_paired_anchor_comparison_set(
         "num_randomizations": 16,
         "strategy": "active",
     }
+    assert helper_calls[0]["cfqm_stage_exp"] == "pauli_suzuki2"
     assert helper_calls[0]["layout_lock_key"] == (
         f"staged_noise_paired:{cfg.staged.artifacts.tag}:static:cfqm4:local_aer_locked_patch"
     )

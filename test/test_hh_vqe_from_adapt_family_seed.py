@@ -10,10 +10,13 @@ from pipelines.hardcoded.hh_vqe_from_adapt_family import (
     PoolTermwiseAnsatz,
     REPLAY_CONTRACT_VERSION,
     REPLAY_SEED_POLICIES,
+    build_family_ansatz_context,
     _build_full_meta_replay_terms_sparse,
     _build_replay_seed_theta,
     _build_replay_seed_theta_policy,
     _build_replay_terms_from_adapt_labels,
+    _expand_product_labels_and_theta_for_family,
+    _extract_canonical_label_family,
     _extract_adapt_operator_theta_sequence,
     _extract_replay_contract,
     _infer_handoff_state_kind,
@@ -24,6 +27,60 @@ from src.quantum.hubbard_latex_python_pairs import build_hubbard_holstein_hamilt
 @dataclass(frozen=True)
 class _DummyTerm:
     label: str
+
+
+def test_build_family_ansatz_context_materializes_explicit_product_family() -> None:
+    cfg = SimpleNamespace(
+        L=2,
+        t=1.0,
+        u=4.0,
+        dv=0.0,
+        omega0=1.0,
+        g_ep=0.5,
+        n_ph_max=1,
+        boson_encoding="binary",
+        ordering="blocked",
+        boundary="open",
+        sector_n_up=1,
+        sector_n_dn=1,
+        reps=1,
+        paop_r=1,
+        paop_split_paulis=False,
+        paop_prune_eps=0.0,
+        paop_normalization="none",
+    )
+    h_poly = build_hubbard_holstein_hamiltonian(
+        dims=2,
+        J=1.0,
+        U=4.0,
+        omega0=1.0,
+        g=0.5,
+        n_ph_max=1,
+        boson_encoding="binary",
+        v_t=None,
+        v0=0.0,
+        t_eval=None,
+        repr_mode="JW",
+        indexing="blocked",
+        pbc=False,
+        include_zero_point=True,
+    )
+    psi_ref = np.zeros(1 << 6, dtype=complex)
+    psi_ref[0] = 1.0
+
+    ctx = build_family_ansatz_context(
+        cfg,
+        psi_ref=psi_ref,
+        h_poly=h_poly,
+        family="uccsd_otimes_paop_lf_std",
+        e_exact=-1.0,
+    )
+
+    assert ctx["family_info"]["resolved"] == "uccsd_otimes_paop_lf_std"
+    assert ctx["family_terms_count"] > 0
+    assert len(ctx["terms"]) == ctx["family_terms_count"]
+    assert np.allclose(ctx["seed_theta"], np.zeros_like(ctx["seed_theta"]))
+    assert np.allclose(ctx["psi_seed"], psi_ref)
 
 
 def test_extract_adapt_operator_theta_sequence_valid() -> None:
@@ -200,6 +257,38 @@ def test_build_replay_seed_theta_tiled_and_npar_matches_adapt_depth_times_reps()
     replay_terms = [_DummyTerm("g0"), _DummyTerm("g1"), _DummyTerm("g2")]
     ansatz = PoolTermwiseAnsatz(terms=replay_terms, reps=reps, nq=1)
     assert int(seed.size) == int(ansatz.num_parameters)
+
+
+def test_extract_canonical_label_family_maps_uccsd_otimes_product_labels() -> None:
+    label = (
+        "uccsd_otimes_paop::uccsd_ferm_lifted::uccsd_sing(alpha:0->1)"
+        "::paop_lf_std::p(site=0)"
+    )
+    assert _extract_canonical_label_family(label) == "uccsd_otimes_paop_lf_std"
+
+
+def test_extract_canonical_label_family_maps_uccsd_otimes_seq2p_labels() -> None:
+    label = (
+        "uccsd_otimes_paop_seq2p::uccsd_ferm_lifted::uccsd_sing(alpha:0->1)"
+        "::paop_bond_disp_std::bond_p_sum(0,1)::step=ferm"
+    )
+    assert _extract_canonical_label_family(label) == "uccsd_otimes_paop_bond_disp_std_seq2p"
+
+
+def test_expand_product_labels_and_theta_for_seq2p_replay() -> None:
+    labels, theta, mode = _expand_product_labels_and_theta_for_family(
+        [
+            "uccsd_otimes_paop::uccsd_ferm_lifted::uccsd_sing(alpha:0->1)::paop_lf_std::p(site=0)",
+        ],
+        np.array([0.25], dtype=float),
+        family="uccsd_otimes_paop_lf_std_seq2p",
+    )
+    assert labels == [
+        "uccsd_otimes_paop_seq2p::uccsd_ferm_lifted::uccsd_sing(alpha:0->1)::paop_lf_std::p(site=0)::step=ferm",
+        "uccsd_otimes_paop_seq2p::uccsd_ferm_lifted::uccsd_sing(alpha:0->1)::paop_lf_std::p(site=0)::step=motif",
+    ]
+    assert np.allclose(theta, np.array([0.25, 0.0], dtype=float))
+    assert mode == "theta_then_zero"
 
 
 # ── Replay contract parser tests ───────────────────────────────────────────

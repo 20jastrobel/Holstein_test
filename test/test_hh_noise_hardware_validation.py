@@ -134,6 +134,36 @@ class _StubValidationOracle:
 
 
 
+def test_build_validation_dynamics_circuit_accepts_cfqm_with_pauli_suzuki2() -> None:
+    qc = hhv._build_validation_dynamics_circuit(
+        initial_circuit=QuantumCircuit(1),
+        ordered_labels_exyz=["z"],
+        static_coeff_map_exyz={"z": 0.5 + 0.0j},
+        method="cfqm4",
+        time_value=0.2,
+        trotter_steps=1,
+        suzuki_order=2,
+        cfqm_stage_exp="pauli_suzuki2",
+        cfqm_coeff_drop_abs_tol=0.0,
+    )
+    assert qc.num_qubits == 1
+
+
+def test_build_validation_dynamics_circuit_rejects_numerical_only_cfqm_stage_exp() -> None:
+    with pytest.raises(ValueError, match="pauli_suzuki2"):
+        hhv._build_validation_dynamics_circuit(
+            initial_circuit=QuantumCircuit(1),
+            ordered_labels_exyz=["z"],
+            static_coeff_map_exyz={"z": 0.5 + 0.0j},
+            method="cfqm4",
+            time_value=0.2,
+            trotter_steps=1,
+            suzuki_order=2,
+            cfqm_stage_exp="dense_expm",
+            cfqm_coeff_drop_abs_tol=0.0,
+        )
+
+
 def test_paired_anchor_validation_reports_same_anchor_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

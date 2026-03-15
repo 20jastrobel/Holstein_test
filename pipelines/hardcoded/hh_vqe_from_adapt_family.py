@@ -31,9 +31,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from pipelines.hardcoded.adapt_pipeline import (
+    _HH_UCCSD_PAOP_PRODUCT_SPECS,
     _build_hh_termwise_augmented_pool,
     _build_hh_full_meta_pool,
+    _build_hh_all_meta_v1_pool,
     _build_hh_uccsd_fermion_lifted_pool,
+    _build_hh_uccsd_paop_product_pool,
     _build_hva_pool,
     _build_paop_pool,
     _build_vlf_sq_pool,
@@ -63,7 +66,14 @@ from pipelines.hardcoded.hh_continuation_replay import (
 
 EXPLICIT_FAMILIES = {
     "full_meta",
+    "all_hh_meta_v1",
     "uccsd_paop_lf_full",
+    "uccsd_otimes_paop_lf_std",
+    "uccsd_otimes_paop_lf2_std",
+    "uccsd_otimes_paop_bond_disp_std",
+    "uccsd_otimes_paop_lf_std_seq2p",
+    "uccsd_otimes_paop_lf2_std_seq2p",
+    "uccsd_otimes_paop_bond_disp_std_seq2p",
     "hva",
     "paop",
     "paop_min",
@@ -434,6 +444,30 @@ def _build_pool_for_family(cfg: RunConfig, *, family: str, h_poly: Any) -> tuple
         out_meta["dedup_total"] = int(len(pool))
         return pool, out_meta
 
+    if family_key == "all_hh_meta_v1":
+        pool, meta = _build_hh_all_meta_v1_pool(
+            h_poly=h_poly,
+            num_sites=n_sites,
+            t=float(cfg.t),
+            u=float(cfg.u),
+            omega0=float(cfg.omega0),
+            g_ep=float(cfg.g_ep),
+            dv=float(cfg.dv),
+            n_ph_max=int(cfg.n_ph_max),
+            boson_encoding=str(cfg.boson_encoding),
+            ordering=str(cfg.ordering),
+            boundary=str(cfg.boundary),
+            paop_r=int(cfg.paop_r),
+            paop_split_paulis=bool(cfg.paop_split_paulis),
+            paop_prune_eps=float(cfg.paop_prune_eps),
+            paop_normalization=str(cfg.paop_normalization),
+            num_particles=num_particles,
+        )
+        out_meta = dict(base_meta)
+        out_meta["raw_sizes"] = dict(meta)
+        out_meta["dedup_total"] = int(len(pool))
+        return pool, out_meta
+
     if family_key == "uccsd_paop_lf_full":
         uccsd = _build_hh_uccsd_fermion_lifted_pool(
             n_sites,
@@ -461,6 +495,25 @@ def _build_pool_for_family(cfg: RunConfig, *, family: str, h_poly: Any) -> tuple
         out_meta["raw_sizes"] = {"raw_uccsd_lifted": int(len(uccsd)), "raw_paop_lf_full": int(len(paop))}
         out_meta["dedup_total"] = int(len(dedup))
         return dedup, out_meta
+
+    if family_key in _HH_UCCSD_PAOP_PRODUCT_SPECS:
+        pool, meta = _build_hh_uccsd_paop_product_pool(
+            n_sites,
+            int(cfg.n_ph_max),
+            str(cfg.boson_encoding),
+            str(cfg.ordering),
+            str(cfg.boundary),
+            family_key,
+            int(cfg.paop_r),
+            bool(cfg.paop_split_paulis),
+            float(cfg.paop_prune_eps),
+            str(cfg.paop_normalization),
+            num_particles,
+        )
+        out_meta = dict(base_meta)
+        out_meta.update(dict(meta))
+        out_meta["family"] = family_key
+        return list(pool), out_meta
 
     if family_key == "hva":
         pool = _build_hva_pool(
@@ -824,7 +877,7 @@ _LEGACY_REFERENCE_SOURCES = {"hf", "exact"}
 # Source suffixes that map to prepared_state in legacy staged exports.
 _LEGACY_PREPARED_FINAL_SUFFIXES = ("_final",)
 # Source values that map to prepared_state in legacy payloads.
-_LEGACY_PREPARED_SOURCES = {"adapt_vqe"}
+_LEGACY_PREPARED_SOURCES = {"adapt_vqe", "seed_refine_vqe"}
 
 
 def _coerce_bool(value: Any, path: str) -> bool:
@@ -1105,6 +1158,81 @@ def _build_replay_seed_theta_policy(
     return seed, resolved
 
 
+def _extract_canonical_label_family(label: str) -> str | None:
+    raw = str(label).strip()
+    if raw.startswith("uccsd_otimes_paop_seq2p::"):
+        parts = raw.split("::")
+        if len(parts) >= 6:
+            motif_family = str(parts[-3]).strip().lower()
+            return _canonical_family(f"uccsd_otimes_{motif_family}_seq2p")
+    if raw.startswith("uccsd_otimes_paop::"):
+        parts = raw.split("::")
+        if len(parts) >= 5:
+            motif_family = str(parts[-2]).strip().lower()
+            return _canonical_family(f"uccsd_otimes_{motif_family}")
+    if ":" not in raw:
+        return None
+    prefix, _ = raw.split(":", 1)
+    return _canonical_family(prefix)
+
+
+def _expand_product_labels_and_theta_for_family(
+    labels: Sequence[str],
+    theta: np.ndarray,
+    *,
+    family: str,
+) -> tuple[list[str], np.ndarray, str | None]:
+    family_key = str(family).strip().lower()
+    label_list = [str(lbl) for lbl in labels]
+    theta_arr = np.asarray(theta, dtype=float).reshape(-1)
+    if len(label_list) != int(theta_arr.size):
+        raise ValueError("Replay label/theta expansion requires matching label and theta lengths.")
+    if not family_key.endswith("_seq2p"):
+        return label_list, theta_arr.copy(), None
+
+    expanded_labels: list[str] = []
+    expanded_theta: list[float] = []
+    already_seq2p = True
+    for raw_label, theta_val in zip(label_list, theta_arr):
+        if raw_label.startswith("uccsd_otimes_paop_seq2p::"):
+            expanded_labels.append(raw_label)
+            expanded_theta.append(float(theta_val))
+            continue
+        already_seq2p = False
+        if not raw_label.startswith("uccsd_otimes_paop::"):
+            raise ValueError(
+                "Sequential 2-parameter replay requires UCCSD⊗PAOP product labels; "
+                f"got '{raw_label}'."
+            )
+        base_label = "uccsd_otimes_paop_seq2p" + raw_label[len("uccsd_otimes_paop"):]
+        expanded_labels.append(f"{base_label}::step=ferm")
+        expanded_labels.append(f"{base_label}::step=motif")
+        expanded_theta.extend([float(theta_val), 0.0])
+    expansion_mode = None if already_seq2p else "theta_then_zero"
+    return expanded_labels, np.asarray(expanded_theta, dtype=float), expansion_mode
+
+
+def _build_exact_label_subset_for_family(
+    cfg: RunConfig,
+    *,
+    family: str,
+    h_poly: Any,
+    needed_labels: Sequence[str],
+) -> tuple[list[AnsatzTerm], int]:
+    family_key = _canonical_family(family)
+    if family_key is None or family_key == "full_meta":
+        return [], 0
+    needed = {str(lbl) for lbl in needed_labels}
+    if not needed:
+        return [], 0
+    pool, _ = _build_pool_for_family(cfg, family=family_key, h_poly=h_poly)
+    subset: list[AnsatzTerm] = []
+    for term in pool:
+        if str(term.label) in needed:
+            subset.append(term)
+    return subset, int(len(pool))
+
+
 def _build_full_meta_replay_terms_sparse(
     cfg: RunConfig,
     *,
@@ -1112,7 +1240,7 @@ def _build_full_meta_replay_terms_sparse(
     adapt_labels: Sequence[str],
     payload: Mapping[str, Any] | None = None,
 ) -> tuple[list[AnsatzTerm], dict[str, Any]]:
-    """Resolve only needed full_meta labels to reduce peak memory for n_ph_max>=2."""
+    """Resolve only needed replay labels from full_meta plus exact-family supplements."""
     needed_order = [str(lbl) for lbl in adapt_labels]
     needed_set = set(needed_order)
     selected: dict[str, AnsatzTerm] = {}
@@ -1259,6 +1387,31 @@ def _build_full_meta_replay_terms_sparse(
 
     _inject_replay_terms_from_payload(selected, payload)
 
+    supplemental_families: list[str] = []
+    missing = [lbl for lbl in needed_order if lbl not in selected]
+    supplemental_family_keys = sorted(
+        {
+            family_key
+            for family_key in (_extract_canonical_label_family(lbl) for lbl in missing)
+            if family_key is not None and family_key != "full_meta"
+        }
+    )
+    for family_key in supplemental_family_keys:
+        family_needed = [lbl for lbl in missing if _extract_canonical_label_family(lbl) == family_key]
+        subset, raw_count = _build_exact_label_subset_for_family(
+            cfg,
+            family=family_key,
+            h_poly=h_poly,
+            needed_labels=family_needed,
+        )
+        raw_sizes[f"raw_{family_key}"] = int(raw_count)
+        for term in subset:
+            lbl = str(term.label)
+            if lbl not in selected:
+                selected[lbl] = term
+        if subset:
+            supplemental_families.append(str(family_key))
+
     missing = [lbl for lbl in needed_order if lbl not in selected]
     if missing:
         miss_preview = missing[:8]
@@ -1275,6 +1428,7 @@ def _build_full_meta_replay_terms_sparse(
         "raw_total": int(sum(raw_sizes.values())),
         "selected_unique_labels": int(len(set(needed_order))),
         "replay_terms": int(len(replay_terms)),
+        "supplemental_families": list(supplemental_families),
     }
     return replay_terms, meta
 
@@ -1288,7 +1442,7 @@ def _build_replay_terms_for_family(
     payload: Mapping[str, Any] | None = None,
 ) -> tuple[list[AnsatzTerm], dict[str, Any], int]:
     resolved_family = str(family)
-    if resolved_family == "full_meta" and int(cfg.n_ph_max) >= 2:
+    if resolved_family == "full_meta":
         replay_terms, pool_meta = _build_full_meta_replay_terms_sparse(
             cfg,
             h_poly=h_poly,
@@ -1497,6 +1651,209 @@ def _resolve_replay_continuation_mode(raw: str | None) -> str:
     return mode
 
 
+def _build_sequence_cfg_from_payload(
+    adapt_input_json: Path,
+    payload: Mapping[str, Any],
+    *,
+    generator_family: str,
+    fallback_family: str,
+    legacy_paop_key: str,
+    replay_continuation_mode: str | None,
+) -> RunConfig:
+    settings = payload.get("settings", {})
+    if not isinstance(settings, Mapping):
+        raise ValueError("Input JSON missing settings block for replay-sequence reconstruction.")
+
+    L = int(_require("L", _parse_int_setting(settings, "L")))
+    n_up_default, n_dn_default = _half_filled_particles(int(L))
+    return RunConfig(
+        adapt_input_json=Path(adapt_input_json),
+        output_json=Path("/tmp/hh_replay_sequence_probe.json"),
+        output_csv=Path("/tmp/hh_replay_sequence_probe.csv"),
+        output_md=Path("/tmp/hh_replay_sequence_probe.md"),
+        output_log=Path("/tmp/hh_replay_sequence_probe.log"),
+        tag="hh_replay_sequence_probe",
+        generator_family=str(generator_family),
+        fallback_family=str(fallback_family),
+        legacy_paop_key=str(legacy_paop_key),
+        replay_seed_policy="auto",
+        replay_continuation_mode=(
+            None if replay_continuation_mode is None else str(replay_continuation_mode)
+        ),
+        L=int(L),
+        t=float(_require("t", _parse_float_setting(settings, "t"))),
+        u=float(_require("u", _parse_float_setting(settings, "u", fallback_key="U"))),
+        dv=float(_require("dv", _parse_float_setting(settings, "dv"))),
+        omega0=float(_require("omega0", _parse_float_setting(settings, "omega0"))),
+        g_ep=float(_require("g_ep", _parse_float_setting(settings, "g_ep"))),
+        n_ph_max=int(_require("n_ph_max", _parse_int_setting(settings, "n_ph_max"))),
+        boson_encoding=str(settings.get("boson_encoding", "binary")),
+        ordering=str(settings.get("ordering", "blocked")),
+        boundary=str(settings.get("boundary", "open")),
+        sector_n_up=int(settings.get("sector_n_up", n_up_default)),
+        sector_n_dn=int(settings.get("sector_n_dn", n_dn_default)),
+        reps=1,
+        restarts=1,
+        maxiter=1,
+        method="SPSA",
+        seed=7,
+        energy_backend="one_apply_compiled",
+        progress_every_s=60.0,
+        wallclock_cap_s=60,
+        paop_r=int(settings.get("paop_r", 1)),
+        paop_split_paulis=bool(settings.get("paop_split_paulis", False)),
+        paop_prune_eps=float(settings.get("paop_prune_eps", 0.0)),
+        paop_normalization=str(settings.get("paop_normalization", "none")),
+        spsa_a=0.2,
+        spsa_c=0.1,
+        spsa_alpha=0.602,
+        spsa_gamma=0.101,
+        spsa_A=10.0,
+        spsa_avg_last=0,
+        spsa_eval_repeats=1,
+        spsa_eval_agg="mean",
+        replay_freeze_fraction=0.0,
+        replay_unfreeze_fraction=0.0,
+        replay_full_fraction=1.0,
+        replay_qn_spsa_refresh_every=1,
+        replay_qn_spsa_refresh_mode="diag_rms_grad",
+        phase3_symmetry_mitigation_mode="off",
+    )
+
+
+def build_replay_sequence_from_input_json(
+    adapt_input_json: Path,
+    *,
+    generator_family: str = "match_adapt",
+    fallback_family: str = "full_meta",
+    legacy_paop_key: str = "paop_lf_std",
+    replay_continuation_mode: str | None = "phase3_v1",
+) -> dict[str, Any]:
+    psi_ref, payload = _read_input_state_and_payload(Path(adapt_input_json))
+    cfg = _build_sequence_cfg_from_payload(
+        Path(adapt_input_json),
+        payload,
+        generator_family=str(generator_family),
+        fallback_family=str(fallback_family),
+        legacy_paop_key=str(legacy_paop_key),
+        replay_continuation_mode=replay_continuation_mode,
+    )
+    family_info = _resolve_family(cfg, payload)
+    h_poly = _build_hh_hamiltonian(cfg)
+    e_exact = _resolve_exact_energy_from_payload(payload)
+    if e_exact is None:
+        e_exact = float(
+            exact_ground_energy_sector_hh(
+                h_poly,
+                num_sites=int(cfg.L),
+                num_particles=(int(cfg.sector_n_up), int(cfg.sector_n_dn)),
+                ordering=str(cfg.ordering),
+                n_ph_max=int(cfg.n_ph_max),
+                boson_encoding=str(cfg.boson_encoding),
+                t=float(cfg.t),
+                U=float(cfg.u),
+                dv=float(cfg.dv),
+                omega0=float(cfg.omega0),
+                g_ep=float(cfg.g_ep),
+                boundary=str(cfg.boundary),
+            )
+        )
+    replay_ctx = build_replay_ansatz_context(
+        cfg,
+        payload_in=payload,
+        psi_ref=psi_ref,
+        h_poly=h_poly,
+        family_info=family_info,
+        e_exact=float(e_exact),
+    )
+    return {
+        "cfg": cfg,
+        "payload": payload,
+        "initial_state": np.asarray(psi_ref, dtype=complex).reshape(-1).copy(),
+        "h_poly": h_poly,
+        "family_info": dict(replay_ctx["family_info"]),
+        "replay_terms": list(replay_ctx["replay_terms"]),
+        "adapt_labels": list(replay_ctx["adapt_labels"]),
+        "seed_theta": np.asarray(replay_ctx["seed_theta"], dtype=float).copy(),
+        "family_resolved": str(replay_ctx["family_resolved"]),
+        "family_terms_count": int(replay_ctx["family_terms_count"]),
+        "pool_meta": dict(replay_ctx["pool_meta"]),
+        "nq": int(replay_ctx["nq"]),
+    }
+
+
+def build_family_ansatz_context(
+    cfg: RunConfig,
+    *,
+    psi_ref: np.ndarray,
+    h_poly: Any,
+    family: str,
+    e_exact: float,
+    seed_theta: Sequence[float] | np.ndarray | None = None,
+    terms_override: Sequence[AnsatzTerm] | None = None,
+    pool_meta_override: Mapping[str, Any] | None = None,
+    family_terms_count_override: int | None = None,
+    family_info_override: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    family_key = _canonical_family(family)
+    if family_key is None:
+        raise ValueError(f"Unsupported generator family: {family}")
+
+    if terms_override is None:
+        terms, pool_meta = _build_pool_for_family(cfg, family=family_key, h_poly=h_poly)
+        family_terms_count = int(len(terms))
+    else:
+        terms = list(terms_override)
+        pool_meta = dict(pool_meta_override or {"family": family_key})
+        family_terms_count = int(
+            family_terms_count_override if family_terms_count_override is not None else len(terms)
+        )
+    if int(len(terms)) <= 0:
+        raise ValueError(f"Generator family '{family_key}' materialized an empty ansatz term list.")
+
+    nq = int(2 * int(cfg.L) + int(cfg.L) * int(boson_qubits_per_site(int(cfg.n_ph_max), str(cfg.boson_encoding))))
+    ansatz = PoolTermwiseAnsatz(terms=list(terms), reps=int(cfg.reps), nq=nq)
+    if seed_theta is None:
+        seed_theta_arr = np.zeros(int(ansatz.num_parameters), dtype=float)
+    else:
+        seed_theta_arr = np.asarray(seed_theta, dtype=float).reshape(-1)
+    if int(seed_theta_arr.size) != int(ansatz.num_parameters):
+        raise ValueError(
+            "Internal family parameter mismatch: "
+            f"seed size {int(seed_theta_arr.size)} != ansatz.num_parameters {int(ansatz.num_parameters)}."
+        )
+
+    psi_seed = np.asarray(ansatz.prepare_state(seed_theta_arr, psi_ref), dtype=complex).reshape(-1)
+    seed_energy = float(expval_pauli_polynomial(psi_seed, h_poly))
+    seed_delta_abs = float(abs(seed_energy - float(e_exact)))
+    seed_relative_abs = float(seed_delta_abs / max(abs(float(e_exact)), 1e-14))
+    family_info = dict(
+        family_info_override
+        or {
+            "requested": str(family_key),
+            "resolved": str(family_key),
+            "resolution_source": "explicit_family",
+            "fallback_family": None,
+            "fallback_used": False,
+            "warning": None,
+        }
+    )
+    return {
+        "family_info": family_info,
+        "family_resolved": str(family_key),
+        "family_terms_count": int(family_terms_count),
+        "pool_meta": dict(pool_meta),
+        "terms": list(terms),
+        "ansatz": ansatz,
+        "nq": int(nq),
+        "seed_theta": np.asarray(seed_theta_arr, dtype=float).copy(),
+        "psi_seed": np.asarray(psi_seed, dtype=complex).reshape(-1).copy(),
+        "seed_energy": float(seed_energy),
+        "seed_delta_abs": float(seed_delta_abs),
+        "seed_relative_abs": float(seed_relative_abs),
+    }
+
+
 def build_replay_ansatz_context(
     cfg: RunConfig,
     *,
@@ -1506,10 +1863,16 @@ def build_replay_ansatz_context(
     family_info: Mapping[str, Any],
     e_exact: float,
 ) -> dict[str, Any]:
-    adapt_labels, adapt_theta = _extract_adapt_operator_theta_sequence(payload_in)
+    adapt_labels_raw, adapt_theta_raw = _extract_adapt_operator_theta_sequence(payload_in)
     handoff_state_kind, provenance_source = _infer_handoff_state_kind(payload_in)
     contract = _extract_replay_contract(payload_in)
     family_effective = dict(family_info)
+    family_resolved_requested = str(family_effective["resolved"])
+    adapt_labels, adapt_theta, logical_pair_seed_expansion = _expand_product_labels_and_theta_for_family(
+        adapt_labels_raw,
+        adapt_theta_raw,
+        family=family_resolved_requested,
+    )
     effective_seed_policy = str(cfg.replay_seed_policy)
     contract_seed_policy: str | None = None
     contract_seed_policy_resolved: str | None = None
@@ -1584,36 +1947,29 @@ def build_replay_ansatz_context(
         family_effective["warning"] = retry_warning if warning in (None, "") else f"{warning} {retry_warning}"
         family_resolved = "full_meta"
 
-    nq = int(2 * int(cfg.L) + int(cfg.L) * int(boson_qubits_per_site(int(cfg.n_ph_max), str(cfg.boson_encoding))))
-    ansatz = PoolTermwiseAnsatz(terms=replay_terms, reps=int(cfg.reps), nq=nq)
-    if int(seed_theta.size) != int(ansatz.num_parameters):
-        raise ValueError(
-            "Internal replay parameter mismatch: "
-            f"seed size {int(seed_theta.size)} != ansatz.num_parameters {int(ansatz.num_parameters)}."
-        )
-
-    psi_seed = np.asarray(ansatz.prepare_state(seed_theta, psi_ref), dtype=complex).reshape(-1)
-    seed_energy = float(expval_pauli_polynomial(psi_seed, h_poly))
-    seed_delta_abs = float(abs(seed_energy - float(e_exact)))
-    seed_relative_abs = float(seed_delta_abs / max(abs(float(e_exact)), 1e-14))
+    family_ctx = build_family_ansatz_context(
+        cfg,
+        psi_ref=psi_ref,
+        h_poly=h_poly,
+        family=str(family_resolved),
+        e_exact=float(e_exact),
+        seed_theta=np.asarray(seed_theta, dtype=float),
+        terms_override=replay_terms,
+        pool_meta_override=pool_meta,
+        family_terms_count_override=int(family_terms_count),
+        family_info_override=family_effective,
+    )
     return {
         "adapt_labels": list(adapt_labels),
         "adapt_theta": np.asarray(adapt_theta, dtype=float).copy(),
+        "source_adapt_labels": list(adapt_labels_raw),
+        "source_adapt_theta": np.asarray(adapt_theta_raw, dtype=float).copy(),
+        "logical_pair_seed_expansion": logical_pair_seed_expansion,
         "handoff_state_kind": str(handoff_state_kind),
         "provenance_source": str(provenance_source),
-        "seed_theta": np.asarray(seed_theta, dtype=float).copy(),
         "resolved_seed_policy": str(resolved_seed_policy),
-        "family_info": dict(family_effective),
-        "family_resolved": str(family_resolved),
-        "family_terms_count": int(family_terms_count),
-        "pool_meta": dict(pool_meta),
         "replay_terms": list(replay_terms),
-        "ansatz": ansatz,
-        "nq": int(nq),
-        "psi_seed": np.asarray(psi_seed, dtype=complex).reshape(-1).copy(),
-        "seed_energy": float(seed_energy),
-        "seed_delta_abs": float(seed_delta_abs),
-        "seed_relative_abs": float(seed_relative_abs),
+        **family_ctx,
     }
 
 

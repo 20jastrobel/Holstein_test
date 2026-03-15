@@ -28,9 +28,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import PauliEvolutionGate
 from qiskit.quantum_info import SparsePauliOp
-from qiskit.synthesis import SuzukiTrotter
 
 from docs.reports.pdf_utils import (
     HAS_MATPLOTLIB,
@@ -49,7 +47,10 @@ from docs.reports.report_pages import (
 )
 from docs.reports.qiskit_circuit_report import (
     adapt_ops_to_circuit as _shared_adapt_ops_to_circuit,
+    build_time_dynamics_circuit as _shared_build_time_dynamics_circuit,
     pauli_poly_to_sparse_pauli_op as _shared_pauli_poly_to_sparse_pauli_op,
+    time_dynamics_circuitization_reason as _shared_time_dynamics_circuitization_reason,
+    warn_time_dynamics_circuit_semantics as _shared_warn_time_dynamics_circuit_semantics,
 )
 from src.quantum.compiled_polynomial import (
     compile_polynomial_action,
@@ -87,7 +88,6 @@ from pipelines.exact_bench.noise_oracle_runtime import (
     _ansatz_to_circuit,
     _doublon_site_qop,
     _number_operator_qop,
-    _ordered_qop_from_exyz,
     normalize_ideal_reference_symmetry_mitigation,
     normalize_mitigation_config,
     normalize_symmetry_mitigation_config,
@@ -798,24 +798,34 @@ def _parameter_source_meta_optimized(theta: np.ndarray) -> dict[str, Any]:
 _SUZUKI2_MATH = "U(t) ~= [prod_j exp(-i (t/r)/2 H_j) * prod_j^rev exp(-i (t/r)/2 H_j)]^r"
 
 
-def _trotterized_circuit(
-    initial_circuit: QuantumCircuit,
-    ordered_qop: SparsePauliOp,
+def _build_validation_dynamics_circuit(
     *,
+    initial_circuit: QuantumCircuit,
+    ordered_labels_exyz: list[str],
+    static_coeff_map_exyz: dict[str, complex],
+    method: str,
     time_value: float,
     trotter_steps: int,
     suzuki_order: int,
+    cfqm_stage_exp: str,
+    cfqm_coeff_drop_abs_tol: float,
 ) -> QuantumCircuit:
-    if int(suzuki_order) != 2:
+    method_norm = str(method).strip().lower()
+    if method_norm == "suzuki2" and int(suzuki_order) != 2:
         raise ValueError("This validation runner currently supports suzuki_order=2 only.")
-    qc = initial_circuit.copy()
-    evo = PauliEvolutionGate(
-        ordered_qop,
-        time=float(time_value),
-        synthesis=SuzukiTrotter(order=int(suzuki_order), reps=int(trotter_steps), preserve_order=True),
+    return _shared_build_time_dynamics_circuit(
+        method=str(method_norm),
+        initial_circuit=initial_circuit,
+        ordered_labels_exyz=list(ordered_labels_exyz),
+        static_coeff_map_exyz=dict(static_coeff_map_exyz),
+        drive_provider_exyz=None,
+        time_value=float(time_value),
+        trotter_steps=int(trotter_steps),
+        drive_t0=0.0,
+        drive_time_sampling="midpoint",
+        cfqm_stage_exp=str(cfqm_stage_exp),
+        cfqm_coeff_drop_abs_tol=float(cfqm_coeff_drop_abs_tol),
     )
-    qc.append(evo, list(range(int(initial_circuit.num_qubits))))
-    return qc
 
 
 def _get_hubbard_minimum(L: int) -> dict[str, Any]:
@@ -1747,11 +1757,25 @@ def _run_noisy_trotter(
     *,
     args: argparse.Namespace,
     initial_circuit: QuantumCircuit,
-    ordered_qop: SparsePauliOp,
+    ordered_labels_exyz: list[str],
+    static_coeff_map_exyz: dict[str, complex],
     observables: dict[str, SparsePauliOp],
     noisy_oracle: ExpectationOracle,
     ideal_oracle: ExpectationOracle,
 ) -> list[dict[str, Any]]:
+    method_norm = str(args.propagator).strip().lower()
+    circuitization_reason = _shared_time_dynamics_circuitization_reason(
+        method=str(method_norm),
+        cfqm_stage_exp=str(args.cfqm_stage_exp),
+    )
+    if circuitization_reason is not None:
+        raise ValueError(str(circuitization_reason))
+    _shared_warn_time_dynamics_circuit_semantics(
+        method=str(method_norm),
+        cfqm_stage_exp=str(args.cfqm_stage_exp),
+        drive_time_sampling="midpoint",
+    )
+
     times = np.linspace(0.0, float(args.t_final), int(args.num_times))
     rows: list[dict[str, Any]] = []
     noisy_oracle.prime_layout(initial_circuit)
@@ -1759,12 +1783,16 @@ def _run_noisy_trotter(
     stride = max(1, total // 10)
 
     for idx, t_val in enumerate(times):
-        qc_t = _trotterized_circuit(
-            initial_circuit,
-            ordered_qop,
+        qc_t = _build_validation_dynamics_circuit(
+            initial_circuit=initial_circuit,
+            ordered_labels_exyz=list(ordered_labels_exyz),
+            static_coeff_map_exyz=dict(static_coeff_map_exyz),
+            method=str(method_norm),
             time_value=float(t_val),
             trotter_steps=int(args.trotter_steps),
             suzuki_order=int(args.suzuki_order),
+            cfqm_stage_exp=str(args.cfqm_stage_exp),
+            cfqm_coeff_drop_abs_tol=float(args.cfqm_coeff_drop_abs_tol),
         )
         row: dict[str, Any] = {"time": float(t_val)}
         for key, obs in observables.items():
@@ -2826,6 +2854,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p.add_argument("--t-final", type=float, default=None)
     p.add_argument("--num-times", type=int, default=None)
+    p.add_argument("--propagator", choices=["suzuki2", "cfqm4", "cfqm6"], default="suzuki2")
+    p.add_argument("--cfqm-stage-exp", choices=["expm_multiply_sparse", "dense_expm", "pauli_suzuki2"], default="expm_multiply_sparse")
+    p.add_argument("--cfqm-coeff-drop-abs-tol", type=float, default=0.0)
     p.add_argument("--suzuki-order", type=int, default=2)
     p.add_argument("--trotter-steps", type=int, default=None)
     p.add_argument("--exact-steps-multiplier", type=int, default=None)
@@ -2880,7 +2911,9 @@ def main(argv: list[str] | None = None) -> None:
     json_dir.mkdir(parents=True, exist_ok=True)
     pdf_dir.mkdir(parents=True, exist_ok=True)
 
-    tag = f"L{int(args.L)}_{str(args.problem)}_{str(args.ansatz)}_{str(args.noise_mode)}"
+    tag = f"L{int(args.L)}_{str(args.problem)}_{str(args.ansatz)}_{str(args.noise_mode)}_{str(args.propagator)}"
+    if str(args.propagator).strip().lower().startswith("cfqm"):
+        tag = f"{tag}_{str(args.cfqm_stage_exp)}"
     output_json = args.output_json or (json_dir / f"hh_noise_validation_{tag}.json")
     output_pdf = args.output_pdf or (pdf_dir / f"hh_noise_validation_{tag}.pdf")
 
@@ -2890,7 +2923,6 @@ def main(argv: list[str] | None = None) -> None:
     hmat = hamiltonian_matrix(h_poly)
     native_order, coeff_map_exyz = _collect_hardcoded_terms_exyz(h_poly)
     ordered_labels_exyz = sorted(native_order)
-    ordered_qop = _ordered_qop_from_exyz(ordered_labels_exyz, coeff_map_exyz)
 
     if str(args.problem).strip().lower() == "hh":
         exact_filtered = float(
@@ -3105,7 +3137,8 @@ def main(argv: list[str] | None = None) -> None:
             trajectory_rows = _run_noisy_trotter(
                 args=args,
                 initial_circuit=init_circuit,
-                ordered_qop=ordered_qop,
+                ordered_labels_exyz=ordered_labels_exyz,
+                static_coeff_map_exyz=coeff_map_exyz,
                 observables=observables,
                 noisy_oracle=noisy_oracle,
                 ideal_oracle=ideal_oracle,
@@ -3170,8 +3203,11 @@ def main(argv: list[str] | None = None) -> None:
             "resolved_initial_state_source": str(init_label),
             "t_final": float(args.t_final),
             "num_times": int(args.num_times),
+            "propagator": str(args.propagator),
             "suzuki_order": int(args.suzuki_order),
             "trotter_steps": int(args.trotter_steps),
+            "cfqm_stage_exp": str(args.cfqm_stage_exp),
+            "cfqm_coeff_drop_abs_tol": float(args.cfqm_coeff_drop_abs_tol),
             "exact_steps_multiplier": int(args.exact_steps_multiplier),
             "allow_noisy_fallback": bool(args.allow_noisy_fallback),
             "omp_shm_workaround": bool(args.omp_shm_workaround),

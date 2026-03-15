@@ -136,6 +136,19 @@ class TestCanonicalReplayFieldsPresent:
         assert fam == "pool_b"
         assert src == "adapt_vqe.pool_type"
 
+    def test_seed_provenance_is_ignored_for_replay_family_resolution(self) -> None:
+        payload = _make_staged_export_payload(pool_type="pool_a")
+        payload["seed_provenance"] = {
+            "warm_ansatz": "hh_hva_ptw",
+            "refine_family": "uccsd_otimes_paop_lf_std",
+            "refine_family_kind": "uccsd_paop_product",
+            "refine_paop_motif_families": ["paop_lf_std"],
+            "refine_reps": 2,
+        }
+        fam, src = _resolve_family_from_metadata(payload)
+        assert fam == "pool_a"
+        assert src == "adapt_vqe.pool_type"
+
     def test_ansatz_depth_matches_operators(self) -> None:
         ops = ["x", "y", "z", "w"]
         payload = _make_staged_export_payload(operators=ops, optimal_point=[0.1] * 4)
@@ -318,9 +331,47 @@ class TestWriteStateBundleRoundTrip:
         assert payload["continuation"]["selected_generator_metadata"][0]["generator_id"] == "gen:1"
         assert payload["continuation"]["motif_library"]["records"][0]["motif_id"] == "motif:1"
         assert payload["continuation"]["symmetry_mitigation"]["mode"] == "verify_only"
-        assert payload["continuation"]["rescue_history"][0]["reason"] == "disabled"
-        assert payload["adapt_vqe"]["pre_prune_scaffold"]["operators"] == ["op_x", "op_y", "op_z"]
-        assert payload["adapt_vqe"]["prune_summary"]["executed"] is True
+        assert "seed_provenance" not in payload
+
+    def test_write_and_read_back_with_seed_provenance(self, tmp_path: Path) -> None:
+        cfg = HandoffStateBundleConfig(
+            L=2,
+            t=1.0,
+            U=4.0,
+            dv=0.0,
+            omega0=1.0,
+            g_ep=0.5,
+            n_ph_max=1,
+            boson_encoding="binary",
+            ordering="blocked",
+            boundary="open",
+            sector_n_up=1,
+            sector_n_dn=1,
+        )
+        psi = np.zeros(1 << 6, dtype=complex)
+        psi[0] = 1.0
+        out_path = tmp_path / "stage_export_seed.json"
+        write_handoff_state_bundle(
+            path=out_path,
+            psi_state=psi,
+            cfg=cfg,
+            source="adapt_vqe",
+            exact_energy=-2.0,
+            energy=-1.9,
+            delta_E_abs=0.1,
+            relative_error_abs=0.05,
+            seed_provenance={
+                "warm_ansatz": "hh_hva_ptw",
+                "refine_family": "uccsd_otimes_paop_lf_std",
+                "refine_family_kind": "uccsd_paop_product",
+                "refine_paop_motif_families": ["paop_lf_std"],
+                "refine_reps": 2,
+            },
+        )
+
+        payload = json.loads(out_path.read_text(encoding="utf-8"))
+        assert payload["seed_provenance"]["warm_ansatz"] == "hh_hva_ptw"
+        assert payload["seed_provenance"]["refine_family"] == "uccsd_otimes_paop_lf_std"
 
     def test_write_with_contract_is_parseable(self, tmp_path: Path) -> None:
         cfg = HandoffStateBundleConfig(

@@ -1,7 +1,7 @@
 ---
 title: "Hubbard-Holstein Mathematical Implementation (Current Linear Substitution-First Form)"
 author: "Jake Skyler Strobel (repo-grounded revision)"
-date: "March 11, 2026"
+date: "March 14, 2026"
 geometry: margin=0.8in
 fontsize: 10pt
 ---
@@ -29,7 +29,10 @@ but it removes older future-tense framing and replaces it with the currently imp
   - `hh_hva` = HH layerwise,
   - `hh_hva_tw` = HH Pauli-termwise,
   - `hh_hva_ptw` = HH physical-termwise,
-  - ADAPT pools including `hva`, `full_meta`, `paop_*`, `uccsd_paop_lf_full`, `full_hamiltonian`.
+  - ADAPT / explicit-family surfaces including `hva`, `full_meta`, `paop_*`,
+    `uccsd_paop_lf_full`, `uccsd_otimes_paop_lf_std`,
+    `uccsd_otimes_paop_lf2_std`, `uccsd_otimes_paop_bond_disp_std`,
+    optional logical-pair `*_seq2p`, and `full_hamiltonian`.
 - Optimizer/runtime parameters when relevant:
   - VQE optimizer,
   - SPSA schedule parameters,
@@ -1174,9 +1177,91 @@ Implemented surfaces:
   - `apply_exp_pauli_polynomial`
   - `exact_ground_energy_sector_hh`
 
-# 9. Current Hardcoded HH Ansatz Families
+# 9. Current Hardcoded Fixed VQE Ansatz Families
 
-## 9.1 HH layerwise ansatz: `hh_hva`
+The user-facing fixed ansatz choices in `pipelines/hardcoded/hubbard_pipeline.py` are
+
+- `uccsd`,
+- `hva`,
+- `hh_hva`,
+- `hh_hva_tw`,
+- `hh_hva_ptw`.
+
+The ADAPT pool/replay-family surfaces are documented separately in Sections 10 and 13.
+
+## 9.1 Hubbard layerwise ansatz: `hva`
+
+For the static Hubbard problem, the fixed layerwise ansatz groups the Hamiltonian into
+
+1. hopping,
+2. onsite interaction,
+3. static potential if present.
+
+Write
+$$
+\hat H_{\mathrm{Hub}}=\hat H_t+\hat H_U+\hat H_v,
+$$
+with
+$$
+\hat H_t=-t\sum_{\langle i,j\rangle,\sigma}\left(\hat c_{i\sigma}^{\dagger}\hat c_{j\sigma}+\hat c_{j\sigma}^{\dagger}\hat c_{i\sigma}\right),
+$$
+$$
+\hat H_U=U\sum_i\hat n_{i\uparrow}\hat n_{i\downarrow},
+$$
+$$
+\hat H_v=\sum_{i,\sigma} v_i \hat n_{i\sigma}.
+$$
+
+For layer `\ell`, if
+$$
+\hat H_{\mathrm{group}}=\sum_{P\in\mathrm{split}(\hat H_{\mathrm{group}})} h_P P,
+$$
+then the implemented Hubbard layerwise unitary is
+$$
+\hat U_{\mathrm{Hub\text{-}layer}}^{(\ell)}
+=
+\prod_{P\in\mathrm{split}(\hat H_t)} e^{-i\theta_t^{(\ell)}h_PP}
+\prod_{P\in\mathrm{split}(\hat H_U)} e^{-i\theta_U^{(\ell)}h_PP}
+\prod_{P\in\mathrm{split}(\hat H_v)} e^{-i\theta_v^{(\ell)}h_PP}.
+$$
+
+So all split Pauli terms inside one physical group share one parameter per layer.
+
+## 9.2 Hubbard hardcoded UCCSD surface: `uccsd`
+
+Relative to the Hartree-Fock occupied/virtual partition, the primitive Hermitian single- and double-excitation generators are
+$$
+G_{i\to a}^{(\sigma)}
+=
+i\left(\hat c_{a\sigma}^{\dagger}\hat c_{i\sigma}-\hat c_{i\sigma}^{\dagger}\hat c_{a\sigma}\right),
+$$
+$$
+G_{ij\to ab}^{(\sigma,\sigma')}
+=
+i\left(
+\hat c_{a\sigma}^{\dagger}\hat c_{b\sigma'}^{\dagger}\hat c_{j\sigma'}\hat c_{i\sigma}
+-
+\hat c_{i\sigma}^{\dagger}\hat c_{j\sigma'}^{\dagger}\hat c_{b\sigma'}\hat c_{a\sigma}
+\right).
+$$
+
+If `\mathcal S` and `\mathcal D` denote the generated single and double excitation sets, then the fixed hardcoded CLI surface `--vqe-ansatz uccsd` dispatches to the **layerwise** form
+$$
+\hat U_{\mathrm{UCCSD\text{-}layer}}^{(\ell)}
+=
+\prod_{G\in\mathcal S} e^{-i\theta_s^{(\ell)}G}
+\prod_{G\in\mathcal D} e^{-i\theta_d^{(\ell)}G}.
+$$
+
+So the live fixed VQE surface shares one parameter across all singles and one across all doubles per layer.
+
+The repo also contains the lower-level base class `HardcodedUCCSDAnsatz`,
+$$
+\hat U_{\mathrm{UCCSD\text{-}base}}(\theta)=\prod_k e^{-i\theta_k G_k},
+$$
+with one independent parameter per excitation generator. ADAPT pool builders reuse those base generators, but the fixed hardcoded VQE CLI chooses the shared-parameter layerwise surface above.
+
+## 9.3 HH layerwise ansatz: `hh_hva`
 
 The layerwise HH ansatz groups the Hamiltonian into physical sectors:
 
@@ -1205,9 +1290,9 @@ $$
 
 The crucial point is that **all split Pauli terms inside one physical group share one parameter per layer**.
 
-## 9.2 HH Pauli-termwise ansatz: `hh_hva_tw`
+## 9.4 HH Pauli-termwise ansatz: `hh_hva_tw`
 
-The Pauli-termwise ansatz removes that sharing. Every single split Pauli term gets its own parameter:
+The Pauli-termwise HH ansatz removes that sharing. Every single split Pauli term gets its own parameter:
 $$
 \hat U_{\mathrm{tw}}^{(\ell)}
 =
@@ -1221,7 +1306,7 @@ $$
 
 This is more expressive, but the split single-Pauli factors need not preserve the fermion sector individually.
 
-## 9.3 HH physical-termwise ansatz: `hh_hva_ptw`
+## 9.5 HH physical-termwise ansatz: `hh_hva_ptw`
 
 The physical-termwise HH ansatz keeps one parameter per physical generator before Pauli splitting.
 
@@ -1273,14 +1358,23 @@ In the implemented HH PTW path (`HubbardHolsteinPhysicalTermwiseAnsatz`), genera
 
 This ansatz is sector-preserving in fermion space because each physical generator preserves fermion number before Pauli splitting.
 
-## 9.4 Reference-state dispatch in the hardcoded pipeline
+## 9.6 Reference-state and ansatz dispatch in the hardcoded pipeline
 
-For `problem="hh"`, `pipelines/hardcoded/hubbard_pipeline.py` constructs
+For `problem="hubbard"`, the pipeline uses the Hartree-Fock basis state
+$$
+|\psi_{\mathrm{ref}}\rangle=|\Phi_{\mathrm{HF}}\rangle.
+$$
+
+For `problem="hh"`, it uses
 $$
 |\psi_{\mathrm{ref}}\rangle=|\mathrm{vac}_{\mathrm{ph}}\rangle\otimes|\Phi_{\mathrm{HF}}\rangle
 $$
-with `hubbard_holstein_reference_state(...)` and then dispatches
+via `hubbard_holstein_reference_state(...)`.
 
+The live dispatch is
+
+- `uccsd` -> `HardcodedUCCSDLayerwiseAnsatz`,
+- `hva` -> `HubbardLayerwiseAnsatz`,
 - `hh_hva` -> `HubbardHolsteinLayerwiseAnsatz`,
 - `hh_hva_tw` -> `HubbardHolsteinTermwiseAnsatz`,
 - `hh_hva_ptw` -> `HubbardHolsteinPhysicalTermwiseAnsatz`.
@@ -1451,7 +1545,25 @@ As with `hop2`, the implementation drops terms that are identity on all phonon q
 The concrete builder label is
 - `paop_hop4(i,j)`.
 
-### 10.2.8 Local squeeze channels
+### 10.2.8 Bond-conditioned displacement and squeeze channels
+
+The newly added bond-conditioned channels are
+$$
+\mathcal O_{\mathrm{bond\_disp},ij}=K_{ij}(P_i+P_j),
+$$
+$$
+\mathcal O_{\mathrm{hop\_sq},ij}=K_{ij}(S_i+S_j),
+$$
+$$
+\mathcal O_{\mathrm{pair\_sq},ij}=i\left(\hat b_i^{\dagger}\hat b_j^{\dagger}-\hat b_i\hat b_j\right).
+$$
+
+The concrete builder labels are
+- `paop_bond_disp(i,j)`,
+- `paop_hop_sq(i,j)`,
+- `paop_pair_sq(i,j)`.
+
+### 10.2.9 Local squeeze channels
 
 The newly added squeeze-family channels are
 $$
@@ -1464,7 +1576,7 @@ The concrete builder labels are
 - `paop_sq(site=i)`,
 - `paop_dens_sq(site=i)`.
 
-### 10.2.9 Extended cloud channels
+### 10.2.10 Extended cloud channels
 
 For cloud radius `R`, the implemented extended cloud channels are
 $$
@@ -1483,7 +1595,7 @@ The concrete operator labels emitted by the builder are
 
 For `paop_full`, `paop_lf_full`, and `paop_sq_full`, effective radius is forced to at least 1 (`--paop-r=0` maps to nearest-neighbor cloud support).
 
-### 10.2.10 Doublon-translation and doublon-squeeze channels
+### 10.2.11 Doublon-translation and doublon-squeeze channels
 
 The implemented doublon-conditioned phonon channels are
 $$
@@ -1501,7 +1613,7 @@ The concrete labels are
 
 ## 10.3 Pool-family map
 
-The current pool-family map is:
+The current PAOP-family map is:
 
 - `paop` = `paop_std`
 - `paop_lf` = `paop_lf_std`
@@ -1515,24 +1627,89 @@ The current pool-family map is:
 - `paop_lf_full` = `disp + hopdrag + curdrag + hop2 + cloud_p + cloud_x + dbl_p + dbl_x`
 - `paop_sq_std` = `disp + hopdrag + curdrag + sq + dens_sq`  *(experimental / offline-probe-only)*
 - `paop_sq_full` = `paop_sq_std + cloud_sq + dbl_sq`  *(experimental / offline-probe-only)*
+- `paop_bond_disp_std` = `disp + hopdrag + curdrag + bond_disp`  *(experimental / offline-probe-only)*
+- `paop_hop_sq_std` = `disp + hopdrag + curdrag + hop_sq`  *(experimental / offline-probe-only)*
+- `paop_pair_sq_std` = `disp + hopdrag + curdrag + pair_sq`  *(experimental / offline-probe-only)*
 
-These four newly added probe families are opt-in exact-noiseless / local-analysis surfaces. They are not the canonical staged default and they are not folded into the default `full_meta` staging preset.
+When one of these PAOP families is selected on the HH ADAPT path and `g_{ep}\neq 0`, the live pool builder returns the deduplicated merge
+$$
+\mathcal P_{\mathrm{HH,selected}}
+=
+\mathcal P_{\mathrm{hva}}
+\cup
+\mathcal P_{\mathrm{hh\_termwise\_augmented}}
+\cup
+\mathcal P_{\mathrm{selected\_paop\_family}}.
+$$
+If `g_{ep}=0`, the implementation returns the selected PAOP family without the HH augmentation merge.
+
+The built-in broad family presets are
+$$
+\mathcal P_{\mathrm{uccsd\_paop\_lf\_full}}
+=
+\mathcal P_{\mathrm{uccsd\_lifted}}
+\cup
+\mathcal P_{\mathrm{paop\_lf\_full}},
+$$
+$$
+\mathcal P_{\mathrm{full\_meta}}
+=
+\mathcal P_{\mathrm{uccsd\_lifted}}
+\cup
+\mathcal P_{\mathrm{hva}}
+\cup
+\mathcal P_{\mathrm{hh\_termwise\_augmented}}
+\cup
+\mathcal P_{\mathrm{paop\_full}}
+\cup
+\mathcal P_{\mathrm{paop\_lf\_full}},
+$$
+with the `hh_termwise_augmented` block active when `g_{ep}\neq 0`.
+
+### 10.3.1 Standalone VLF/SQ macro families
+
+Separate from `polaron_paop.py`, the repo now exposes grouped macro-generator families in `src/quantum/operator_pools/vlf_sq.py`.
+
+Define the shell-resolved VLF macro generator
+$$
+G_r^{\mathrm{VLF}}=\sum_{\operatorname{dist}(i,j)=r}\tilde n_i P_j,
+$$
+and the global squeeze generators
+$$
+G^{\mathrm{SQ}}=\sum_i S_i=\frac12\sum_i\bigl(x_iP_i+P_i x_i\bigr),
+$$
+$$
+G_{\mathrm{SQ}}^{(n)}=\sum_i \tilde n_i S_i.
+$$
+
+The implemented family map is
+
+- `vlf_only` = `{G_r^{\mathrm{VLF}}}` over the allowed shells,
+- `sq_only` = `{G^{\mathrm{SQ}}}`,
+- `vlf_sq` = `{G_r^{\mathrm{VLF}}} \cup \{G^{\mathrm{SQ}}\}`,
+- `sq_dens_only` = `{G_{\mathrm{SQ}}^{(n)}}`,
+- `vlf_sq_dens` = `{G_r^{\mathrm{VLF}}} \cup \{G^{\mathrm{SQ}}, G_{\mathrm{SQ}}^{(n)}\}`.
+
+These are emitted as grouped macro generators such as
+- `vlf_only:vlf_shell(r=0)`,
+- `vlf_sq:sq_global`,
+- `vlf_sq_dens:dens_sq_global`.
+
+Unlike the PAOP families above, the VLF/SQ families are returned directly as macro families and the implementation rejects `--paop-split-paulis` for them.
 
 The implementation then optionally applies
 
 - pruning,
 - normalization (`none`, `fro`, `maxcoeff`),
-- split-into-single-Pauli children,
 - signature deduplication.
 
-## 10.4 ADAPT selection signal
+## 10.4 Legacy fallback selector
 
 The ADAPT signal remains
 $$
-g_m^{(n)}=i\langle\psi^{(n)}|[\hat H,A_m]|\psi^{(n)}\rangle.
+g_m^{(n)}=i\langle\psi^{(n)}|[\hat H,A_m]|\psi^{(n)}\rangle,
 $$
-
-On the compiled production path this is evaluated as
+and on the compiled production path this is evaluated as
 $$
 g_m^{(n)}=2\,\Im\langle H\psi^{(n)}\mid A_m\psi^{(n)}\rangle,
 $$
@@ -1542,11 +1719,7 @@ $$
 \exp(-i\theta_n A_{m_n})\cdots \exp(-i\theta_1 A_{m_1})|\psi_{\mathrm{ref}}\rangle.
 $$
 
-So the implemented ADAPT selector is still gradient-based at its core, but in the staged HH path the raw gradient is wrapped in a scored selection workflow rather than used by a naked `argmax |g|` alone.
-
-### 10.4.1 Legacy fallback selector
-
-If phase-1 continuation scoring is disabled, the selector reduces to the legacy rule
+If staged continuation scoring is disabled, the selector reduces to the legacy rule
 $$
 m_{\star}=\arg\max_{m\in\mathcal P_{\mathrm{avail}}}|g_m^{(n)}|.
 $$
@@ -1563,41 +1736,59 @@ $$
 m_{\star}=\arg\max_{m\in\mathcal P_{\mathrm{avail}}}\widetilde s_m^{\mathrm{repeat}}.
 $$
 
-### 10.4.2 Phase-1 cheap candidate universe
+## 10.5 `phase1_v1` as a self-contained selector
 
-When phase-1 scoring is enabled, the code first sorts the available pool by descending gradient magnitude and keeps the cheap pre-shortlist
+### 10.5.1 Core signal, append position, and refit window
+
+At ADAPT depth `n`, the ordered scaffold state is
+$$
+|\psi^{(n)}\rangle=
+\exp(-i\theta_n A_{m_n})\cdots \exp(-i\theta_1 A_{m_1})|\psi_{\mathrm{ref}}\rangle.
+$$
+
+For a candidate generator `A_m`, the compiled production gradient is
+$$
+g_m^{(n)}=
+i\langle\psi^{(n)}|[H,A_m]|\psi^{(n)}\rangle
+=
+2\,\Im\langle H\psi^{(n)}\mid A_m\psi^{(n)}\rangle.
+$$
+
+The `phase1_v1` selector first ranks the available pool by descending gradient magnitude and keeps the cheap candidate universe
 $$
 \mathcal C_{64}
-=\text{top-}\min\{64,|\mathcal P_{\mathrm{avail}}|\}\text{ candidates ranked by }|g_m^{(n)}|.
+=
+\text{top-}\min\{64,|\mathcal P_{\mathrm{avail}}|\}
+\text{ candidates ranked by }|g_m^{(n)}|.
 $$
 
-Write the append position as
+The append position is
 $$
-p_{\mathrm{app}}=n,
+p_{\mathrm{app}}=n.
 $$
-where `n` is the current ADAPT depth / parameter count.
 
-For a tentative insertion position `p`, the reoptimization-active window is built from the current parameter vector `\theta` by the implemented window policy:
+For a tentative insertion position `p`, the active reoptimization window is built from the current parameter vector `\theta` by
 
-1. keep the newest `w_{\mathrm{eff}}=\min\{w,n\}` indices,
-2. among older indices, optionally keep the top-`k` by descending `|\theta_j|`, tie-breaking by ascending index.
+1. keeping the newest `w_{\mathrm{eff}}=\min\{w,n\}` indices,
+2. then optionally adding the top-`k` older indices ranked by descending `|\theta_j|`, tie-breaking by ascending index.
 
 So the active refit set is
 $$
 W_{\mathrm{refit}}(p)=W_{\mathrm{newest}}\cup W_{\mathrm{top}|\theta|}.
 $$
 
-### 10.4.3 Phase-1 feature build and gating
+### 10.5.2 Gates, burdens, and feature ingredients
 
-For each candidate-position pair `(m,p)` in the cheap phase-1 scan, the code builds a feature object containing
+For each candidate-position pair `(m,p)` in the cheap scan, the feature build records
 
 - signed and absolute gradients `g_m`, `|g_m|`,
 - lower-confidence gradient `g_{\mathrm{lcb}}`,
+- raw tangent surrogate `F_{\mathrm{raw}}`,
 - compile-cost proxy,
-- measurement-cache proxy,
-- predicted active refit window,
-- family/stage metadata,
-- symmetry/leakage metadata.
+- grouped-measurement bookkeeping,
+- candidate family / stage metadata,
+- symmetry metadata,
+- predicted refit window.
 
 The stage gate is
 $$
@@ -1609,48 +1800,90 @@ $$
 \end{cases}
 $$
 
-The leakage hard gate is
+The hard symmetry gate is
 $$
-\Gamma_{\mathrm{leak}}(m)=
+\Gamma_{\mathrm{sym}}(m)=
 \begin{cases}
 0, & \text{candidate symmetry spec has } \texttt{hard\_guard=true},\\
 1, & \text{otherwise}.
 \end{cases}
 $$
 
-If either gate is closed, the candidate score is set to `-\infty`.
+If either gate is closed, the record is not admissible.
 
-The compile-cost oracle used inside the score is explicitly
+The compile-cost proxy used inside the score is
 $$
 D_{\mathrm{proxy}}
-=n_{\mathrm{new\,pauli}}
+=
+n_{\mathrm{new\,pauli}}
 +n_{\mathrm{rot}}
 +|p_{\mathrm{app}}-p|
 +|W_{\mathrm{refit}}(p)|.
 $$
 
-The grouped measurement-cache audit tracks
+The grouped-measurement bookkeeping tracks
 $$
 G_{\mathrm{new}},\qquad S_{\mathrm{new}},\qquad R_{\mathrm{reuse}},
 $$
-for new groups, new nominal-shot burden, and grouped-reuse miss count respectively.
+for new groups, new nominal-shot burden, and grouped-reuse miss count.
 
-In the current live phase-1 path the builder uses
+The lower-confidence gradient is
+$$
+g_{\mathrm{lcb}}=\max\{|g|-z_{\alpha}\sigma,0\}.
+$$
+
+In the current live `phase1_v1` implementation, the feature builder takes
 $$
 \sigma=0,
 \qquad
-F_{\mathrm{phase1}}=|g_m^{(n)}|,
+F_{\mathrm{raw}}=|g_m^{(n)}|,
 $$
-so the current cheap-path lower-confidence gradient is simply
+so the active cheap-path lower-confidence gradient is simply
 $$
 g_{\mathrm{lcb}}=|g_m^{(n)}|.
 $$
 
-The cheap score itself is `simple_v1` from Section 10.6.1.
+### 10.5.3 Cheap score
 
-### 10.4.4 Position probing and trough detection
+The cheap score used by `phase1_v1` is
+$$
+S_{\mathrm{simple}}
+=
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\frac{g_{\mathrm{lcb}}^2}{2\lambda_F F_{\mathrm{raw}}}
+\frac{1}{K_{\mathrm{screen}}},
+$$
+with
+$$
+K_{\mathrm{screen}}
+=
+1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c.
+$$
 
-The selector does not always append. Outside the residual stage, it probes alternate insertion positions when one of the implemented triggers fires:
+Here
+
+- `D_life` is the compiled burden proxy, optionally lifetime-weighted,
+- `G_new` is new grouped-measurement burden,
+- `C_new` is new nominal shot burden,
+- `c` is the same-family streak burden.
+
+The live defaults are
+
+- `lambda_F = 1.0`,
+- `lambda_compile = 0.05`,
+- `lambda_measure = 0.02`,
+- `lambda_leak = 0.0`,
+- `z_alpha = 0.0`.
+
+So the live `phase1_v1` cheap screen uses
+
+- `g_{\mathrm{lcb}}=|g|`,
+- no active leakage penalty,
+- no active additive motif bonus term.
+
+### 10.5.4 Position probing, trough detection, and effective selector
+
+`phase1_v1` does not force append-only behavior. Outside the residual stage, it probes alternate insertion positions when one of the implemented triggers fires:
 
 - drop plateau,
 - `eps_grad` plus flat finite-angle behavior,
@@ -1659,11 +1892,12 @@ The selector does not always append. Outside the residual stage, it probes alter
 If probing is enabled, the allowed candidate positions are
 $$
 \mathcal P_{\mathrm{probe}}
-=\{p_{\mathrm{app}},0\}\cup W_{\mathrm{refit}}(p_{\mathrm{app}}),
+=
+\{p_{\mathrm{app}},0\}\cup W_{\mathrm{refit}}(p_{\mathrm{app}}),
 $$
 truncated to the configured maximum number of probe positions.
 
-The implementation then evaluates `simple_v1` over all `(m,p)` pairs with
+The score `S_{\mathrm{simple}}` is then evaluated over
 $$
 m\in\mathcal C_{64},
 \qquad
@@ -1686,138 +1920,149 @@ S_{\mathrm{nonappend}}\ge \tau_{\mathrm{append}},
 $$
 where `\mu` is the configured probe-margin ratio and `\tau_{\mathrm{append}}` is the append-admit threshold.
 
-### 10.4.5 Phase-2 shortlist and append-only full reranking
+So the effective `phase1_v1` selector is:
 
-If phase-2/full scoring is enabled, the phase-1 records are reduced again by the cheap-score shortlist rule
+- build cheap candidate-position records,
+- evaluate `S_{\mathrm{simple}}`,
+- admit the best surviving record.
+
+## 10.6 `phase2_v1` as a self-contained selector
+
+### 10.6.1 Core signal, append position, refit window, and cheap stage
+
+At ADAPT depth `n`, the ordered scaffold state is
 $$
-N_{\mathrm{short}}
-=\min\left\{
-N,
-N_{\max},
-\left\lceil f_{\mathrm{short}}N\right\rceil
-\right\},
-$$
-where
-
-- `N` is the number of cheap records,
-- `N_max = shortlist_size`,
-- `f_short = shortlist_fraction`.
-
-The retained shortlist is the top `N_short` records ranked by
-
-1. descending cheap score,
-2. descending `simple_score`,
-3. ascending pool index,
-4. ascending append position.
-
-For each shortlisted record the code now rebuilds a richer append-only feature set:
-
-- recompute the append gradient on the current state,
-- build the exact inherited-window parameter tangents of the current scaffold,
-- build the exact inherited-window Hessian block,
-- build the candidate self-curvature and mixed candidate-window Hessian vector,
-- form the reduced-path metric and reduced-path novelty,
-- optionally replace a macro-generator by its best runtime-split child.
-
-The expensive phase-2 rerank is therefore no longer a tangent-overlap / Schur proxy. It is the reduced-path score of Section 10.6.3.
-
-### 10.4.6 Effective selector by mode
-
-So the currently implemented ADAPT selection criterion is mode-dependent:
-
-- `legacy`: choose the largest `|g|` (or repeat-biased `|g|` when repeats are allowed),
-- `phase1_v1`: append-only cheap-rank by `simple_v1` and admit one candidate,
-- `phase2_v1` / `phase3_v1`: append-only cheap-rank by `simple_v1`, shortlist, rerank by `full_v2`, and admit exactly one candidate.
-
-In the staged HH continuation path there is now
-
-- no non-append position search,
-- no trough rescue into non-append positions,
-- no greedy batch selection,
-- no active motif add-on term in the score,
-- no active leakage factor in the score.
-
-## 10.5 Current HH pool composition rules
-
-The active HH ADAPT surface in `pipelines/hardcoded/adapt_pipeline.py` supports
-
-- `hva`,
-- `full_meta`,
-- `uccsd_paop_lf_full`,
-- `paop`, `paop_min`, `paop_std`, `paop_full`,
-- `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf3_std`, `paop_lf4_std`, `paop_lf_full`,
-- `paop_sq_std`, `paop_sq_full`,
-- `full_hamiltonian`.
-
-For staged HH continuation modes `phase1_v1`, `phase2_v1`, and `phase3_v1`, the code enforces
-
-- no `full_meta` at depth `0`,
-- default narrow core pool `paop_lf_std`,
-- residual pool `full_meta`.
-
-So the staged pool is
-$$
-\mathcal P_{\mathrm{staged}}=\mathcal P_{\mathrm{core}}\cup \mathcal P_{\mathrm{residual}},
-$$
-with
-$$
-\mathcal P_{\mathrm{core}}=\mathcal P_{\mathrm{paop\_lf\_std}},
-\qquad
-\mathcal P_{\mathrm{residual}}=\mathcal P_{\mathrm{full\_meta}}\backslash \mathcal P_{\mathrm{core}}.
+|\psi^{(n)}\rangle=
+\exp(-i\theta_n A_{m_n})\cdots \exp(-i\theta_1 A_{m_1})|\psi_{\mathrm{ref}}\rangle.
 $$
 
-## 10.6 Implemented continuation scoring
+For a candidate generator `A_m`, the compiled production gradient is
+$$
+g_m^{(n)}=
+i\langle\psi^{(n)}|[H,A_m]|\psi^{(n)}\rangle
+=
+2\,\Im\langle H\psi^{(n)}\mid A_m\psi^{(n)}\rangle.
+$$
 
-The active staged HH continuation surface is the append-only, refit-aware reduced-path score.
+The cheap candidate universe is
+$$
+\mathcal C_{64}
+=
+\text{top-}\min\{64,|\mathcal P_{\mathrm{avail}}|\}
+\text{ candidates ranked by }|g_m^{(n)}|.
+$$
 
-### 10.6.1 `simple_v1`
+The append position is
+$$
+p_{\mathrm{app}}=n.
+$$
 
-The cheap append-only screen uses the lower-confidence append slope
+For a tentative insertion position `p`, the active reoptimization window is
+$$
+W_{\mathrm{refit}}(p)=W_{\mathrm{newest}}\cup W_{\mathrm{top}|\theta|},
+$$
+where `W_{\mathrm{newest}}` keeps the newest `w_{\mathrm{eff}}=\min\{w,n\}` indices and `W_{\mathrm{top}|\theta|}` optionally adds the top-`k` older indices ranked by descending `|\theta_j|`.
+
+The stage gate is
+$$
+\Gamma_{\mathrm{stage}}(m)=
+\begin{cases}
+1, & \text{stage = residual},\\
+1, & \text{stage = core/seed and } m \notin \mathcal P_{\mathrm{residual}},\\
+0, & \text{stage = core/seed and } m \in \mathcal P_{\mathrm{residual}}.
+\end{cases}
+$$
+
+The hard symmetry gate is
+$$
+\Gamma_{\mathrm{sym}}(m)=
+\begin{cases}
+0, & \text{candidate symmetry spec has } \texttt{hard\_guard=true},\\
+1, & \text{otherwise}.
+\end{cases}
+$$
+
+The compile-cost proxy is
+$$
+D_{\mathrm{proxy}}
+=
+n_{\mathrm{new\,pauli}}
++n_{\mathrm{rot}}
++|p_{\mathrm{app}}-p|
++|W_{\mathrm{refit}}(p)|.
+$$
+
+The grouped-measurement bookkeeping tracks
+$$
+G_{\mathrm{new}},\qquad S_{\mathrm{new}},\qquad R_{\mathrm{reuse}}.
+$$
+
+The lower-confidence gradient is
 $$
 g_{\mathrm{lcb}}=\max\{|g|-z_{\alpha}\sigma,0\},
 $$
-and the raw append tangent norm
-$$
-F_{\mathrm{raw}}=\|t_m\|^2.
-$$
-
-If the stage gate is open, the cheap score is
-$$
-S_{\mathrm{simple}}
-=
-\mathbf 1(m\in\Omega_{\mathrm{stage}})
-\frac{g_{\mathrm{lcb}}^2}{2\lambda_F F_{\mathrm{raw}}}
-\frac{1}{K_{\mathrm{screen}}},
-$$
-with
+and the cheap-stage burden is
 $$
 K_{\mathrm{screen}}
 =
 1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c.
 $$
 
-Here
+The cheap score is
+$$
+S_{\mathrm{simple}}
+=
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\frac{g_{\mathrm{lcb}}^2}{2\lambda_F F_{\mathrm{raw}}}
+\frac{1}{K_{\mathrm{screen}}}.
+$$
 
-- `D_life` is the compiled-burden proxy, lifetime-weighted when that mode is enabled,
-- `G_new` is new grouped-measurement burden,
-- `C_new` is new nominal shot burden,
-- `c` is the same-family streak burden, not grouped-measurement reuse.
+In the current live cheap path for `phase2_v1`, the feature builder takes
+$$
+\sigma=0,
+\qquad
+F_{\mathrm{raw}}=|g_m^{(n)}|,
+$$
+so the active cheap-path lower-confidence gradient is
+$$
+g_{\mathrm{lcb}}=|g_m^{(n)}|.
+$$
 
-So the active screen no longer uses
+### 10.6.2 Shortlist rule
 
-- raw `|g|` in place of `g_lcb`,
-- leakage terms,
-- motif bonuses,
-- optimizer-dimension penalties,
-- non-append position maximization.
+After the cheap pass, `phase2_v1` keeps the shortlist
+$$
+N_{\mathrm{short}}
+=
+\min\left\{
+N,\,
+N_{\max},\,
+\left\lceil f_{\mathrm{short}}N\right\rceil
+\right\},
+$$
+where
 
-### 10.6.2 Reduced-path geometry and curvature
+- `N` is the number of cheap records,
+- `N_{\max}=\texttt{shortlist\_size}`,
+- `f_{\mathrm{short}}=\texttt{shortlist\_fraction}`.
 
-Let `W_m` denote the inherited window that will actually be refit after admitting candidate `m`.
-The code computes the true current parameter tangents of that ordered scaffold,
-not the naive bare-generator actions on the final state.
+The retained shortlist is ranked by
 
-If `t_m` is the horizontal append tangent and `\{t_j\}_{j\in W_m}` are the horizontal inherited-window tangents, then
+1. descending cheap score,
+2. descending `simple_score`,
+3. ascending pool index,
+4. ascending insertion position.
+
+### 10.6.3 Reduced-path geometry, novelty, curvature, and trust-region drop
+
+For each shortlisted record, `phase2_v1` rebuilds an exact local derivative and geometry model at the proposed insertion position:
+
+- recompute the gradient on the current state,
+- build the exact inherited-window parameter tangents of the ordered scaffold,
+- build the exact inherited-window Hessian block,
+- build the candidate self-curvature and mixed candidate-window Hessian vector.
+
+Let `W_m` denote the inherited window that would actually be refit if candidate `m` were admitted. Let `t_m` be the horizontal append tangent and `\{t_j\}_{j\in W_m}` be the exact horizontal tangents of the current scaffold parameters in that window. Then
 $$
 F_{\mathrm{raw}}=\langle t_m,t_m\rangle,
 \qquad
@@ -1830,66 +2075,58 @@ The exact local quadratic model over append parameter `\alpha` and inherited-win
 $$
 E(\alpha,\delta\theta_{W_m})
 \approx
-E_0+g_m\alpha+\frac12 h_m\alpha^2
-+\alpha b_m^\top \delta\theta_{W_m}
-+\frac12 \delta\theta_{W_m}^\top H_{W_m}\,\delta\theta_{W_m}.
+E_0
++g_m\alpha
++\frac12 h_m\alpha^2
++\alpha\,b_m^\top\delta\theta_{W_m}
++\frac12\delta\theta_{W_m}^\top H_{W_m}\delta\theta_{W_m}.
 $$
 
-The code symmetrizes the inherited-window Hessian block and forms the positive-definite model
+The inherited-window Hessian block is symmetrized and regularized as
 $$
-M_m=\frac12(H_{W_m}+H_{W_m}^{\top})+\lambda_H I,
+M_m
+=
+\frac12(H_{W_m}+H_{W_m}^{\top})+\lambda_H I,
 $$
-with ridge growth when needed until the solve is numerically stable. The code records the effective ridge used.
+with ridge growth until the linear solve is numerically stable.
 
-Then the reduced curvature and reduced-path metric are
+The reduced curvature is
 $$
-\widetilde h_m=h_m-b_m^{\top}M_m^{-1}b_m,
+\widetilde h_m=h_m-b_m^\top M_m^{-1}b_m.
 $$
+
+The reduced-path metric is
 $$
 F_m^{\mathrm{red}}
 =
-F_{\mathrm{raw}}-2q_m^{\top}M_m^{-1}b_m+b_m^{\top}M_m^{-1}Q_mM_m^{-1}b_m.
+F_{\mathrm{raw}}
+-2q_m^\top M_m^{-1}b_m
++b_m^\top M_m^{-1}Q_mM_m^{-1}b_m.
 $$
 
 The reduced-path overlap is
 $$
-q_m^{\mathrm{red}}=q_m-Q_mM_m^{-1}b_m,
+q_m^{\mathrm{red}}=q_m-Q_mM_m^{-1}b_m.
 $$
-and the implemented novelty is the Tikhonov-regularized quantity
+
+The implemented novelty is the Tikhonov-regularized reduced-path novelty
 $$
 \nu_m
 =
 \operatorname{clip}_{[0,1]}
 \left(
 1-
-\frac{(q_m^{\mathrm{red}})^{\top}(Q_m+\varepsilon_{\mathrm{nov}}I)^{-1}q_m^{\mathrm{red}}}{F_m^{\mathrm{red}}}
+\frac{(q_m^{\mathrm{red}})^\top(Q_m+\varepsilon_{\mathrm{nov}}I)^{-1}q_m^{\mathrm{red}}}{F_m^{\mathrm{red}}}
 \right).
 $$
 
-So the active novelty is reduced-path novelty, not raw candidate novelty.
-
-### 10.6.3 `full_v2`
-
-The full append-only score is
-$$
-S_{\mathrm{full}}
-=
-\mathbf 1(m\in\Omega_{\mathrm{stage}})
-\,\nu_m^{\gamma_N}
-\,\frac{\Delta E_{\mathrm{TR}}}{K},
-$$
-with
-$$
-K=1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c,
-$$
-and trust-region drop
+The trust-region drop is
 $$
 \Delta E_{\mathrm{TR}}
 =
 \max_{|\alpha|\le \rho/\sqrt{F_m^{\mathrm{red}}}}
 \left[
- g_{\mathrm{lcb}}|\alpha|-
- \frac12\max(\widetilde h_m,0)\alpha^2
+g_{\mathrm{lcb}}|\alpha|-\frac12\max(\widetilde h_m,0)\alpha^2
 \right].
 $$
 
@@ -1906,28 +2143,424 @@ $$
 \end{cases}
 $$
 
-So the active staged HH score is now
+### 10.6.4 Full rerank score and effective selector
 
-- append-only,
-- one admitted operator per step,
-- exact inherited-window tangent geometry,
-- exact inherited-window Hessian block,
-- exact mixed candidate-window curvature,
-- Tikhonov-regularized solves,
-- no active leakage term,
-- no active motif add-on,
-- no greedy batch rule.
+The full rerank burden is
+$$
+K
+=
+1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c.
+$$
 
-## 10.7 Stage controller
+The full rerank score is
+$$
+S_{\mathrm{full}}
+=
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\,\nu_m^{\gamma_N}
+\,\frac{\Delta E_{\mathrm{TR}}}{K}.
+$$
+
+The live defaults are
+
+- `lambda_F = 1.0`,
+- `lambda_H = 10^{-6}`,
+- `rho = 0.25`,
+- `gamma_N = 1.0`,
+- `wD = 0.2`,
+- `wG = 0.15`,
+- `wC = 0.15`,
+- `wc = 0.1`,
+- `shortlist_fraction = 0.2`,
+- `shortlist_size = 12`,
+- `batch_target_size = 2`,
+- `batch_size_cap = 3`,
+- `batch_near_degenerate_ratio = 0.9`.
+
+So the effective `phase2_v1` selector is:
+
+- cheap-rank candidate-position pairs by `S_{\mathrm{simple}}`,
+- keep the configured shortlist,
+- rerank that shortlist by `S_{\mathrm{full}}`,
+- admit the top full-score record.
+
+The code still exposes batch-related configuration knobs and a compatibility-penalty helper, but the current live branch admits a singleton batch only:
+
+- `phase2_selected_records` is set to the top full-score record,
+- `greedy_batch_select(...)` is presently a singleton pass-through helper,
+- `phase2_last_batch_selected` remains false in the active branch.
+
+## 10.7 `phase3_v1` as a self-contained selector
+
+### 10.7.1 Core signal, append position, refit window, and cheap stage
+
+At ADAPT depth `n`, the ordered scaffold state is
+$$
+|\psi^{(n)}\rangle=
+\exp(-i\theta_n A_{m_n})\cdots \exp(-i\theta_1 A_{m_1})|\psi_{\mathrm{ref}}\rangle.
+$$
+
+For a candidate generator `A_m`, the compiled production gradient is
+$$
+g_m^{(n)}=
+i\langle\psi^{(n)}|[H,A_m]|\psi^{(n)}\rangle
+=
+2\,\Im\langle H\psi^{(n)}\mid A_m\psi^{(n)}\rangle.
+$$
+
+The cheap candidate universe is
+$$
+\mathcal C_{64}
+=
+\text{top-}\min\{64,|\mathcal P_{\mathrm{avail}}|\}
+\text{ candidates ranked by }|g_m^{(n)}|.
+$$
+
+The append position is
+$$
+p_{\mathrm{app}}=n.
+$$
+
+For a tentative insertion position `p`, the active reoptimization window is
+$$
+W_{\mathrm{refit}}(p)=W_{\mathrm{newest}}\cup W_{\mathrm{top}|\theta|},
+$$
+where `W_{\mathrm{newest}}` keeps the newest `w_{\mathrm{eff}}=\min\{w,n\}` indices and `W_{\mathrm{top}|\theta|}` optionally adds the top-`k` older indices ranked by descending `|\theta_j|`.
+
+The stage gate is
+$$
+\Gamma_{\mathrm{stage}}(m)=
+\begin{cases}
+1, & \text{stage = residual},\\
+1, & \text{stage = core/seed and } m \notin \mathcal P_{\mathrm{residual}},\\
+0, & \text{stage = core/seed and } m \in \mathcal P_{\mathrm{residual}}.
+\end{cases}
+$$
+
+The hard symmetry gate is
+$$
+\Gamma_{\mathrm{sym}}(m)=
+\begin{cases}
+0, & \text{candidate symmetry spec has } \texttt{hard\_guard=true},\\
+1, & \text{otherwise}.
+\end{cases}
+$$
+
+The compile-cost proxy is
+$$
+D_{\mathrm{proxy}}
+=
+n_{\mathrm{new\,pauli}}
++n_{\mathrm{rot}}
++|p_{\mathrm{app}}-p|
++|W_{\mathrm{refit}}(p)|.
+$$
+
+The grouped-measurement bookkeeping tracks
+$$
+G_{\mathrm{new}},\qquad S_{\mathrm{new}},\qquad R_{\mathrm{reuse}}.
+$$
+
+The lower-confidence gradient is
+$$
+g_{\mathrm{lcb}}=\max\{|g|-z_{\alpha}\sigma,0\},
+$$
+and the cheap-stage burden is
+$$
+K_{\mathrm{screen}}
+=
+1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c.
+$$
+
+The cheap score is
+$$
+S_{\mathrm{simple}}
+=
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\frac{g_{\mathrm{lcb}}^2}{2\lambda_F F_{\mathrm{raw}}}
+\frac{1}{K_{\mathrm{screen}}}.
+$$
+
+In the current live cheap path for `phase3_v1`, the feature builder takes
+$$
+\sigma=0,
+\qquad
+F_{\mathrm{raw}}=|g_m^{(n)}|,
+$$
+so the active cheap-path lower-confidence gradient is
+$$
+g_{\mathrm{lcb}}=|g_m^{(n)}|.
+$$
+
+### 10.7.2 Shortlist, reduced-path geometry, novelty, and full rerank score
+
+After the cheap pass, `phase3_v1` keeps the shortlist
+$$
+N_{\mathrm{short}}
+=
+\min\left\{
+N,\,
+N_{\max},\,
+\left\lceil f_{\mathrm{short}}N\right\rceil
+\right\},
+$$
+where
+
+- `N` is the number of cheap records,
+- `N_{\max}=\texttt{shortlist\_size}`,
+- `f_{\mathrm{short}}=\texttt{shortlist\_fraction}`.
+
+For each shortlisted record, `phase3_v1` rebuilds an exact local derivative and geometry model at the proposed insertion position.
+
+Let `W_m` denote the inherited window that would actually be refit if candidate `m` were admitted. Let `t_m` be the horizontal append tangent and `\{t_j\}_{j\in W_m}` the exact horizontal tangents of the current scaffold parameters in that window. Then
+$$
+F_{\mathrm{raw}}=\langle t_m,t_m\rangle,
+\qquad
+(Q_m)_{jk}=\operatorname{Re}\langle t_j,t_k\rangle,
+\qquad
+(q_m)_j=\operatorname{Re}\langle t_j,t_m\rangle.
+$$
+
+The local quadratic model is
+$$
+E(\alpha,\delta\theta_{W_m})
+\approx
+E_0
++g_m\alpha
++\frac12 h_m\alpha^2
++\alpha\,b_m^\top\delta\theta_{W_m}
++\frac12\delta\theta_{W_m}^\top H_{W_m}\delta\theta_{W_m}.
+$$
+
+The positive-definite inherited-window model is
+$$
+M_m
+=
+\frac12(H_{W_m}+H_{W_m}^{\top})+\lambda_H I,
+$$
+with ridge growth until the solve is stable.
+
+The reduced curvature is
+$$
+\widetilde h_m=h_m-b_m^\top M_m^{-1}b_m.
+$$
+
+The reduced-path metric is
+$$
+F_m^{\mathrm{red}}
+=
+F_{\mathrm{raw}}
+-2q_m^\top M_m^{-1}b_m
++b_m^\top M_m^{-1}Q_mM_m^{-1}b_m.
+$$
+
+The reduced-path overlap is
+$$
+q_m^{\mathrm{red}}=q_m-Q_mM_m^{-1}b_m.
+$$
+
+The implemented novelty is
+$$
+\nu_m
+=
+\operatorname{clip}_{[0,1]}
+\left(
+1-
+\frac{(q_m^{\mathrm{red}})^\top(Q_m+\varepsilon_{\mathrm{nov}}I)^{-1}q_m^{\mathrm{red}}}{F_m^{\mathrm{red}}}
+\right).
+$$
+
+The trust-region drop is
+$$
+\Delta E_{\mathrm{TR}}
+=
+\max_{|\alpha|\le \rho/\sqrt{F_m^{\mathrm{red}}}}
+\left[
+g_{\mathrm{lcb}}|\alpha|-\frac12\max(\widetilde h_m,0)\alpha^2
+\right].
+$$
+
+Equivalently,
+$$
+\Delta E_{\mathrm{TR}}
+=
+\begin{cases}
+\dfrac{g_{\mathrm{lcb}}^2}{2\max(\widetilde h_m,0)},
+& \max(\widetilde h_m,0)>0\ \text{and}\ \dfrac{g_{\mathrm{lcb}}}{\max(\widetilde h_m,0)}\le \dfrac{\rho}{\sqrt{F_m^{\mathrm{red}}}},\\[1.2ex]
+\dfrac{\rho g_{\mathrm{lcb}}}{\sqrt{F_m^{\mathrm{red}}}}
+-\dfrac{\rho^2\max(\widetilde h_m,0)}{2F_m^{\mathrm{red}}},
+& \text{otherwise.}
+\end{cases}
+$$
+
+The full rerank burden is
+$$
+K
+=
+1+w_D\bar D_{\mathrm{life}}+w_G\bar G_{\mathrm{new}}+w_C\bar C_{\mathrm{new}}+w_c\bar c.
+$$
+
+The full rerank score is
+$$
+S_{\mathrm{full}}
+=
+\mathbf 1(m\in\Omega_{\mathrm{stage}})
+\,\nu_m^{\gamma_N}
+\,\frac{\Delta E_{\mathrm{TR}}}{K}.
+$$
+
+### 10.7.3 Additional runtime surfaces and effective selector
+
+The live `phase3_v1` surface also carries the following runtime surfaces:
+
+1. **Motif seeding**. If `phase3_motif_source_json` is supplied, the code loads a motif library and may insert transferable tiled generators before the main ADAPT loop.
+
+2. **Runtime split on shortlisted macro generators**. If
+$$
+\texttt{phase3\_runtime\_split\_mode}=\texttt{shortlist\_pauli\_children\_v1},
+$$
+and a shortlisted candidate is a macro generator, the code builds child generators
+$$
+\mathcal C(m)=\{m_1,\ldots,m_K\},
+$$
+evaluates the phase-3 full rerank score over those children, and may replace the parent by the best child.
+
+3. **Lifetime-weighted burden**. If
+$$
+\texttt{phase3\_lifetime\_cost\_mode}=\texttt{phase3\_v1},
+$$
+the depth burden is weighted by
+$$
+R_{\mathrm{rem}}=\max\{1,\texttt{max\_depth}-\texttt{current\_depth}+1\}.
+$$
+
+4. **Symmetry metadata / verification hooks**. The exposed mode surface is
+$$
+\texttt{phase3\_symmetry\_mitigation\_mode}\in
+\{\texttt{off},\texttt{verify\_only},\texttt{postselect\_diag\_v1},\texttt{projector\_renorm\_v1}\}.
+$$
+
+5. **Rescue diagnostics**. If `phase3_enable_rescue=true`, the code may record rescue attempts and outcomes in `rescue_history`.
+
+The live defaults are
+
+- `lambda_F = 1.0`,
+- `lambda_H = 10^{-6}`,
+- `rho = 0.25`,
+- `gamma_N = 1.0`,
+- `wD = 0.2`,
+- `wG = 0.15`,
+- `wC = 0.15`,
+- `wc = 0.1`,
+- `shortlist_fraction = 0.2`,
+- `shortlist_size = 12`,
+- singleton batch admission in the active branch.
+
+So the effective `phase3_v1` selector is:
+
+- cheap-rank candidate-position pairs by `S_{\mathrm{simple}}`,
+- keep the configured shortlist,
+- rerank the shortlist by `S_{\mathrm{full}}`,
+- optionally runtime-split shortlisted macros,
+- admit the top surviving full-score record,
+- carry motif/runtime-split/rescue/symmetry/lifetime metadata as part of the live phase-3 surface.
+
+## 10.8 Current HH pool and replay-family surfaces
+
+The active HH ADAPT surface in `pipelines/hardcoded/adapt_pipeline.py` supports
+
+- `hva`,
+- `full_meta`,
+- `uccsd_paop_lf_full`,
+- `uccsd_otimes_paop_lf_std`, `uccsd_otimes_paop_lf2_std`, `uccsd_otimes_paop_bond_disp_std`,
+- `uccsd_otimes_paop_lf_std_seq2p`, `uccsd_otimes_paop_lf2_std_seq2p`, `uccsd_otimes_paop_bond_disp_std_seq2p`,
+- `paop`, `paop_min`, `paop_std`, `paop_full`,
+- `paop_lf`, `paop_lf_std`, `paop_lf2_std`, `paop_lf3_std`, `paop_lf4_std`, `paop_lf_full`,
+- `paop_sq_std`, `paop_sq_full`,
+- `paop_bond_disp_std`, `paop_hop_sq_std`, `paop_pair_sq_std`,
+- `vlf_only`, `sq_only`, `vlf_sq`, `sq_dens_only`, `vlf_sq_dens`,
+- `full_hamiltonian`.
+
+The replay-side family resolver in `hh_vqe_from_adapt_family.py` additionally accepts the compatibility aliases
+
+- `pool_a`,
+- `pool_b`,
+
+which are replay-only legacy mappings rather than direct `adapt_pipeline.py` pool keys.
+
+For the new HH product-family surfaces, the canonical generator is
+$$
+G_{a\mu}=F_a M_\mu,
+$$
+where
+
+- $F_a$ is one lifted fermionic UCCSD excitation factor,
+- $M_\mu$ is one boson-only phonon motif constructed directly from the phonon
+  primitives used by the PAOP families,
+- the allowed v1 motif families are `paop_lf_std`, `paop_lf2_std`, and
+  `paop_bond_disp_std`,
+- admissible pairs are locality-filtered against the excitation support before
+  canonicalization and deduplication.
+
+So the product-family pool is
+$$
+\mathcal P_{\mathrm{uccsd}\otimes\mathrm{motif}}
+=
+\left\{
+F_a M_\mu \;:\; (a,\mu)\in \mathcal C_{\mathrm{local}}
+\right\},
+$$
+with $\mathcal C_{\mathrm{local}}$ the code-level compatibility relation induced
+by excitation support and motif support.
+
+This is distinct from the older additive union
+$$
+\mathcal P_{\mathrm{uccsd\_paop\_lf\_full}}
+=
+\mathcal P_{\mathrm{uccsd\_lifted}}\cup \mathcal P_{\mathrm{paop\_lf\_full}},
+$$
+which remains unchanged.
+
+For the `_seq2p` variants, one logical pair $(F_a,M_\mu)$ is exposed with two
+parameters via the ordered factorization
+$$
+U_{a\mu}(\alpha,\beta)=e^{-i\alpha F_a}e^{-i\beta M_\mu},
+$$
+rather than the single-parameter product exponential
+$$
+U_{a\mu}(\theta)=e^{-i\theta(F_a M_\mu)}.
+$$
+These logical-pair variants are additive opt-in surfaces and do not change the
+staged `phase3_v1` default core.
+
+For staged HH continuation modes `phase1_v1`, `phase2_v1`, and `phase3_v1`, the code enforces
+
+- no direct `full_meta` request as the depth-0 core pool,
+- default narrow core pool `paop_lf_std`,
+- residual pool `full_meta`.
+
+So the staged pool is
+$$
+\mathcal P_{\mathrm{staged}}=\mathcal P_{\mathrm{core}}\cup \mathcal P_{\mathrm{residual}},
+$$
+with
+$$
+\mathcal P_{\mathrm{core}}=\mathcal P_{\mathrm{paop\_lf\_std}},
+\qquad
+\mathcal P_{\mathrm{residual}}=\mathcal P_{\mathrm{full\_meta}}\backslash \mathcal P_{\mathrm{core}}.
+$$
+
+## 10.9 Stage controller
 
 The implemented stage controller in `hh_continuation_stage_control.py` uses the stage chain
 $$
 \texttt{seed} \rightarrow \texttt{core} \rightarrow \texttt{residual}.
 $$
 
-The transition rule is explicit:
+The `seed` stage is entered first in staged HH continuation and then resolves immediately:
 
-- `seed -> core` after the seed step completes,
+- `seed -> core` after optional motif seeding completes,
+- if no seed block is inserted, the code records `seed_skipped_or_empty` and still moves to `core`,
 - `core -> residual` when the drop plateau patience is hit **and** no trough is detected,
 - `residual` remains `residual` while open.
 
@@ -1936,6 +2569,14 @@ Position probing is enabled when one of the implemented triggers fires:
 - drop plateau,
 - `eps_grad` + finite-angle flatness,
 - repeated-family flatness.
+
+The live controller defaults are
+
+- `plateau_patience = 2`,
+- `probe_margin_ratio = 1.0`,
+- `max_probe_positions = 6`,
+- `append_admit_threshold = 0.05`,
+- `family_repeat_patience = 2`.
 
 Implemented surfaces:
 
@@ -2373,11 +3014,13 @@ The continuation payload is no longer hypothetical. The implemented continuation
 - `optimizer_memory`,
 - `selected_generator_metadata`,
 - `generator_split_events`,
+- `runtime_split_summary`,
 - `motif_library`,
 - `motif_usage`,
 - `symmetry_mitigation`,
 - `rescue_history`,
-- `replay_contract_hint`.
+- `replay_contract`,
+- optionally `replay_contract_hint` as a compatibility hint written by bundle tooling.
 
 A schematic shape is
 
@@ -2388,11 +3031,13 @@ continuation:
   optimizer_memory: {...}
   selected_generator_metadata: [...]
   generator_split_events: [...]
+  runtime_split_summary: {...}
   motif_library: {...}
   motif_usage: {...}
   symmetry_mitigation: {...}
   rescue_history: [...]
-  replay_contract_hint: {...}
+  replay_contract: {...}
+  replay_contract_hint: {...}   # compatibility-only hint when present
 ```
 
 This is the implemented successor to the older continuation discussion.
@@ -2412,9 +3057,100 @@ The mathematical meaning of the replay payload is straightforward:
 - the continuation block defines how the selected generators were staged, split, scored, reused, and annotated,
 - the replay consumer reconstructs a compatible continuation trajectory from those stored objects.
 
-## 13.4 Symmetry note
+Modern replay treats
+$$
+\texttt{continuation.replay\_contract}
+$$
+as the authoritative contract when present. The implemented v2 shape is
 
-The raw staged ADAPT CLI already exposes phase-3 symmetry mode names, but on that raw path they are still primarily metadata/telemetry hooks. This manuscript therefore states the continuation/symmetry payload as an implemented data contract without overstating raw staged-ADAPT enforcement beyond what the code currently does.
+```yaml
+continuation:
+  replay_contract:
+    contract_version: 2
+    continuation_mode: legacy | phase1_v1 | phase2_v1 | phase3_v1
+    generator_family:
+      requested: match_adapt | <canonical_hh_family>
+      resolved: <canonical_hh_family>
+      resolution_source: <string>
+      fallback_family: <canonical_hh_family> | null
+      fallback_used: true | false
+    seed_policy_requested: auto | scaffold_plus_zero | residual_only | tile_adapt
+    seed_policy_resolved: scaffold_plus_zero | residual_only | tile_adapt
+    handoff_state_kind: prepared_state | reference_state
+    provenance_source: contract | explicit | inferred_source | ambiguous
+    adapt_depth: <int>
+    reps: <int>
+    derived_num_parameters_formula: adapt_depth * reps
+    derived_num_parameters: <int>
+    replay_block_source: adapt_vqe.operators
+    seed_source: adapt_vqe.optimal_point
+```
+
+The live auto-resolution rule is
+
+- `auto -> residual_only` for `handoff_state_kind = prepared_state`,
+- `auto -> scaffold_plus_zero` for `handoff_state_kind = reference_state`.
+
+So `replay_contract` now carries the authoritative family resolution, seed-policy resolution, handoff-state semantics, and replay provenance. When `replay_contract` is present, any remaining `replay_contract_hint` should be read as compatibility metadata rather than the primary contract.
+
+## 13.4 Symmetry and phase-3 payload note
+
+The raw staged ADAPT CLI already exposes phase-3 symmetry, runtime-split, motif, and rescue surfaces. This manuscript therefore states them as implemented payload/data-contract surfaces without overstating raw staged-ADAPT enforcement beyond what the current code actually does.
+
+## 13.5 Optional staged seed-refine insertion and provenance
+
+Code anchors:
+
+- `pipelines/hardcoded/hh_staged_workflow.py`
+- `pipelines/hardcoded/hh_vqe_from_adapt_family.py`
+- `pipelines/hardcoded/handoff_state_bundle.py`
+
+The default staged HH chain remains
+$$
+|\psi_{\mathrm{HF}}\rangle
+\xrightarrow{U_{\mathrm{warm}}(\theta)}
+|\psi_{\mathrm{warm}}\rangle
+\xrightarrow{\mathrm{ADAPT}_{\mathrm{phase3\_v1}}}
+|\psi_{\mathrm{ADAPT}}\rangle
+\xrightarrow{\mathrm{replay}_{\mathrm{match\_adapt}}}
+|\psi_{\mathrm{final}}\rangle,
+$$
+with $U_{\mathrm{warm}}$ built from `hh_hva_ptw` by default and `hh_hva` kept as
+an override-only alternative.
+
+When `--seed-refine-family` is enabled, the workflow inserts one explicit-family
+conventional VQE stage:
+$$
+|\psi_{\mathrm{HF}}\rangle
+\xrightarrow{U_{\mathrm{warm}}(\theta)}
+|\psi_{\mathrm{warm}}\rangle
+\xrightarrow{U_{\mathrm{family}}(\vartheta)}
+|\psi_{\mathrm{refined}}\rangle
+\xrightarrow{\mathrm{ADAPT}_{\mathrm{phase3\_v1}}}
+|\psi_{\mathrm{ADAPT}}\rangle
+\xrightarrow{\mathrm{replay}_{\mathrm{match\_adapt}}}
+|\psi_{\mathrm{final}}\rangle.
+$$
+
+The family stage is explicit-only:
+
+- it materializes the requested family directly,
+- it does not use `match_adapt`,
+- it does not auto-fallback to `full_meta`,
+- failure aborts before ADAPT rather than silently skipping ahead.
+
+When a refine stage is present, the handoff bundle may include additive
+provenance
+```yaml
+seed_provenance:
+  warm_ansatz: hh_hva_ptw | hh_hva
+  refine_family: <explicit_family>
+  refine_family_kind: explicit_family | <future-kind>
+  refine_paop_motif_families: [<motif_family>, ...]
+  refine_reps: <int>
+```
+Missing `seed_provenance` remains a valid legacy state and means “no refine
+stage”. Replay family resolution ignores this block; it remains provenance only.
 
 # 14. Cross-Check Suite and Exact-Benchmark Contracts
 
@@ -2445,6 +3181,29 @@ $$
 \text{HH-Layerwise},
 \text{ADAPT(full\_H)}
 \}.
+$$
+
+This remains the default HH matrix. When the opt-in seed surface is enabled via
+`--hh-seed-refine-surface`, the suite additively appends the conventional seed
+comparison arms
+$$
+\mathcal T_{\mathrm{HH}}^{\mathrm{seed}}
+=
+\mathcal T_{\mathrm{HH}}
+\cup
+\{
+\text{HH-PhysicalTermwise},
+\text{HH-PhysicalTermwise}+\texttt{uccsd\_paop\_lf\_full},
+\text{HH-PhysicalTermwise}+\texttt{uccsd\_otimes\_paop\_lf\_std},
+\text{HH-PhysicalTermwise}+\texttt{uccsd\_otimes\_paop\_lf2\_std},
+\text{HH-PhysicalTermwise}+\texttt{uccsd\_otimes\_paop\_bond\_disp\_std}
+\}.
+$$
+
+On the smallest-system comparison only, the suite additionally includes the
+reduced arm
+$$
+\text{HH-Layerwise}+\texttt{uccsd\_otimes\_paop\_lf\_std}.
 $$
 
 Each trial uses the same Hamiltonian instance for the chosen problem and then compares its variational energy against the same sector-filtered exact reference.
@@ -2594,6 +3353,58 @@ with a fixed exact target and fixed time grid.
 Implemented surfaces:
 
 - `pipelines/exact_bench/cross_check_suite.py`
+
+## 14.6 HH seed-surface preset and proxy sidecars
+
+For the current opt-in HH seed benchmark preset, the suite runs the four-point
+set
+$$
+(L,g)\in \{2,3\}\times\{0.8,1.2\},
+$$
+with shared HH choices
+$$
+t=1,\qquad U=4,\qquad \omega_0=1,\qquad n_{\mathrm{ph,max}}=1,
+$$
+and the repository HH boundary/ordering convention.
+
+For a warm-only baseline trial $\tau_0$ and a refined seed trial $\tau$, define
+the absolute-energy improvement
+$$
+I(\tau\mid \tau_0)
+=
+|\Delta E_{\tau_0}|-|\Delta E_{\tau}|.
+$$
+
+Let the additive preparation-cost deltas be
+$$
+\Delta c_{\tau}=c_{\tau}-c_{\tau_0},\qquad
+\Delta d_{\tau}=d_{\tau}-d_{\tau_0},\qquad
+\Delta s_{\tau}=s_{\tau}-s_{\tau_0},
+$$
+where $(c_\tau,d_\tau,s_\tau)$ denote the explicit `cx_proxy`,
+`depth_proxy`, and `sq_proxy` values persisted through the proxy sidecars.
+
+Then the comparison views are
+$$
+\eta_{\tau}^{(\mathrm{cx})}
+=
+\frac{I(\tau\mid\tau_0)}{\max(\Delta c_{\tau},1)},
+\qquad
+\eta_{\tau}^{(\mathrm{depth})}
+=
+\frac{I(\tau\mid\tau_0)}{\max(\Delta d_{\tau},1)},
+\qquad
+\eta_{\tau}^{(\mathrm{sq})}
+=
+\frac{I(\tau\mid\tau_0)}{\max(\Delta s_{\tau},1)}.
+$$
+
+The decision rule uses $\eta_{\tau}^{(\mathrm{cx})}$ as the primary ranking
+metric, with the depth- and single-qubit-normalized views retained as
+secondaries. The proxy formulas themselves remain sourced from
+`docs/reports/qiskit_circuit_report.py` through
+`compute_sweep_proxy_cost(...)`, `compute_time_dynamics_proxy_cost(...)`, and
+the additive `ProxyMetricRow` sidecar schema.
 
 # 15. Noise Validation, Symmetry-Mitigation, and Legacy-Parity Contracts
 

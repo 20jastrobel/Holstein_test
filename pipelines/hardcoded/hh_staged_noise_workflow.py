@@ -239,6 +239,7 @@ def _run_single_noisy_mode(
         "layout_lock_key": f"staged_noise:{staged_cfg.artifacts.tag}:{'drive' if drive_profile is not None else 'static'}:{noise_report._layout_lock_mode_token(str(mode))}",
         "method": str(method),
         "benchmark_active_coeff_tol": float(noise_cfg.benchmark_active_coeff_tol),
+        "cfqm_stage_exp": str(staged_cfg.dynamics.cfqm_stage_exp),
         "cfqm_coeff_drop_abs_tol": float(staged_cfg.dynamics.cfqm_coeff_drop_abs_tol),
     }
     return noise_report._run_noisy_mode_isolated(
@@ -352,6 +353,7 @@ def run_noisy_profiles(
                     ),
                     method=str(method),
                     benchmark_active_coeff_tol=float(noise_cfg.benchmark_active_coeff_tol),
+                    cfqm_stage_exp=str(staged_cfg.dynamics.cfqm_stage_exp),
                     cfqm_coeff_drop_abs_tol=float(staged_cfg.dynamics.cfqm_coeff_drop_abs_tol),
                     noisy_mode_timeout_s=int(noise_cfg.noisy_mode_timeout_s),
                     profile_name=str(profile_name),
@@ -588,6 +590,7 @@ def run_staged_hh_noise(cfg: StagedHHNoiseConfig, *, run_command: str | None = N
         cfg=staged_cfg,
         stage_result=stage_result,
         dynamics_noiseless=dynamics_noiseless,
+        circuit_report=base_wf.build_stage_circuit_report_artifacts(stage_result, staged_cfg),
         run_command=run_command_str,
     )
     payload["pipeline"] = "hh_staged_noise"

@@ -37,6 +37,11 @@ def test_verify_symmetry_sequence_fails_for_high_risk_metadata() -> None:
     assert verify["high_risk_count"] == 1
 
 
+def test_all_hh_meta_v1_uses_broad_family_risk_bucket() -> None:
+    spec = build_symmetry_spec(family_id="all_hh_meta_v1", mitigation_mode="verify_only")
+    assert leakage_penalty_from_spec(spec) == 0.1
+
+
 def test_off_mode_preserves_legacy_behavior() -> None:
     verify = verify_symmetry_sequence(
         generator_metadata=[{"symmetry_spec": {"leakage_risk": 0.9}}],

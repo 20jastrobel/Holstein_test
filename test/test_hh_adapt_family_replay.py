@@ -18,6 +18,7 @@ from pipelines.hardcoded.hh_vqe_from_adapt_family import (
     _build_pool_for_family,
     _resolve_family,
     _resolve_family_from_metadata,
+    build_replay_sequence_from_input_json,
     build_replay_ansatz_context,
     parse_args,
 )
@@ -145,6 +146,7 @@ def test_resolve_family_uses_settings_adapt_pool() -> None:
 
 def test_resolve_family_accepts_new_experimental_paop_tokens() -> None:
     for token in (
+        "all_hh_meta_v1",
         "paop_lf3_std",
         "paop_lf4_std",
         "paop_sq_std",
@@ -158,11 +160,41 @@ def test_resolve_family_accepts_new_experimental_paop_tokens() -> None:
         assert src == "adapt_vqe.pool_type"
 
 
+def test_resolve_family_accepts_new_uccsd_otimes_product_tokens() -> None:
+    for token in (
+        "uccsd_otimes_paop_lf_std",
+        "uccsd_otimes_paop_lf2_std",
+        "uccsd_otimes_paop_bond_disp_std",
+        "uccsd_otimes_paop_lf_std_seq2p",
+        "uccsd_otimes_paop_lf2_std_seq2p",
+        "uccsd_otimes_paop_bond_disp_std_seq2p",
+    ):
+        fam, src = _resolve_family_from_metadata({"adapt_vqe": {"pool_type": token}})
+        assert fam == token
+        assert src == "adapt_vqe.pool_type"
+
+
 def test_resolve_family_accepts_new_vlf_sq_tokens() -> None:
     for token in ("vlf_only", "sq_only", "vlf_sq", "sq_dens_only", "vlf_sq_dens"):
         fam, src = _resolve_family_from_metadata({"adapt_vqe": {"pool_type": token}})
         assert fam == token
         assert src == "adapt_vqe.pool_type"
+
+
+def test_build_pool_for_family_materializes_all_hh_meta_v1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(
+        replay_mod,
+        "_build_hh_all_meta_v1_pool",
+        lambda **kwargs: ([type("_T", (), {"label": "all_hh_meta_v1:term"})()], {"raw_total": 17}),
+    )
+    pool, meta = _build_pool_for_family(cfg, family="all_hh_meta_v1", h_poly=object())
+    assert len(pool) == 1
+    assert meta["family"] == "all_hh_meta_v1"
+    assert meta["raw_sizes"]["raw_total"] == 17
 
 
 def test_build_pool_for_family_materializes_new_paop_tokens(
@@ -187,6 +219,33 @@ def test_build_pool_for_family_materializes_new_paop_tokens(
         pool, meta = _build_pool_for_family(cfg, family=token, h_poly=object())
         assert len(pool) == 1
         assert meta["family"] == token
+
+
+def test_build_pool_for_family_materializes_new_uccsd_otimes_product_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mk_cfg(tmp_path)
+    monkeypatch.setattr(
+        replay_mod,
+        "_build_hh_uccsd_paop_product_pool",
+        lambda *args, **kwargs: (
+            [type("_T", (), {"label": f"{kwargs.get('family_key', args[5])}:term"})()],
+            {"family_kind": "uccsd_paop_product", "parameterization": "single_product"},
+        ),
+    )
+    for token in (
+        "uccsd_otimes_paop_lf_std",
+        "uccsd_otimes_paop_lf2_std",
+        "uccsd_otimes_paop_bond_disp_std",
+        "uccsd_otimes_paop_lf_std_seq2p",
+        "uccsd_otimes_paop_lf2_std_seq2p",
+        "uccsd_otimes_paop_bond_disp_std_seq2p",
+    ):
+        pool, meta = _build_pool_for_family(cfg, family=token, h_poly=object())
+        assert len(pool) == 1
+        assert meta["family"] == token
+        assert meta["family_kind"] == "uccsd_paop_product"
 
 
 def test_build_pool_for_family_materializes_new_vlf_sq_tokens(
@@ -216,6 +275,62 @@ def test_build_pool_for_family_rejects_split_paulis_for_vlf_sq(
     cfg = cfg.__class__(**{**cfg.__dict__, "paop_split_paulis": True})
     with pytest.raises(ValueError, match="do not support --paop-split-paulis"):
         _build_pool_for_family(cfg, family="vlf_sq", h_poly=object())
+
+
+def test_full_meta_replay_terms_accept_mixed_termwise_and_paop_std_labels(tmp_path: Path) -> None:
+    cfg = _mk_cfg(tmp_path)
+    h_poly = replay_mod._build_hh_hamiltonian(cfg)
+    termwise_pool = replay_mod._build_hh_termwise_augmented_pool(h_poly)
+    paop_pool = replay_mod._build_paop_pool(
+        int(cfg.L),
+        int(cfg.n_ph_max),
+        str(cfg.boson_encoding),
+        str(cfg.ordering),
+        str(cfg.boundary),
+        "paop_lf_std",
+        int(cfg.paop_r),
+        bool(cfg.paop_split_paulis),
+        float(cfg.paop_prune_eps),
+        str(cfg.paop_normalization),
+        (int(cfg.sector_n_up), int(cfg.sector_n_dn)),
+    )
+    assert termwise_pool
+    assert paop_pool
+
+    replay_labels = [
+        f"hh_termwise_{termwise_pool[0].label}",
+        str(paop_pool[0].label),
+    ]
+    replay_terms, meta, family_terms_count = replay_mod._build_replay_terms_for_family(
+        cfg,
+        family="full_meta",
+        h_poly=h_poly,
+        adapt_labels=replay_labels,
+        payload={},
+    )
+
+    assert [str(term.label) for term in replay_terms] == replay_labels
+    assert meta["family"] == "full_meta"
+    assert "paop_lf_std" in meta["supplemental_families"]
+    assert int(family_terms_count) >= len(replay_terms)
+
+
+def test_build_replay_sequence_from_input_json_reconstructs_mixed_family_seed() -> None:
+    seed_json = REPO_ROOT / "artifacts" / "json" / "l2_hh_open_direct_adapt_phase3_paoplf_u4_g05_nph2.json"
+    replay_data = build_replay_sequence_from_input_json(seed_json)
+
+    labels = [str(term.label) for term in replay_data["replay_terms"]]
+    assert len(labels) == 15
+    assert replay_data["family_resolved"] == "full_meta"
+    assert replay_data["family_info"]["resolution_source"] == "fallback_family_missing_labels"
+    assert labels.count("paop_lf_std:paop_disp(site=0)") == 2
+    assert labels[:4] == [
+        "uccsd_sing(alpha:0->1)_0",
+        "uccsd_sing(beta:2->3)_0",
+        "uccsd_dbl(ab:0,2->1,3)_1",
+        "hh_termwise_ham_quadrature_term(eyeeeeze)",
+    ]
+    assert np.allclose(np.asarray(replay_data["seed_theta"], dtype=float), 0.0)
 
 
 def test_resolve_family_uses_nested_selected_generator_metadata() -> None:
@@ -278,6 +393,15 @@ def test_resolve_family_match_adapt_falls_back_when_missing(tmp_path: Path) -> N
     assert info["resolved"] == "full_meta"
     assert bool(info["fallback_used"]) is True
     assert info["resolution_source"] == "fallback_family"
+
+
+def test_resolve_family_explicit_product_family_does_not_auto_fallback(tmp_path: Path) -> None:
+    cfg = _mk_cfg(tmp_path, generator_family="uccsd_otimes_paop_lf_std", fallback_family="full_meta")
+    info = _resolve_family(cfg, {})
+    assert info["requested"] == "uccsd_otimes_paop_lf_std"
+    assert info["resolved"] == "uccsd_otimes_paop_lf_std"
+    assert bool(info["fallback_used"]) is False
+    assert info["resolution_source"] == "cli.generator_family"
 
 
 def test_resolve_family_rejects_malformed_contract(tmp_path: Path) -> None:

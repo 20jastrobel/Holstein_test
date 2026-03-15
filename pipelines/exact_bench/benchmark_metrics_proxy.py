@@ -40,6 +40,8 @@ class ProxyMetricRow:
     vqe_restarts: int | None = None
     vqe_maxiter: int | None = None
     depth_proxy: int | None = None
+    cx_proxy: int | None = None
+    sq_proxy: int | None = None
     operator_family_proxy: str = ""
     pool_family_proxy: str = ""
     fidelity_kernel_proxy: str = ""
@@ -197,6 +199,8 @@ def extract_proxy_metric_row(
 
     adapt_depth_reached = _to_int(_first_nonempty(merged.get("adapt_depth_reached"), merged.get("adapt_depth")))
     depth_proxy = _infer_depth_proxy(merged, num_parameters)
+    cx_proxy = _to_int(_first_nonempty(merged.get("cx_proxy"), merged.get("cx_proxy_total")))
+    sq_proxy = _to_int(_first_nonempty(merged.get("sq_proxy"), merged.get("sq_proxy_total")))
     operator_family_proxy = _infer_operator_family_proxy(
         method_kind=method_kind,
         method_id=method_id,
@@ -231,6 +235,8 @@ def extract_proxy_metric_row(
         vqe_restarts=vqe_restarts,
         vqe_maxiter=vqe_maxiter,
         depth_proxy=depth_proxy,
+        cx_proxy=cx_proxy,
+        sq_proxy=sq_proxy,
         operator_family_proxy=operator_family_proxy,
         pool_family_proxy=pool_family_proxy,
         fidelity_kernel_proxy=fidelity_kernel_proxy,
@@ -248,6 +254,8 @@ def summarize_proxy_rows(
 ) -> dict[str, Any]:
     runtime_vals = [float(r.runtime_s) for r in rows if r.runtime_s is not None]
     depth_vals = [int(r.depth_proxy) for r in rows if r.depth_proxy is not None]
+    cx_vals = [int(r.cx_proxy) for r in rows if r.cx_proxy is not None]
+    sq_vals = [int(r.sq_proxy) for r in rows if r.sq_proxy is not None]
     delta_vals = [float(r.delta_E_abs) for r in rows if r.delta_E_abs is not None]
 
     status_counts: dict[str, int] = {}
@@ -293,6 +301,16 @@ def summarize_proxy_rows(
             "min": int(min(depth_vals)) if depth_vals else None,
             "median": float(statistics.median(depth_vals)) if depth_vals else None,
             "max": int(max(depth_vals)) if depth_vals else None,
+        },
+        "cx_proxy": {
+            "min": int(min(cx_vals)) if cx_vals else None,
+            "median": float(statistics.median(cx_vals)) if cx_vals else None,
+            "max": int(max(cx_vals)) if cx_vals else None,
+        },
+        "sq_proxy": {
+            "min": int(min(sq_vals)) if sq_vals else None,
+            "median": float(statistics.median(sq_vals)) if sq_vals else None,
+            "max": int(max(sq_vals)) if sq_vals else None,
         },
         "delta_E_abs": {
             "best": float(min(delta_vals)) if delta_vals else None,
@@ -344,4 +362,3 @@ def write_proxy_sidecars(
         "jsonl": jsonl_path,
         "summary_json": summary_path,
     }
-

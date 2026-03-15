@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib
 import json
+import warnings
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -37,6 +39,53 @@ def _to_ixyz(label_exyz: str) -> str:
         .replace("y", "Y")
         .replace("z", "Z")
     )
+
+
+CFQM_FIXED_NODE_WARNING = "CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j."
+CFQM_INNER_ORDER_WARNING = (
+    "Inner Suzuki-2 makes overall method 2nd order; use expm_multiply_sparse/dense_expm for true CFQM order."
+)
+CFQM_CIRCUITIZATION_REASON = (
+    "Circuitized CFQM requires cfqm_stage_exp='pauli_suzuki2'; dense_expm/expm_multiply_sparse are numerical-only."
+)
+
+
+def is_cfqm_dynamics_method(method: str) -> bool:
+    return str(method).strip().lower() in {"cfqm4", "cfqm6"}
+
+
+def time_dynamics_circuitization_reason(
+    *,
+    method: str,
+    cfqm_stage_exp: str,
+) -> str | None:
+    if not is_cfqm_dynamics_method(str(method)):
+        return None
+    if str(cfqm_stage_exp).strip().lower() == "pauli_suzuki2":
+        return None
+    return str(CFQM_CIRCUITIZATION_REASON)
+
+
+def warn_time_dynamics_circuit_semantics(
+    *,
+    method: str,
+    cfqm_stage_exp: str,
+    drive_time_sampling: str,
+) -> None:
+    if not is_cfqm_dynamics_method(str(method)):
+        return
+    if str(drive_time_sampling).strip().lower() != "midpoint":
+        warnings.warn(
+            CFQM_FIXED_NODE_WARNING,
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if str(cfqm_stage_exp).strip().lower() == "pauli_suzuki2":
+        warnings.warn(
+            CFQM_INNER_ORDER_WARNING,
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def pauli_poly_to_sparse_pauli_op(poly: Any, tol: float = 1e-12) -> Any:
@@ -175,6 +224,30 @@ def adapt_ops_to_circuit(
     return qc
 
 
+def ops_to_circuit(
+    ops: Sequence[Any],
+    theta: np.ndarray,
+    *,
+    num_qubits: int,
+    coefficient_tolerance: float = 1e-12,
+) -> Any:
+    QuantumCircuit, PauliEvolutionGate, _, SuzukiTrotter = _require_qiskit()
+    theta_vec = np.asarray(theta, dtype=float).reshape(-1)
+    if int(theta_vec.size) != int(len(ops)):
+        raise ValueError(
+            f"theta length {int(theta_vec.size)} does not match op count {int(len(ops))}"
+        )
+    qc = QuantumCircuit(int(num_qubits))
+    synthesis = SuzukiTrotter(order=2, reps=1, preserve_order=True)
+    for op, ang in zip(ops, theta_vec):
+        qop = pauli_poly_to_sparse_pauli_op(op.polynomial, tol=float(coefficient_tolerance))
+        coeffs = np.asarray(qop.coeffs, dtype=complex).reshape(-1)
+        if coeffs.size == 0 or np.max(np.abs(coeffs)) <= float(coefficient_tolerance):
+            continue
+        qc.append(PauliEvolutionGate(qop, time=float(ang), synthesis=synthesis), list(range(int(num_qubits))))
+    return qc
+
+
 def _time_sample(step_idx: int, dt: float, sampling: str) -> float:
     mode = str(sampling).strip().lower()
     if mode == "midpoint":
@@ -269,7 +342,14 @@ def build_cfqm_time_dependent_circuit(
     trotter_steps: int,
     drive_t0: float,
     coeff_drop_abs_tol: float,
+    cfqm_stage_exp: str,
 ) -> Any:
+    reason = time_dynamics_circuitization_reason(
+        method=str(method),
+        cfqm_stage_exp=str(cfqm_stage_exp),
+    )
+    if reason is not None:
+        raise ValueError(str(reason))
     _, PauliEvolutionGate, _, SuzukiTrotter = _require_qiskit()
     qc = initial_circuit.copy()
     if abs(float(time_value)) <= 1e-15:
@@ -290,7 +370,8 @@ def build_cfqm_time_dependent_circuit(
             t_node = float(t_abs) + float(c_j) * float(dt)
             raw = {} if drive_provider_exyz is None else dict(drive_provider_exyz(float(t_node)))
             drive_maps_exyz.append({str(k): complex(v) for k, v in raw.items()})
-        for k, a_row in enumerate(a_rows):
+        for k in range(len(a_rows) - 1, -1, -1):
+            a_row = a_rows[k]
             stage_map = _build_cfqm_stage_map_exyz(
                 ordered_labels_exyz=list(ordered_labels_exyz),
                 static_coeff_map_exyz=dict(static_coeff_map_exyz),
@@ -306,6 +387,54 @@ def build_cfqm_time_dependent_circuit(
             )
             qc.append(PauliEvolutionGate(qop, time=float(dt), synthesis=synthesis), qubits)
     return qc
+
+
+def build_time_dynamics_circuit(
+    *,
+    method: str,
+    initial_circuit: Any,
+    ordered_labels_exyz: list[str],
+    static_coeff_map_exyz: dict[str, complex],
+    drive_provider_exyz: Any | None,
+    time_value: float,
+    trotter_steps: int,
+    drive_t0: float,
+    drive_time_sampling: str,
+    cfqm_stage_exp: str,
+    cfqm_coeff_drop_abs_tol: float,
+) -> Any:
+    method_norm = str(method).strip().lower()
+    reason = time_dynamics_circuitization_reason(
+        method=str(method_norm),
+        cfqm_stage_exp=str(cfqm_stage_exp),
+    )
+    if reason is not None:
+        raise ValueError(str(reason))
+    if method_norm == "suzuki2":
+        return build_suzuki2_time_dependent_circuit(
+            initial_circuit=initial_circuit,
+            ordered_labels_exyz=ordered_labels_exyz,
+            static_coeff_map_exyz=static_coeff_map_exyz,
+            drive_provider_exyz=drive_provider_exyz,
+            time_value=time_value,
+            trotter_steps=trotter_steps,
+            drive_t0=drive_t0,
+            drive_time_sampling=drive_time_sampling,
+        )
+    if is_cfqm_dynamics_method(method_norm):
+        return build_cfqm_time_dependent_circuit(
+            method=str(method_norm),
+            initial_circuit=initial_circuit,
+            ordered_labels_exyz=ordered_labels_exyz,
+            static_coeff_map_exyz=static_coeff_map_exyz,
+            drive_provider_exyz=drive_provider_exyz,
+            time_value=time_value,
+            trotter_steps=trotter_steps,
+            drive_t0=drive_t0,
+            coeff_drop_abs_tol=cfqm_coeff_drop_abs_tol,
+            cfqm_stage_exp=str(cfqm_stage_exp),
+        )
+    raise ValueError(f"Unsupported dynamics method {method!r}.")
 
 
 def _pauli_weight(label_exyz: str) -> int:
@@ -360,6 +489,7 @@ def compute_time_dynamics_proxy_cost(
     drive_provider_exyz: Any | None,
     active_coeff_tol: float = 1e-12,
     coeff_drop_abs_tol: float = 0.0,
+    cfqm_stage_exp: str,
 ) -> dict[str, int]:
     method_norm = str(method).strip().lower()
     if int(trotter_steps) < 1:
@@ -386,6 +516,12 @@ def compute_time_dynamics_proxy_cost(
             total_cx += int(sweep["cx_proxy"])
             total_sq += int(sweep["sq_proxy"])
     else:
+        reason = time_dynamics_circuitization_reason(
+            method=str(method_norm),
+            cfqm_stage_exp=str(cfqm_stage_exp),
+        )
+        if reason is not None:
+            raise ValueError(str(reason))
         scheme = get_cfqm_scheme(str(method_norm))
         c_nodes = [float(x) for x in scheme["c"]]
         a_rows = [[float(v) for v in row] for row in scheme["a"]]
@@ -414,8 +550,140 @@ def compute_time_dynamics_proxy_cost(
 
     return {
         "term_exp_count_total": int(total_term),
+        "pauli_rot_count_total": int(total_term),
         "cx_proxy_total": int(total_cx),
         "sq_proxy_total": int(total_sq),
+        "depth_proxy_total": int(total_term),
+    }
+
+
+def _op_count_bundle(circuit: Any) -> dict[str, Any]:
+    count_ops = {str(key): int(val) for key, val in dict(circuit.count_ops()).items()}
+    count_1q = 0
+    count_2q = 0
+    count_measure = 0
+    for inst in circuit.data:
+        name = str(getattr(inst.operation, "name", ""))
+        if name == "delay":
+            continue
+        nq = int(len(inst.qubits))
+        if name == "measure":
+            count_measure += 1
+            continue
+        if nq == 1:
+            count_1q += 1
+        elif nq == 2:
+            count_2q += 1
+    return {
+        "num_qubits": int(circuit.num_qubits),
+        "depth": int(circuit.depth()),
+        "size": int(circuit.size()),
+        "num_parameters": int(len(getattr(circuit, "parameters", []))),
+        "count_ops": count_ops,
+        "count_1q": int(count_1q),
+        "count_2q": int(count_2q),
+        "count_measure": int(count_measure),
+        "cx_count": int(count_ops.get("cx", 0)),
+    }
+
+
+def _resolve_fake_backend_instance(backend_name: str) -> tuple[Any, str]:
+    errors: list[str] = []
+    candidates = (
+        "qiskit_ibm_runtime.fake_provider",
+        "qiskit.providers.fake_provider",
+    )
+    for module_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:  # pragma: no cover
+            errors.append(f"{module_name}: {type(exc).__name__}: {exc}")
+            continue
+        backend_cls = getattr(module, str(backend_name), None)
+        if backend_cls is None:
+            continue
+        try:
+            return backend_cls(), str(module_name)
+        except Exception as exc:  # pragma: no cover
+            errors.append(f"{module_name}.{backend_name}: {type(exc).__name__}: {exc}")
+    if str(backend_name) == "GenericBackendV2":
+        try:
+            module = importlib.import_module("qiskit.providers.fake_provider")
+            return getattr(module, "GenericBackendV2"), "qiskit.providers.fake_provider"
+        except Exception as exc:  # pragma: no cover
+            errors.append(f"GenericBackendV2: {type(exc).__name__}: {exc}")
+    detail = "; ".join(errors) if errors else "backend class not found"
+    raise ValueError(f"Unable to resolve fake backend {backend_name!r}. {detail}")
+
+
+def transpile_circuit_metrics(
+    circuit: Any,
+    *,
+    backend_name: str,
+    use_fake_backend: bool,
+    optimization_level: int = 3,
+    seed_transpiler: int = 7,
+    basis_gates: Sequence[str] = ("rz", "sx", "x", "cx"),
+) -> dict[str, Any]:
+    try:
+        from qiskit import transpile
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError(
+            "Qiskit transpile metrics require qiskit transpiler support. "
+            f"Original error: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    backend_name_str = str(backend_name).strip()
+    if backend_name_str == "":
+        raise ValueError("backend_name must be non-empty for transpile metrics.")
+
+    backend = None
+    backend_source = None
+    coupling_map = None
+    backend_qubits = None
+    if bool(use_fake_backend):
+        backend, backend_source = _resolve_fake_backend_instance(backend_name_str)
+        if callable(backend) and backend_name_str == "GenericBackendV2":
+            backend = backend(
+                num_qubits=int(circuit.num_qubits),
+                basis_gates=[str(x) for x in basis_gates],
+                seed=int(seed_transpiler),
+            )
+        backend_qubits = getattr(backend, "num_qubits", None)
+        if backend_qubits is not None and int(circuit.num_qubits) > int(backend_qubits):
+            raise ValueError(
+                f"Backend {backend_name_str} has {int(backend_qubits)} qubits, "
+                f"but the circuit needs {int(circuit.num_qubits)}."
+            )
+        coupling_map = getattr(backend, "coupling_map", None)
+    else:
+        raise ValueError(
+            "Only fake-backend local transpile metrics are supported; "
+            "set use_fake_backend=True."
+        )
+
+    expanded = expand_pauli_evolution_once(circuit)
+    transpiled = transpile(
+        expanded,
+        basis_gates=[str(x) for x in basis_gates],
+        coupling_map=coupling_map,
+        optimization_level=int(optimization_level),
+        seed_transpiler=int(seed_transpiler),
+    )
+    target_info = {
+        "backend_name": str(backend_name_str),
+        "backend_source": str(backend_source),
+        "backend_num_qubits": (None if backend_qubits is None else int(backend_qubits)),
+        "use_fake_backend": bool(use_fake_backend),
+        "basis_gates": [str(x) for x in basis_gates],
+        "optimization_level": int(optimization_level),
+        "seed_transpiler": int(seed_transpiler),
+    }
+    return {
+        "target": target_info,
+        "raw": _op_count_bundle(circuit),
+        "expanded_once": _op_count_bundle(expanded),
+        "transpiled": _op_count_bundle(transpiled),
     }
 
 
@@ -527,11 +795,17 @@ __all__ = [
     "ansatz_to_circuit",
     "append_reference_state",
     "build_cfqm_time_dependent_circuit",
+    "build_time_dynamics_circuit",
     "build_suzuki2_time_dependent_circuit",
     "compute_sweep_proxy_cost",
     "compute_time_dynamics_proxy_cost",
     "expand_pauli_evolution_once",
+    "is_cfqm_dynamics_method",
+    "ops_to_circuit",
     "pauli_poly_to_sparse_pauli_op",
     "render_circuit_page",
     "render_circuit_summary_page",
+    "time_dynamics_circuitization_reason",
+    "transpile_circuit_metrics",
+    "warn_time_dynamics_circuit_semantics",
 ]

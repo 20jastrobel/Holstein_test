@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,11 +39,14 @@ from docs.reports.pdf_utils import (
 from docs.reports.qiskit_circuit_report import (
     adapt_ops_to_circuit,
     ansatz_to_circuit,
-    build_cfqm_time_dependent_circuit,
-    build_suzuki2_time_dependent_circuit,
+    build_time_dynamics_circuit,
     compute_time_dynamics_proxy_cost,
+    is_cfqm_dynamics_method,
     render_circuit_page,
     render_circuit_summary_page,
+    time_dynamics_circuitization_reason,
+    transpile_circuit_metrics,
+    warn_time_dynamics_circuit_semantics,
 )
 from pipelines.hardcoded import adapt_pipeline as adapt_mod
 from pipelines.hardcoded import hh_vqe_from_adapt_family as replay_mod
@@ -108,6 +112,14 @@ class WarmStartConfig:
     spsa_avg_last: int
     spsa_eval_repeats: int
     spsa_eval_agg: str
+
+
+@dataclass(frozen=True)
+class SeedRefineConfig:
+    family: str | None
+    reps: int
+    maxiter: int
+    optimizer: str
 
 
 @dataclass(frozen=True)
@@ -226,6 +238,20 @@ class DynamicsConfig:
 
 
 @dataclass(frozen=True)
+class FixedFinalStateConfig:
+    json_path: Path
+    strict_match: bool
+
+
+@dataclass(frozen=True)
+class CircuitMetricConfig:
+    backend_name: str | None
+    use_fake_backend: bool
+    optimization_level: int
+    seed_transpiler: int
+
+
+@dataclass(frozen=True)
 class WarmCheckpointConfig:
     stop_energy: float | None
     stop_delta_abs: float | None
@@ -261,9 +287,12 @@ class GateConfig:
 class StagedHHConfig:
     physics: PhysicsConfig
     warm_start: WarmStartConfig
+    seed_refine: SeedRefineConfig
     adapt: AdaptConfig
     replay: ReplayConfig
     dynamics: DynamicsConfig
+    fixed_final_state: FixedFinalStateConfig | None
+    circuit_metrics: CircuitMetricConfig
     warm_checkpoint: WarmCheckpointConfig
     artifacts: ArtifactConfig
     gates: GateConfig
@@ -286,6 +315,9 @@ class StageExecutionResult:
     warm_payload: dict[str, Any]
     adapt_payload: dict[str, Any]
     replay_payload: dict[str, Any]
+    psi_seed_refine: np.ndarray | None = None
+    seed_refine_payload: dict[str, Any] | None = None
+    fixed_final_state_import: dict[str, Any] | None = None
     warm_circuit_context: dict[str, Any] | None = None
     adapt_circuit_context: dict[str, Any] | None = None
     replay_circuit_context: dict[str, Any] | None = None
@@ -345,6 +377,96 @@ def _handoff_bundle_cfg(cfg: StagedHHConfig) -> HandoffStateBundleConfig:
         sector_n_up=int(cfg.physics.sector_n_up),
         sector_n_dn=int(cfg.physics.sector_n_dn),
     )
+
+
+def _seed_refine_state_json_path(cfg: StagedHHConfig) -> Path:
+    return Path(cfg.warm_checkpoint.state_export_dir) / (
+        f"{cfg.warm_checkpoint.state_export_prefix}_seed_refine_state.json"
+    )
+
+
+def _build_seed_refine_run_cfg(cfg: StagedHHConfig) -> replay_mod.RunConfig:
+    return replay_mod.RunConfig(
+        adapt_input_json=Path(cfg.artifacts.warm_cutover_json),
+        output_json=Path(cfg.artifacts.output_json).with_name(f"{cfg.artifacts.tag}_seed_refine.json"),
+        output_csv=Path(cfg.artifacts.replay_output_csv).with_name(f"{cfg.artifacts.tag}_seed_refine.csv"),
+        output_md=Path(cfg.artifacts.replay_output_md).with_name(f"{cfg.artifacts.tag}_seed_refine.md"),
+        output_log=Path(cfg.artifacts.replay_output_log).with_name(f"{cfg.artifacts.tag}_seed_refine.log"),
+        tag=f"{cfg.artifacts.tag}_seed_refine",
+        generator_family=str(cfg.seed_refine.family or ""),
+        fallback_family="full_meta",
+        legacy_paop_key=str(cfg.replay.legacy_paop_key),
+        replay_seed_policy="auto",
+        replay_continuation_mode=None,
+        L=int(cfg.physics.L),
+        t=float(cfg.physics.t),
+        u=float(cfg.physics.u),
+        dv=float(cfg.physics.dv),
+        omega0=float(cfg.physics.omega0),
+        g_ep=float(cfg.physics.g_ep),
+        n_ph_max=int(cfg.physics.n_ph_max),
+        boson_encoding=str(cfg.physics.boson_encoding),
+        ordering=str(cfg.physics.ordering),
+        boundary=str(cfg.physics.boundary),
+        sector_n_up=int(cfg.physics.sector_n_up),
+        sector_n_dn=int(cfg.physics.sector_n_dn),
+        reps=int(cfg.seed_refine.reps),
+        restarts=int(cfg.replay.restarts),
+        maxiter=int(cfg.seed_refine.maxiter),
+        method=str(cfg.seed_refine.optimizer),
+        seed=int(cfg.replay.seed),
+        energy_backend=str(cfg.replay.energy_backend),
+        progress_every_s=float(cfg.replay.progress_every_s),
+        wallclock_cap_s=int(cfg.replay.wallclock_cap_s),
+        paop_r=int(cfg.replay.paop_r),
+        paop_split_paulis=bool(cfg.replay.paop_split_paulis),
+        paop_prune_eps=float(cfg.replay.paop_prune_eps),
+        paop_normalization=str(cfg.replay.paop_normalization),
+        spsa_a=float(cfg.replay.spsa_a),
+        spsa_c=float(cfg.replay.spsa_c),
+        spsa_alpha=float(cfg.replay.spsa_alpha),
+        spsa_gamma=float(cfg.replay.spsa_gamma),
+        spsa_A=float(cfg.replay.spsa_A),
+        spsa_avg_last=int(cfg.replay.spsa_avg_last),
+        spsa_eval_repeats=int(cfg.replay.spsa_eval_repeats),
+        spsa_eval_agg=str(cfg.replay.spsa_eval_agg),
+        replay_freeze_fraction=float(cfg.replay.replay_freeze_fraction),
+        replay_unfreeze_fraction=float(cfg.replay.replay_unfreeze_fraction),
+        replay_full_fraction=float(cfg.replay.replay_full_fraction),
+        replay_qn_spsa_refresh_every=int(cfg.replay.replay_qn_spsa_refresh_every),
+        replay_qn_spsa_refresh_mode=str(cfg.replay.replay_qn_spsa_refresh_mode),
+        phase3_symmetry_mitigation_mode=str(cfg.replay.phase3_symmetry_mitigation_mode),
+    )
+
+
+def _build_seed_provenance(
+    cfg: StagedHHConfig,
+    seed_refine_payload: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if cfg.seed_refine.family is None:
+        return None
+    pool_meta = seed_refine_payload.get("pool", {}) if isinstance(seed_refine_payload, Mapping) else {}
+    motif_families_raw: list[str] = []
+    if isinstance(pool_meta, Mapping):
+        raw_many = pool_meta.get("motif_families", None)
+        if isinstance(raw_many, Sequence) and not isinstance(raw_many, (str, bytes)):
+            motif_families_raw.extend(str(x) for x in raw_many if str(x).strip())
+        raw_one = pool_meta.get("motif_family", None)
+        if raw_one is not None:
+            motif_families_raw.append(str(raw_one))
+    motif_families = sorted({str(x) for x in motif_families_raw if str(x).strip()})
+    family_kind = (
+        str(pool_meta.get("family_kind"))
+        if isinstance(pool_meta, Mapping) and pool_meta.get("family_kind") is not None
+        else "explicit_family"
+    )
+    return {
+        "warm_ansatz": str(cfg.warm_start.ansatz_name),
+        "refine_family": str(cfg.seed_refine.family),
+        "refine_family_kind": str(family_kind),
+        "refine_paop_motif_families": list(motif_families),
+        "refine_reps": int(cfg.seed_refine.reps),
+    }
 
 
 def _warm_stop_required(cfg: StagedHHConfig) -> bool:
@@ -470,6 +592,146 @@ def _resolve_checkpoint_energy(payload: Mapping[str, Any]) -> float | None:
         if np.isfinite(value):
             return float(value)
     return None
+
+
+def _build_fixed_final_state_import(
+    cfg: StagedHHConfig,
+    *,
+    source_json: Path,
+    raw_payload: Mapping[str, Any],
+    nq_total: int,
+) -> tuple[np.ndarray, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    psi_final, import_meta = adapt_mod._load_adapt_initial_state(Path(source_json), int(nq_total))
+    exact_energy = adapt_mod._resolve_exact_energy_from_payload(raw_payload)
+    if exact_energy is None:
+        raise ValueError(
+            f"Fixed final-state JSON {source_json} is missing an exact-energy field needed for dynamics baselines."
+        )
+    imported_energy = _resolve_checkpoint_energy(raw_payload)
+    if imported_energy is None:
+        raise ValueError(
+            f"Fixed final-state JSON {source_json} is missing an adapt/vqe energy for provenance."
+        )
+    mismatches = adapt_mod._validate_adapt_ref_metadata_for_exact_reuse(
+        adapt_settings=import_meta.get("settings", {}),
+        args=_expected_adapt_ref_args(cfg),
+        is_hh=True,
+    )
+    if mismatches and bool(cfg.fixed_final_state and cfg.fixed_final_state.strict_match):
+        raise ValueError(
+            "fixed final-state settings mismatch: "
+            + "; ".join(str(item) for item in mismatches)
+        )
+
+    delta_abs = float(abs(float(imported_energy) - float(exact_energy)))
+    fixed_import = {
+        "source_json": str(source_json),
+        "strict_match": bool(cfg.fixed_final_state and cfg.fixed_final_state.strict_match),
+        "mismatches": [str(item) for item in mismatches],
+        "initial_state_source": import_meta.get("initial_state_source"),
+        "energy": float(imported_energy),
+        "exact_energy": float(exact_energy),
+        "delta_abs": float(delta_abs),
+        "relative_error_abs": float(_relative_error_abs(float(imported_energy), float(exact_energy))),
+    }
+    warm_payload = {
+        "ansatz": str(cfg.warm_start.ansatz_name),
+        "energy": float(imported_energy),
+        "exact_filtered_energy": float(exact_energy),
+        "optimizer_method": str(cfg.warm_start.method),
+        "message": "skipped_fixed_final_state_json",
+        "checkpoint_json_latest": str(source_json),
+        "checkpoint_json_used": str(source_json),
+        "cutoff_triggered": False,
+        "cutoff_reason": None,
+        "resumed_from_checkpoint": False,
+        "skipped": True,
+        "skip_reason": "fixed_final_state_json",
+    }
+    adapt_payload = {
+        "energy": float(imported_energy),
+        "exact_gs_energy": float(exact_energy),
+        "ansatz_depth": 0,
+        "pool_type": str(cfg.adapt.pool or cfg.adapt.continuation_mode),
+        "continuation_mode": str(cfg.adapt.continuation_mode),
+        "stop_reason": "skipped_fixed_final_state_json",
+        "adapt_ref_json": str(source_json),
+        "initial_state_source": "fixed_final_state_json",
+        "skipped": True,
+        "skip_reason": "fixed_final_state_json",
+    }
+    replay_payload = {
+        "generator_family": {
+            "requested": "fixed_final_state_json",
+            "resolved": "fixed_final_state_json",
+            "resolution_source": "fixed_final_state_json",
+        },
+        "seed_baseline": {"theta_policy": "fixed_final_state_json"},
+        "exact": {"E_exact_sector": float(exact_energy)},
+        "vqe": {
+            "energy": float(imported_energy),
+            "abs_delta_e": float(delta_abs),
+            "relative_error_abs": float(_relative_error_abs(float(imported_energy), float(exact_energy))),
+            "stop_reason": "skipped_fixed_final_state_json",
+        },
+        "replay_contract": {"continuation_mode": str(cfg.replay.continuation_mode)},
+        "best_state": {
+            "amplitudes_qn_to_q0": hc_pipeline._state_to_amplitudes_qn_to_q0(
+                np.asarray(psi_final, dtype=complex).reshape(-1)
+            )
+        },
+        "skipped": True,
+        "skip_reason": "fixed_final_state_json",
+        "source_json": str(source_json),
+    }
+    return (
+        np.asarray(psi_final, dtype=complex).reshape(-1),
+        fixed_import,
+        warm_payload,
+        adapt_payload,
+        replay_payload,
+    )
+
+
+def _write_fixed_final_state_sidecars(
+    cfg: StagedHHConfig,
+    *,
+    psi_final: np.ndarray,
+    fixed_import: Mapping[str, Any],
+    replay_payload: Mapping[str, Any],
+) -> None:
+    cfg.artifacts.handoff_json.parent.mkdir(parents=True, exist_ok=True)
+    cfg.artifacts.replay_output_json.parent.mkdir(parents=True, exist_ok=True)
+    write_handoff_state_bundle(
+        path=cfg.artifacts.handoff_json,
+        psi_state=np.asarray(psi_final, dtype=complex).reshape(-1),
+        cfg=_handoff_bundle_cfg(cfg),
+        source="fixed_final_state_json",
+        exact_energy=float(fixed_import.get("exact_energy", float("nan"))),
+        energy=float(fixed_import.get("energy", float("nan"))),
+        delta_E_abs=float(fixed_import.get("delta_abs", float("nan"))),
+        relative_error_abs=float(fixed_import.get("relative_error_abs", float("nan"))),
+        meta={
+            "pipeline": "hh_staged_noiseless",
+            "workflow_tag": str(cfg.artifacts.tag),
+            "stage_chain": ["hf_reference", "fixed_final_state_import", "final_only_noiseless_dynamics"],
+            "fixed_final_state_json": str(fixed_import.get("source_json", "")),
+        },
+        handoff_state_kind="prepared_state",
+    )
+    _write_json(
+        cfg.artifacts.replay_output_json,
+        {
+            "generated_utc": _now_utc(),
+            "pipeline": "hh_staged_noiseless",
+            "mode": "fixed_final_state_import",
+            "source_json": str(fixed_import.get("source_json", "")),
+            "fixed_final_state_import": dict(fixed_import),
+            "exact": dict(replay_payload.get("exact", {})),
+            "vqe": dict(replay_payload.get("vqe", {})),
+            "best_state": dict(replay_payload.get("best_state", {})),
+        },
+    )
 
 
 def _run_warm_start_stage(
@@ -994,6 +1256,10 @@ def _default_output_tag(
     noiseless_methods: str,
     adapt_continuation_mode: str,
     warm_ansatz: str,
+    seed_refine_family: str | None,
+    fixed_final_state_json: str | None,
+    circuit_backend_name: str | None,
+    circuit_use_fake_backend: bool,
 ) -> str:
     drive_label = "drive" if bool(drive_enabled) else "static"
     spec = {
@@ -1018,12 +1284,17 @@ def _default_output_tag(
         "noiseless_methods": str(noiseless_methods),
         "adapt_continuation_mode": str(adapt_continuation_mode),
         "warm_ansatz": str(warm_ansatz),
+        "seed_refine_family": seed_refine_family,
+        "fixed_final_state_json": fixed_final_state_json,
+        "circuit_backend_name": circuit_backend_name,
+        "circuit_use_fake_backend": bool(circuit_use_fake_backend),
     }
     digest = hashlib.sha1(json.dumps(spec, sort_keys=True).encode("utf-8")).hexdigest()[:10]
+    refine_label = "" if seed_refine_family in {None, ""} else f"_refine{str(seed_refine_family)}"
     return (
         f"hh_staged_L{int(L)}_{drive_label}_"
         f"t{float(t):g}_U{float(u):g}_dv{float(dv):g}_w{float(omega0):g}_g{float(g_ep):g}_"
-        f"nph{int(n_ph_max)}_warm{str(warm_ansatz)}_{digest}"
+        f"nph{int(n_ph_max)}_warm{str(warm_ansatz)}{refine_label}_{digest}"
     )
 
 
@@ -1095,6 +1366,13 @@ def _enforce_not_weaker(
         "final_maxiter": int(cfg_values["final_maxiter"]) >= int(baseline["final_maxiter"]),
         "trotter_steps": int(cfg_values["trotter_steps"]) >= int(baseline["trotter_steps"]),
     }
+    if bool(cfg_values.get("seed_refine_enabled", False)):
+        checks.update(
+            {
+                "seed_refine_reps": int(cfg_values["seed_refine_reps"]) >= int(baseline["final_reps"]),
+                "seed_refine_maxiter": int(cfg_values["seed_refine_maxiter"]) >= int(baseline["final_maxiter"]),
+            }
+        )
     failed = [key for key, ok in checks.items() if not bool(ok)]
     if failed:
         raise ValueError(
@@ -1155,6 +1433,22 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
             noiseless_methods=str(getattr(args, "noiseless_methods")),
             adapt_continuation_mode=str(getattr(args, "adapt_continuation_mode")),
             warm_ansatz=str(warm_ansatz),
+            seed_refine_family=(
+                None
+                if getattr(args, "seed_refine_family", None) is None
+                else str(getattr(args, "seed_refine_family"))
+            ),
+            fixed_final_state_json=(
+                None
+                if getattr(args, "fixed_final_state_json", None) is None
+                else str(Path(getattr(args, "fixed_final_state_json")))
+            ),
+            circuit_backend_name=(
+                None
+                if getattr(args, "circuit_backend_name", None) in {None, ""}
+                else str(getattr(args, "circuit_backend_name"))
+            ),
+            circuit_use_fake_backend=bool(getattr(args, "circuit_use_fake_backend", False)),
         ),
         provenance=provenance,
         default_source="workflow.tag.default",
@@ -1291,6 +1585,21 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
             provenance=provenance,
             default_source="workflow.final_maxiter := warm_maxiter(L)",
         ),
+        "seed_refine_reps": _resolve_with_default(
+            name="seed_refine_reps",
+            raw=getattr(args, "seed_refine_reps", None),
+            default=defaults["final_reps"],
+            provenance=provenance,
+            default_source="workflow.seed_refine_reps := final_reps(L)",
+        ),
+        "seed_refine_maxiter": _resolve_with_default(
+            name="seed_refine_maxiter",
+            raw=getattr(args, "seed_refine_maxiter", None),
+            default=defaults["final_maxiter"],
+            provenance=provenance,
+            default_source="workflow.seed_refine_maxiter := final_maxiter(L)",
+        ),
+        "seed_refine_enabled": bool(getattr(args, "seed_refine_family", None) not in {None, "", "none"}),
         "t_final": _resolve_with_default(
             name="t_final",
             raw=getattr(args, "t_final", None),
@@ -1357,6 +1666,24 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         spsa_avg_last=int(getattr(args, "vqe_spsa_avg_last")),
         spsa_eval_repeats=int(getattr(args, "vqe_spsa_eval_repeats")),
         spsa_eval_agg=str(getattr(args, "vqe_spsa_eval_agg")),
+    )
+    seed_refine = SeedRefineConfig(
+        family=(
+            None
+            if getattr(args, "seed_refine_family", None) in {None, "", "none"}
+            else str(getattr(args, "seed_refine_family"))
+        ),
+        reps=int(cfg_values["seed_refine_reps"]),
+        maxiter=int(cfg_values["seed_refine_maxiter"]),
+        optimizer=str(
+            _resolve_with_default(
+                name="seed_refine_optimizer",
+                raw=getattr(args, "seed_refine_optimizer", None),
+                default="SPSA",
+                provenance=provenance,
+                default_source="workflow.seed_refine_optimizer.default=SPSA",
+            )
+        ),
     )
     adapt_mode = str(getattr(args, "adapt_continuation_mode"))
     adapt = AdaptConfig(
@@ -1495,6 +1822,26 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         drive_time_sampling=str(getattr(args, "drive_time_sampling")),
         drive_t0=float(getattr(args, "drive_t0")),
     )
+    fixed_final_state = None
+    fixed_final_state_json = getattr(args, "fixed_final_state_json", None)
+    if fixed_final_state_json is not None:
+        fixed_final_state = FixedFinalStateConfig(
+            json_path=Path(fixed_final_state_json),
+            strict_match=bool(getattr(args, "fixed_final_state_strict_match", True)),
+        )
+    circuit_backend_name_raw = getattr(args, "circuit_backend_name", None)
+    circuit_backend_name = (
+        None if circuit_backend_name_raw in {None, ""} else str(circuit_backend_name_raw)
+    )
+    circuit_use_fake_backend = bool(getattr(args, "circuit_use_fake_backend", False))
+    if circuit_use_fake_backend and circuit_backend_name is None:
+        raise ValueError("--circuit-use-fake-backend requires --circuit-backend-name.")
+    circuit_metrics = CircuitMetricConfig(
+        backend_name=circuit_backend_name,
+        use_fake_backend=circuit_use_fake_backend,
+        optimization_level=int(getattr(args, "circuit_transpile_optimization_level", 3)),
+        seed_transpiler=int(getattr(args, "circuit_seed_transpiler", 7)),
+    )
     warm_checkpoint = WarmCheckpointConfig(
         stop_energy=(
             None
@@ -1552,9 +1899,12 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
     return StagedHHConfig(
         physics=physics,
         warm_start=warm_start,
+        seed_refine=seed_refine,
         adapt=adapt,
         replay=replay,
         dynamics=dynamics,
+        fixed_final_state=fixed_final_state,
+        circuit_metrics=circuit_metrics,
         warm_checkpoint=warm_checkpoint,
         artifacts=artifacts,
         gates=gates,
@@ -1657,6 +2007,26 @@ def _handoff_continuation_meta(adapt_payload: Mapping[str, Any]) -> dict[str, An
     }
 
 
+def _infer_replay_family_from_operator_labels(labels: Any) -> tuple[str | None, str | None]:
+    if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)):
+        return None, None
+    families: set[str] = set()
+    for raw_label in labels:
+        label = str(raw_label).strip()
+        family: str | None = None
+        if label.startswith("hh_termwise_"):
+            family = "full_meta"
+        elif ":" in label:
+            family = _canonical_replay_family(label.split(":", 1)[0])
+        if family is not None:
+            families.add(str(family))
+    if len(families) == 1:
+        return next(iter(families)), "adapt_payload.operators"
+    if len(families) > 1:
+        return None, "adapt_payload.operators(mixed)"
+    return None, None
+
+
 def _infer_handoff_adapt_pool(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
     continuation = adapt_payload.get("continuation", {})
     if not isinstance(continuation, Mapping):
@@ -1678,6 +2048,10 @@ def _infer_handoff_adapt_pool(cfg: StagedHHConfig, adapt_payload: Mapping[str, A
             # Mixed canonical families in selected generators are treated as provenance ambiguity;
             # force fallback.
             return None, "continuation.selected_generator_metadata.family_id(mixed)"
+
+    labels_family, labels_source = _infer_replay_family_from_operator_labels(adapt_payload.get("operators", []))
+    if labels_source is not None:
+        return labels_family, labels_source
 
     record_sets: list[Any] = []
     motif_library = continuation.get("motif_library", {})
@@ -1779,11 +2153,196 @@ def _build_replay_contract(
         "contract_seed_hint": "built-in_staged_writer",
     }
 
-def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], psi_adapt: np.ndarray) -> None:
+
+def _run_seed_refine_stage(
+    cfg: StagedHHConfig,
+    *,
+    h_poly: Any,
+    psi_ref: np.ndarray,
+    exact_filtered_energy: float,
+) -> tuple[dict[str, Any], np.ndarray, Path]:
+    if cfg.seed_refine.family is None:
+        raise ValueError("seed refine is disabled for this staged HH config.")
+
+    stage_json = _seed_refine_state_json_path(cfg)
+    run_cfg = _build_seed_refine_run_cfg(cfg)
+    _append_workflow_log(
+        cfg,
+        "seed_refine_stage_start",
+        family=str(cfg.seed_refine.family),
+        reps=int(cfg.seed_refine.reps),
+        maxiter=int(cfg.seed_refine.maxiter),
+        optimizer=str(cfg.seed_refine.optimizer),
+        state_json=str(stage_json),
+    )
+
+    family_ctx = replay_mod.build_family_ansatz_context(
+        run_cfg,
+        psi_ref=np.asarray(psi_ref, dtype=complex).reshape(-1),
+        h_poly=h_poly,
+        family=str(cfg.seed_refine.family),
+        e_exact=float(exact_filtered_energy),
+    )
+    ansatz = family_ctx["ansatz"]
+    seed_theta = np.asarray(family_ctx["seed_theta"], dtype=float)
+    t0 = time.perf_counter()
+    vqe_res = replay_mod.vqe_minimize(
+        h_poly,
+        ansatz,
+        np.asarray(psi_ref, dtype=complex).reshape(-1),
+        restarts=int(run_cfg.restarts),
+        seed=int(run_cfg.seed),
+        initial_point=seed_theta,
+        use_initial_point_first_restart=True,
+        method=str(run_cfg.method),
+        maxiter=int(run_cfg.maxiter),
+        progress_every_s=float(run_cfg.progress_every_s),
+        progress_label="hh_staged_seed_refine",
+        track_history=False,
+        emit_theta_in_progress=False,
+        return_best_on_keyboard_interrupt=True,
+        spsa_a=float(run_cfg.spsa_a),
+        spsa_c=float(run_cfg.spsa_c),
+        spsa_alpha=float(run_cfg.spsa_alpha),
+        spsa_gamma=float(run_cfg.spsa_gamma),
+        spsa_A=float(run_cfg.spsa_A),
+        spsa_avg_last=int(run_cfg.spsa_avg_last),
+        spsa_eval_repeats=int(run_cfg.spsa_eval_repeats),
+        spsa_eval_agg=str(run_cfg.spsa_eval_agg),
+        energy_backend=str(run_cfg.energy_backend),
+    )
+    runtime_s = float(time.perf_counter() - t0)
+    theta_best = np.asarray(vqe_res.theta, dtype=float)
+    e_best = float(vqe_res.energy)
+    vqe_success = bool(vqe_res.success)
+    vqe_message = str(vqe_res.message)
+    if not bool(vqe_success):
+        _append_workflow_log(
+            cfg,
+            "seed_refine_stage_failed",
+            family=str(cfg.seed_refine.family),
+            message=str(vqe_message),
+            runtime_s=float(runtime_s),
+        )
+        raise RuntimeError(
+            f"Seed refine VQE failed for family '{cfg.seed_refine.family}': {vqe_message}"
+        )
+
+    psi_best = np.asarray(ansatz.prepare_state(theta_best, np.asarray(psi_ref, dtype=complex).reshape(-1)), dtype=complex).reshape(-1)
+    psi_best = hc_pipeline._normalize_state(psi_best)
+    delta_abs = float(abs(e_best - float(exact_filtered_energy)))
+    rel_abs = float(delta_abs / max(abs(float(exact_filtered_energy)), 1e-14))
+    stop_reason = "converged" if bool(vqe_success) else str(vqe_message)
+    payload = {
+        "generated_utc": _now_utc(),
+        "pipeline": "hh_staged_seed_refine",
+        "settings": {
+            "problem": "hh",
+            "L": int(cfg.physics.L),
+            "t": float(cfg.physics.t),
+            "u": float(cfg.physics.u),
+            "dv": float(cfg.physics.dv),
+            "omega0": float(cfg.physics.omega0),
+            "g_ep": float(cfg.physics.g_ep),
+            "n_ph_max": int(cfg.physics.n_ph_max),
+            "boson_encoding": str(cfg.physics.boson_encoding),
+            "ordering": str(cfg.physics.ordering),
+            "boundary": str(cfg.physics.boundary),
+            "sector_n_up": int(cfg.physics.sector_n_up),
+            "sector_n_dn": int(cfg.physics.sector_n_dn),
+            "reps": int(cfg.seed_refine.reps),
+            "restarts": int(run_cfg.restarts),
+            "maxiter": int(cfg.seed_refine.maxiter),
+            "method": str(cfg.seed_refine.optimizer),
+            "seed": int(run_cfg.seed),
+            "energy_backend": str(run_cfg.energy_backend),
+            "paop_r": int(run_cfg.paop_r),
+            "paop_split_paulis": bool(run_cfg.paop_split_paulis),
+            "paop_prune_eps": float(run_cfg.paop_prune_eps),
+            "paop_normalization": str(run_cfg.paop_normalization),
+        },
+        "generator_family": dict(family_ctx["family_info"]),
+        "pool": dict(family_ctx["pool_meta"]),
+        "seed_baseline": {
+            "theta_policy": "all_zero",
+            "energy": float(family_ctx["seed_energy"]),
+            "abs_delta_e": float(family_ctx["seed_delta_abs"]),
+            "relative_error_abs": float(family_ctx["seed_relative_abs"]),
+        },
+        "exact": {"E_exact_sector": float(exact_filtered_energy)},
+        "vqe": {
+            "success": bool(vqe_success),
+            "message": str(vqe_message),
+            "method": str(cfg.seed_refine.optimizer),
+            "energy": float(e_best),
+            "abs_delta_e": float(delta_abs),
+            "relative_error_abs": float(rel_abs),
+            "best_restart": int(vqe_res.best_restart),
+            "nfev": int(vqe_res.nfev),
+            "nit": int(vqe_res.nit),
+            "num_parameters": int(ansatz.num_parameters),
+            "runtime_s": float(runtime_s),
+            "stop_reason": str(stop_reason),
+        },
+        "initial_state": {
+            "source": f"warm_start_{cfg.warm_start.ansatz_name}",
+            "nq_total": int(family_ctx["nq"]),
+            "handoff_state_kind": "prepared_state",
+            "amplitudes_qn_to_q0": hc_pipeline._state_to_amplitudes_qn_to_q0(np.asarray(psi_ref, dtype=complex).reshape(-1)),
+        },
+        "best_state": {
+            "amplitudes_qn_to_q0": hc_pipeline._state_to_amplitudes_qn_to_q0(psi_best),
+            "best_theta": [float(x) for x in theta_best.tolist()],
+        },
+        "state_json": str(stage_json),
+    }
+    seed_provenance = _build_seed_provenance(cfg, payload)
+    write_handoff_state_bundle(
+        path=stage_json,
+        psi_state=psi_best,
+        cfg=_handoff_bundle_cfg(cfg),
+        source="seed_refine_vqe",
+        exact_energy=float(exact_filtered_energy),
+        energy=float(e_best),
+        delta_E_abs=float(delta_abs),
+        relative_error_abs=float(rel_abs),
+        meta={
+            "pipeline": "hh_staged_noiseless",
+            "workflow_tag": str(cfg.artifacts.tag),
+            "stage": "seed_refine_vqe",
+            "stage_chain": ["hf_reference", "warm_start_hva", "seed_refine_vqe"],
+        },
+        handoff_state_kind="prepared_state",
+        vqe_payload=dict(payload["vqe"]),
+        seed_provenance=seed_provenance,
+    )
+    _append_workflow_log(
+        cfg,
+        "seed_refine_stage_complete",
+        family=str(cfg.seed_refine.family),
+        energy=float(e_best),
+        exact_energy=float(exact_filtered_energy),
+        delta_abs=float(delta_abs),
+        state_json=str(stage_json),
+    )
+    return payload, psi_best, stage_json
+
+
+def _write_adapt_handoff(
+    cfg: StagedHHConfig,
+    adapt_payload: Mapping[str, Any],
+    psi_adapt: np.ndarray,
+    *,
+    seed_provenance: Mapping[str, Any] | None = None,
+) -> None:
     exact_energy = float(adapt_payload.get("exact_gs_energy", float("nan")))
     energy = float(adapt_payload.get("energy", float("nan")))
     continuation_meta = _handoff_continuation_meta(adapt_payload)
     handoff_adapt_pool, handoff_adapt_pool_source = _infer_handoff_adapt_pool(cfg, adapt_payload)
+    stage_chain = ["hf_reference", "warm_start_hva"]
+    if cfg.seed_refine.family is not None:
+        stage_chain.append("seed_refine_vqe")
+    stage_chain.extend(["adapt_vqe", "matched_family_replay"])
     write_handoff_state_bundle(
         path=cfg.artifacts.handoff_json,
         psi_state=np.asarray(psi_adapt, dtype=complex).reshape(-1),
@@ -1796,7 +2355,7 @@ def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], 
         meta={
             "pipeline": "hh_staged_noiseless",
             "workflow_tag": str(cfg.artifacts.tag),
-            "stage_chain": ["hf_reference", "warm_start_hva", "adapt_vqe", "matched_family_replay"],
+            "stage_chain": stage_chain,
         },
         adapt_operators=[str(x) for x in adapt_payload.get("operators", [])],
         adapt_optimal_point=[float(x) for x in adapt_payload.get("optimal_point", [])],
@@ -1824,8 +2383,18 @@ def _write_adapt_handoff(cfg: StagedHHConfig, adapt_payload: Mapping[str, Any], 
             "fallback_family": str(cfg.replay.fallback_family),
             "replay_seed_policy": str(cfg.replay.replay_seed_policy),
             "replay_continuation_mode": str(cfg.replay.continuation_mode),
-        }
+        },
+        seed_provenance=(dict(seed_provenance) if isinstance(seed_provenance, Mapping) else None),
     )
+
+
+def _staged_ansatz_manifest(cfg: StagedHHConfig) -> str:
+    parts = [f"warm: {cfg.warm_start.ansatz_name}"]
+    if cfg.seed_refine.family is not None:
+        parts.append(f"seed refine: {cfg.seed_refine.family}")
+    parts.append(f"ADAPT: {cfg.adapt.continuation_mode}")
+    parts.append("final: matched-family replay")
+    return "; ".join(parts)
 
 
 def _build_hh_warm_ansatz(cfg: StagedHHConfig) -> Any:
@@ -1918,17 +2487,72 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         warm_checkpoint_json=str(cfg.artifacts.warm_checkpoint_json),
         warm_cutover_json=str(cfg.artifacts.warm_cutover_json),
     )
+    if cfg.fixed_final_state is not None:
+        source_json = Path(cfg.fixed_final_state.json_path)
+        raw_payload = json.loads(source_json.read_text(encoding="utf-8"))
+        psi_final, fixed_import, warm_payload, adapt_payload, replay_payload = _build_fixed_final_state_import(
+            cfg,
+            source_json=source_json,
+            raw_payload=raw_payload,
+            nq_total=_hh_nq_total(cfg.physics.L, cfg.physics.n_ph_max, cfg.physics.boson_encoding),
+        )
+        _write_fixed_final_state_sidecars(
+            cfg,
+            psi_final=np.asarray(psi_final, dtype=complex).reshape(-1),
+            fixed_import=fixed_import,
+            replay_payload=replay_payload,
+        )
+        _append_workflow_log(
+            cfg,
+            "fixed_final_state_import",
+            source_json=str(source_json),
+            strict_match=bool(cfg.fixed_final_state.strict_match),
+            mismatch_count=int(len(fixed_import.get("mismatches", []))),
+        )
+        return StageExecutionResult(
+            h_poly=h_poly,
+            hmat=np.asarray(hmat, dtype=complex),
+            ordered_labels_exyz=list(ordered_labels_exyz),
+            coeff_map_exyz=dict(coeff_map_exyz),
+            nq_total=int(_hh_nq_total(cfg.physics.L, cfg.physics.n_ph_max, cfg.physics.boson_encoding)),
+            psi_hf=np.asarray(psi_hf, dtype=complex).reshape(-1),
+            psi_warm=np.asarray(psi_final, dtype=complex).reshape(-1),
+            psi_adapt=np.asarray(psi_final, dtype=complex).reshape(-1),
+            psi_final=np.asarray(psi_final, dtype=complex).reshape(-1),
+            warm_payload=dict(warm_payload),
+            adapt_payload=dict(adapt_payload),
+            replay_payload=dict(replay_payload),
+            fixed_final_state_import=dict(fixed_import),
+            warm_circuit_context=None,
+            adapt_circuit_context=None,
+            replay_circuit_context=None,
+        )
 
     warm_payload, psi_warm, warm_seed_json = _run_warm_start_stage(
         cfg,
         h_poly=h_poly,
         psi_hf=np.asarray(psi_hf, dtype=complex).reshape(-1),
     )
+    adapt_seed_json = Path(warm_seed_json)
+    psi_seed_refine: np.ndarray | None = None
+    seed_refine_payload: dict[str, Any] | None = None
+    if cfg.seed_refine.family is not None:
+        seed_refine_payload, psi_seed_refine, adapt_seed_json = _run_seed_refine_stage(
+            cfg,
+            h_poly=h_poly,
+            psi_ref=np.asarray(psi_warm, dtype=complex).reshape(-1),
+            exact_filtered_energy=float(warm_payload.get("exact_filtered_energy", float("nan"))),
+        )
     _append_workflow_log(
         cfg,
         "adapt_seed_checkpoint_selected",
-        checkpoint_json=str(warm_seed_json),
-        energy=float(warm_payload.get("energy", float("nan"))),
+        checkpoint_json=str(adapt_seed_json),
+        source_stage=("seed_refine_vqe" if seed_refine_payload is not None else "warm_start_hva"),
+        energy=float(
+            seed_refine_payload.get("vqe", {}).get("energy", warm_payload.get("energy", float("nan")))
+            if isinstance(seed_refine_payload, Mapping)
+            else warm_payload.get("energy", float("nan"))
+        ),
         exact_filtered_energy=float(warm_payload.get("exact_filtered_energy", float("nan"))),
         cutoff_triggered=bool(warm_payload.get("cutoff_triggered", False)),
         cutoff_reason=warm_payload.get("cutoff_reason"),
@@ -1977,7 +2601,7 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         paop_prune_eps=float(cfg.adapt.paop_prune_eps),
         paop_normalization=str(cfg.adapt.paop_normalization),
         disable_hh_seed=bool(cfg.adapt.disable_hh_seed),
-        adapt_ref_json=Path(warm_seed_json),
+        adapt_ref_json=Path(adapt_seed_json),
         adapt_reopt_policy=str(cfg.adapt.reopt_policy),
         adapt_window_size=int(cfg.adapt.window_size),
         adapt_window_topk=int(cfg.adapt.window_topk),
@@ -2003,17 +2627,22 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         phase3_runtime_split_mode=str(cfg.adapt.phase3_runtime_split_mode),
         diagnostics_out=adapt_diagnostics,
     )
-    adapt_payload["adapt_ref_json"] = str(warm_seed_json)
+    adapt_payload["adapt_ref_json"] = str(adapt_seed_json)
     adapt_payload["initial_state_source"] = "adapt_ref_json"
     _append_workflow_log(
         cfg,
         "adapt_seed_checkpoint_used",
-        checkpoint_json=str(warm_seed_json),
+        checkpoint_json=str(adapt_seed_json),
         adapt_ref_base_depth=adapt_payload.get("adapt_ref_base_depth"),
         exact_gs_energy=adapt_payload.get("exact_gs_energy"),
     )
 
-    _write_adapt_handoff(cfg, adapt_payload, np.asarray(psi_adapt, dtype=complex).reshape(-1))
+    _write_adapt_handoff(
+        cfg,
+        adapt_payload,
+        np.asarray(psi_adapt, dtype=complex).reshape(-1),
+        seed_provenance=_build_seed_provenance(cfg, seed_refine_payload),
+    )
     replay_cfg = replay_mod.RunConfig(
         adapt_input_json=Path(cfg.artifacts.handoff_json),
         output_json=Path(cfg.artifacts.replay_output_json),
@@ -2102,6 +2731,10 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         warm_payload=dict(warm_payload),
         adapt_payload=dict(adapt_payload),
         replay_payload=dict(replay_payload),
+        psi_seed_refine=(
+            None if psi_seed_refine is None else np.asarray(psi_seed_refine, dtype=complex).reshape(-1)
+        ),
+        seed_refine_payload=(None if seed_refine_payload is None else dict(seed_refine_payload)),
         warm_circuit_context=circuit_contexts["warm_circuit_context"],
         adapt_circuit_context=circuit_contexts["adapt_circuit_context"],
         replay_circuit_context=circuit_contexts["replay_circuit_context"],
@@ -2303,6 +2936,62 @@ def _empty_qiskit_circuit(num_qubits: int) -> Any:
     return QuantumCircuit(int(num_qubits))
 
 
+def _transpile_target_metadata(cfg: StagedHHConfig) -> dict[str, Any] | None:
+    if cfg.circuit_metrics.backend_name is None:
+        return None
+    return {
+        "backend_name": str(cfg.circuit_metrics.backend_name),
+        "use_fake_backend": bool(cfg.circuit_metrics.use_fake_backend),
+        "optimization_level": int(cfg.circuit_metrics.optimization_level),
+        "seed_transpiler": int(cfg.circuit_metrics.seed_transpiler),
+        "basis_gates": ["rz", "sx", "x", "cx"],
+    }
+
+
+def _transpile_metrics_or_error(
+    cfg: StagedHHConfig,
+    *,
+    circuit: Any | None,
+    enabled: bool = True,
+    reason: str | None = None,
+) -> dict[str, Any] | None:
+    if circuit is None:
+        return None
+    if cfg.circuit_metrics.backend_name is None:
+        return None
+    if not bool(enabled):
+        return {
+            "target": _transpile_target_metadata(cfg),
+            "skipped": True,
+            "reason": str(reason or "transpile_metrics_disabled"),
+        }
+    try:
+        return transpile_circuit_metrics(
+            circuit,
+            backend_name=str(cfg.circuit_metrics.backend_name),
+            use_fake_backend=bool(cfg.circuit_metrics.use_fake_backend),
+            optimization_level=int(cfg.circuit_metrics.optimization_level),
+            seed_transpiler=int(cfg.circuit_metrics.seed_transpiler),
+        )
+    except Exception as exc:
+        return {
+            "target": _transpile_target_metadata(cfg),
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _strip_circuit_objects(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _strip_circuit_objects(val)
+            for key, val in value.items()
+            if str(key) != "circuit"
+        }
+    if isinstance(value, list):
+        return [_strip_circuit_objects(item) for item in value]
+    return value
+
+
 def build_stage_circuit_report_artifacts(
     stage_result: StageExecutionResult,
     cfg: StagedHHConfig,
@@ -2335,6 +3024,7 @@ def build_stage_circuit_report_artifacts(
                         - float(stage_result.warm_payload.get("exact_filtered_energy", float("nan")))
                     )
                 ),
+                "transpile_metrics": _transpile_metrics_or_error(cfg, circuit=warm_circuit),
             },
             "notes": [
                 "Representative view keeps PauliEvolutionGate blocks intact.",
@@ -2362,6 +3052,7 @@ def build_stage_circuit_report_artifacts(
                 "energy": float(stage_result.adapt_payload.get("energy", float("nan"))),
                 "exact_energy": float(stage_result.adapt_payload.get("exact_gs_energy", float("nan"))),
                 "stop_reason": str(stage_result.adapt_payload.get("stop_reason", "")),
+                "transpile_metrics": _transpile_metrics_or_error(cfg, circuit=adapt_circuit),
             },
             "notes": [
                 "Circuit uses the actual selected ADAPT generators and optimized theta values.",
@@ -2388,6 +3079,7 @@ def build_stage_circuit_report_artifacts(
                 "energy": float(stage_result.replay_payload.get("vqe", {}).get("energy", float("nan"))),
                 "exact_energy": float(stage_result.replay_payload.get("exact", {}).get("E_exact_sector", float("nan"))),
                 "stop_reason": str(stage_result.replay_payload.get("vqe", {}).get("stop_reason", "")),
+                "transpile_metrics": _transpile_metrics_or_error(cfg, circuit=replay_circuit),
             },
             "notes": [
                 "Replay circuit uses the matched ADAPT-family ansatz with the final optimized replay theta values.",
@@ -2406,12 +3098,33 @@ def build_stage_circuit_report_artifacts(
         )
 
     macro_time = float(cfg.dynamics.t_final) / float(cfg.dynamics.trotter_steps)
-    initial_circuit = replay_circuit if replay_circuit is not None else _empty_qiskit_circuit(int(stage_result.nq_total))
+    prep_plus_initial = replay_circuit if replay_circuit is not None else None
+    empty_initial = _empty_qiskit_circuit(int(stage_result.nq_total))
     dynamics_bundles: dict[str, dict[str, Any]] = {}
-    for method in ("suzuki2", "cfqm4"):
-        if method == "suzuki2":
-            circuit = build_suzuki2_time_dependent_circuit(
-                initial_circuit=initial_circuit,
+    report_methods = tuple(
+        method
+        for method in cfg.dynamics.methods
+        if str(method).strip().lower() == "suzuki2" or is_cfqm_dynamics_method(str(method))
+    ) or ("suzuki2", "cfqm4")
+    for method in report_methods:
+        method_norm = str(method).strip().lower()
+        circuitization_reason = time_dynamics_circuitization_reason(
+            method=str(method_norm),
+            cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
+        )
+        notes = [
+            "Circuit shows one representative macro-step only; repeat_count gives the full unrolled count.",
+            "Expanded view decomposes only the PauliEvolutionGate layers, not the full repeated trajectory.",
+        ]
+        if circuitization_reason is None:
+            warn_time_dynamics_circuit_semantics(
+                method=str(method_norm),
+                cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
+                drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+            )
+            macro_circuit = build_time_dynamics_circuit(
+                method=str(method_norm),
+                initial_circuit=(prep_plus_initial if prep_plus_initial is not None else empty_initial),
                 ordered_labels_exyz=list(ordered_for_run),
                 static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
                 drive_provider_exyz=drive_provider,
@@ -2419,60 +3132,110 @@ def build_stage_circuit_report_artifacts(
                 trotter_steps=1,
                 drive_t0=float(cfg.dynamics.drive_t0),
                 drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+                cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
+                cfqm_coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
             )
-        else:
-            circuit = build_cfqm_time_dependent_circuit(
-                method=str(method),
-                initial_circuit=initial_circuit,
+            dynamics_only_circuit = build_time_dynamics_circuit(
+                method=str(method_norm),
+                initial_circuit=empty_initial,
                 ordered_labels_exyz=list(ordered_for_run),
                 static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
                 drive_provider_exyz=drive_provider,
-                time_value=float(macro_time),
+                time_value=float(cfg.dynamics.t_final),
+                trotter_steps=int(cfg.dynamics.trotter_steps),
+                drive_t0=float(cfg.dynamics.drive_t0),
+                drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+                cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
+                cfqm_coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+            )
+            prep_plus_circuit = (
+                None
+                if prep_plus_initial is None
+                else build_time_dynamics_circuit(
+                    method=str(method_norm),
+                    initial_circuit=prep_plus_initial,
+                    ordered_labels_exyz=list(ordered_for_run),
+                    static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+                    drive_provider_exyz=drive_provider,
+                    time_value=float(cfg.dynamics.t_final),
+                    trotter_steps=int(cfg.dynamics.trotter_steps),
+                    drive_t0=float(cfg.dynamics.drive_t0),
+                    drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+                    cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
+                    cfqm_coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+                )
+            )
+            proxy_total = compute_time_dynamics_proxy_cost(
+                method=str(method_norm),
+                t_final=float(cfg.dynamics.t_final),
+                trotter_steps=int(cfg.dynamics.trotter_steps),
+                drive_t0=float(cfg.dynamics.drive_t0),
+                drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+                ordered_labels_exyz=list(ordered_for_run),
+                static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+                drive_provider_exyz=drive_provider,
+                coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+                cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
+            )
+            proxy_macro = compute_time_dynamics_proxy_cost(
+                method=str(method_norm),
+                t_final=float(macro_time),
                 trotter_steps=1,
                 drive_t0=float(cfg.dynamics.drive_t0),
+                drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
+                ordered_labels_exyz=list(ordered_for_run),
+                static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
+                drive_provider_exyz=drive_provider,
                 coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
+                cfqm_stage_exp=str(cfg.dynamics.cfqm_stage_exp),
             )
-        proxy_total = compute_time_dynamics_proxy_cost(
-            method=str(method),
-            t_final=float(cfg.dynamics.t_final),
-            trotter_steps=int(cfg.dynamics.trotter_steps),
-            drive_t0=float(cfg.dynamics.drive_t0),
-            drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
-            ordered_labels_exyz=list(ordered_for_run),
-            static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
-            drive_provider_exyz=drive_provider,
-            coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
-        )
-        proxy_macro = compute_time_dynamics_proxy_cost(
-            method=str(method),
-            t_final=float(macro_time),
-            trotter_steps=1,
-            drive_t0=float(cfg.dynamics.drive_t0),
-            drive_time_sampling=str(cfg.dynamics.drive_time_sampling),
-            ordered_labels_exyz=list(ordered_for_run),
-            static_coeff_map_exyz=dict(stage_result.coeff_map_exyz),
-            drive_provider_exyz=drive_provider,
-            coeff_drop_abs_tol=float(cfg.dynamics.cfqm_coeff_drop_abs_tol),
-        )
+            dynamics_metrics = {
+                "macro_step": _transpile_metrics_or_error(cfg, circuit=macro_circuit),
+                "dynamics_only": _transpile_metrics_or_error(cfg, circuit=dynamics_only_circuit),
+                "prep_plus_dynamics": _transpile_metrics_or_error(cfg, circuit=prep_plus_circuit),
+            }
+        else:
+            macro_circuit = None
+            dynamics_only_circuit = None
+            prep_plus_circuit = None
+            proxy_total = {"skipped": True, "reason": str(circuitization_reason)}
+            proxy_macro = {"skipped": True, "reason": str(circuitization_reason)}
+            skip_metrics = {
+                "target": _transpile_target_metadata(cfg),
+                "skipped": True,
+                "reason": str(circuitization_reason),
+            }
+            dynamics_metrics = {
+                "macro_step": dict(skip_metrics),
+                "dynamics_only": dict(skip_metrics),
+                "prep_plus_dynamics": dict(skip_metrics),
+            }
+            notes.append(f"Circuit artifacts skipped: {str(circuitization_reason)}")
         dynamics_bundles[str(method)] = {
             "title": f"L={int(cfg.physics.L)} {str(method).upper()} dynamics macro-step",
-            "circuit": circuit,
+            "circuit": macro_circuit,
             "metadata": {
                 "repeat_count": int(cfg.dynamics.trotter_steps),
                 "macro_step_time": float(macro_time),
                 "t_final": float(cfg.dynamics.t_final),
                 "drive_enabled": bool(cfg.dynamics.enable_drive),
                 "drive_profile": drive_profile,
+                "cfqm_stage_exp": str(cfg.dynamics.cfqm_stage_exp),
+                "circuitization": {
+                    "supported": bool(circuitization_reason is None),
+                    "reason": (None if circuitization_reason is None else str(circuitization_reason)),
+                    "cfqm_stage_exp": str(cfg.dynamics.cfqm_stage_exp),
+                },
+                "transpile_target": _transpile_target_metadata(cfg),
                 "proxy_macro": dict(proxy_macro),
                 "proxy_total": dict(proxy_total),
+                "trajectory_circuit_metrics": dynamics_metrics,
             },
-            "notes": [
-                "Circuit shows one representative macro-step only; repeat_count gives the full unrolled count.",
-                "Expanded view decomposes only the PauliEvolutionGate layers, not the full repeated trajectory.",
-            ],
+            "notes": notes,
         }
 
     return {
+        "transpile_target": _transpile_target_metadata(cfg),
         "stages": stage_bundles,
         "dynamics": dynamics_bundles,
     }
@@ -2490,11 +3253,7 @@ def write_hh_staged_circuit_report_section(
     render_parameter_manifest(
         pdf,
         model="Hubbard-Holstein (HH)",
-        ansatz=(
-            f"warm: {cfg.warm_start.ansatz_name}; "
-            f"ADAPT: {cfg.adapt.continuation_mode}; "
-            "final: matched-family replay"
-        ),
+        ansatz=_staged_ansatz_manifest(cfg),
         drive_enabled=bool(cfg.dynamics.enable_drive),
         t=float(cfg.physics.t),
         U=float(cfg.physics.u),
@@ -2507,6 +3266,8 @@ def write_hh_staged_circuit_report_section(
             "boundary": str(cfg.physics.boundary),
             "ordering": str(cfg.physics.ordering),
             "warm_reps": int(cfg.warm_start.reps),
+            "seed_refine_family": (None if cfg.seed_refine.family is None else str(cfg.seed_refine.family)),
+            "seed_refine_reps": int(cfg.seed_refine.reps),
             "adapt_max_depth": int(cfg.adapt.max_depth),
             "replay_reps": int(cfg.replay.reps),
             "t_final": float(cfg.dynamics.t_final),
@@ -2518,22 +3279,63 @@ def write_hh_staged_circuit_report_section(
     summary_lines = [
         f"HH staged circuit report, L={int(cfg.physics.L)}",
         "",
-        f"Warm: E={stage_summary['warm_start']['energy']:.12g} "
-        f"exact={stage_summary['warm_start']['exact_energy']:.12g} "
-        f"|dE|={stage_summary['warm_start']['delta_abs']:.6e}",
-        f"ADAPT: depth={stage_summary['adapt_vqe']['depth']} "
-        f"pool={stage_summary['adapt_vqe']['pool_type']} "
-        f"stop={stage_summary['adapt_vqe']['stop_reason']} "
-        f"|dE|={stage_summary['adapt_vqe']['delta_abs']:.6e}",
-        f"Replay: E={stage_summary['conventional_replay']['energy']:.12g} "
-        f"exact={stage_summary['conventional_replay']['exact_energy']:.12g} "
-        f"|dE|={stage_summary['conventional_replay']['delta_abs']:.6e}",
+    ]
+    fixed_import = stage_summary.get("fixed_final_state_import", {})
+    if isinstance(fixed_import, Mapping):
+        summary_lines.extend(
+            [
+                f"Fixed seed import: {fixed_import.get('source_json', '')}",
+                f"Imported E={float(fixed_import.get('energy', float('nan'))):.12g} "
+                f"exact={float(fixed_import.get('exact_energy', float('nan'))):.12g} "
+                f"|dE|={float(fixed_import.get('delta_abs', float('nan'))):.6e}",
+                f"Metadata strict={bool(fixed_import.get('strict_match', False))} "
+                f"mismatches={len(list(fixed_import.get('mismatches', [])))}",
+            ]
+        )
+    warm_summary = stage_summary["warm_start"]
+    seed_refine_summary = stage_summary.get("seed_refine", {})
+    adapt_summary = stage_summary["adapt_vqe"]
+    replay_summary = stage_summary["conventional_replay"]
+    if bool(warm_summary.get("skipped", False)):
+        summary_lines.append(f"Warm: skipped ({warm_summary.get('skip_reason', '')})")
+    else:
+        summary_lines.append(
+            f"Warm: E={warm_summary['energy']:.12g} "
+            f"exact={warm_summary['exact_energy']:.12g} "
+            f"|dE|={warm_summary['delta_abs']:.6e}"
+        )
+    if isinstance(seed_refine_summary, Mapping) and seed_refine_summary:
+        summary_lines.append(
+            f"Seed refine: family={seed_refine_summary.get('family', '')} "
+            f"|dE|={float(seed_refine_summary.get('delta_abs', float('nan'))):.6e} "
+            f"stop={seed_refine_summary.get('stop_reason', '')}"
+        )
+    if bool(adapt_summary.get("skipped", False)):
+        summary_lines.append(f"ADAPT: skipped ({adapt_summary.get('skip_reason', '')})")
+    else:
+        summary_lines.append(
+            f"ADAPT: depth={adapt_summary['depth']} "
+            f"pool={adapt_summary['pool_type']} "
+            f"stop={adapt_summary['stop_reason']} "
+            f"|dE|={adapt_summary['delta_abs']:.6e}"
+        )
+    if bool(replay_summary.get("skipped", False)):
+        summary_lines.append(f"Replay: skipped ({replay_summary.get('skip_reason', '')})")
+    else:
+        summary_lines.append(
+            f"Replay: E={replay_summary['energy']:.12g} "
+            f"exact={replay_summary['exact_energy']:.12g} "
+            f"|dE|={replay_summary['delta_abs']:.6e}"
+        )
+    summary_lines.extend(
+        [
         "",
         "Section semantics",
         "- Representative view keeps high-level PauliEvolutionGate blocks.",
         "- Expanded view performs one decomposition pass to expose term-level layers.",
         "- Dynamics pages show one macro-step only; proxy totals summarize the full repeat count.",
-    ]
+        ]
+    )
     render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.03, max_line_width=110)
 
     for key in ("warm_start", "adapt_vqe", "conventional_replay"):
@@ -2566,8 +3368,7 @@ def write_hh_staged_circuit_report_section(
             expand_evolution=True,
         )
 
-    for method in ("suzuki2", "cfqm4"):
-        bundle = report_payload["dynamics"][method]
+    for method, bundle in report_payload["dynamics"].items():
         circuit = bundle["circuit"]
         title = str(bundle["title"])
         notes = [str(x) for x in bundle.get("notes", [])]
@@ -2578,6 +3379,8 @@ def write_hh_staged_circuit_report_section(
             metadata=dict(bundle.get("metadata", {})),
             notes=notes,
         )
+        if circuit is None:
+            continue
         render_circuit_page(pdf, circuit=circuit, title=title, subtitle="Representative macro-step", notes=notes)
         render_circuit_page(
             pdf,
@@ -2605,7 +3408,7 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
     warm_delta = float(abs(warm_energy - warm_exact))
     adapt_delta = float(abs(adapt_energy - adapt_exact))
     final_delta = float(abs(final_energy - final_exact))
-    return {
+    summary = {
         "hf_reference": {
             "state_kind": "reference_state",
             "nq_total": int(stage_result.nq_total),
@@ -2632,6 +3435,8 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
             "cutoff_triggered": bool(stage_result.warm_payload.get("cutoff_triggered", False)),
             "cutoff_reason": stage_result.warm_payload.get("cutoff_reason"),
             "resumed_from_checkpoint": bool(stage_result.warm_payload.get("resumed_from_checkpoint", False)),
+            "skipped": bool(stage_result.warm_payload.get("skipped", False)),
+            "skip_reason": stage_result.warm_payload.get("skip_reason"),
         },
         "adapt_vqe": {
             "energy": float(adapt_energy),
@@ -2646,6 +3451,8 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
                 stage_result.adapt_payload.get("adapt_ref_json", stage_result.warm_payload.get("checkpoint_json_used", ""))
             ),
             "initial_state_source": str(stage_result.adapt_payload.get("initial_state_source", "adapt_ref_json")),
+            "skipped": bool(stage_result.adapt_payload.get("skipped", False)),
+            "skip_reason": stage_result.adapt_payload.get("skip_reason"),
         },
         "conventional_replay": {
             "energy": float(final_energy),
@@ -2657,8 +3464,31 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
             "stop_reason": str(replay_vqe.get("stop_reason", replay_vqe.get("message", ""))),
             "replay_continuation_mode": str(stage_result.replay_payload.get("replay_contract", {}).get("continuation_mode", cfg.replay.continuation_mode)),
             "replay_output_json": str(cfg.artifacts.replay_output_json),
+            "skipped": bool(stage_result.replay_payload.get("skipped", False)),
+            "skip_reason": stage_result.replay_payload.get("skip_reason"),
         },
     }
+    if isinstance(stage_result.seed_refine_payload, Mapping):
+        refine_vqe = stage_result.seed_refine_payload.get("vqe", {})
+        refine_exact = stage_result.seed_refine_payload.get("exact", {})
+        refine_pool = stage_result.seed_refine_payload.get("pool", {})
+        summary["seed_refine"] = {
+            "family": str(stage_result.seed_refine_payload.get("generator_family", {}).get("resolved", cfg.seed_refine.family or "")),
+            "family_kind": str(refine_pool.get("family_kind", "explicit_family")) if isinstance(refine_pool, Mapping) else "explicit_family",
+            "energy": float(refine_vqe.get("energy", float("nan"))),
+            "exact_energy": float(refine_exact.get("E_exact_sector", float("nan"))),
+            "delta_abs": float(abs(float(refine_vqe.get("energy", float("nan"))) - float(refine_exact.get("E_exact_sector", float("nan"))))),
+            "optimizer_method": str(refine_vqe.get("method", cfg.seed_refine.optimizer)),
+            "reps": int(cfg.seed_refine.reps),
+            "maxiter": int(cfg.seed_refine.maxiter),
+            "stop_reason": str(refine_vqe.get("stop_reason", refine_vqe.get("message", ""))),
+            "state_json": str(stage_result.seed_refine_payload.get("state_json", _seed_refine_state_json_path(cfg))),
+            "seed_baseline": dict(stage_result.seed_refine_payload.get("seed_baseline", {})),
+            "pool": dict(refine_pool) if isinstance(refine_pool, Mapping) else {},
+        }
+    if isinstance(stage_result.fixed_final_state_import, Mapping):
+        summary["fixed_final_state_import"] = dict(stage_result.fixed_final_state_import)
+    return summary
 
 
 def _compute_comparisons(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -2712,7 +3542,7 @@ def _compute_comparisons(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _payload_artifacts(cfg: StagedHHConfig) -> dict[str, Any]:
-    return {
+    artifacts = {
         "workflow": {
             "output_json": str(cfg.artifacts.output_json),
             "output_pdf": str(cfg.artifacts.output_pdf),
@@ -2728,6 +3558,9 @@ def _payload_artifacts(cfg: StagedHHConfig) -> dict[str, Any]:
             "workflow_log": str(cfg.artifacts.workflow_log),
         },
     }
+    if cfg.fixed_final_state is not None:
+        artifacts["intermediate"]["fixed_final_state_json"] = str(cfg.fixed_final_state.json_path)
+    return artifacts
 
 
 def assemble_payload(
@@ -2735,19 +3568,25 @@ def assemble_payload(
     cfg: StagedHHConfig,
     stage_result: StageExecutionResult,
     dynamics_noiseless: Mapping[str, Any],
+    circuit_report: Mapping[str, Any] | None = None,
     run_command: str,
 ) -> dict[str, Any]:
+    fixed_mode = bool(stage_result.fixed_final_state_import)
     payload = {
         "generated_utc": _now_utc(),
         "pipeline": "hh_staged_noiseless",
         "workflow_contract": {
-            "stage_chain": [
-                "hf_reference",
-                "warm_start_hva",
-                "adapt_vqe",
-                "matched_family_replay",
-                "final_only_noiseless_dynamics",
-            ],
+            "stage_chain": (
+                ["hf_reference", "fixed_final_state_import", "final_only_noiseless_dynamics"]
+                if fixed_mode
+                else [
+                    "hf_reference",
+                    "warm_start_hva",
+                    "adapt_vqe",
+                    "matched_family_replay",
+                    "final_only_noiseless_dynamics",
+                ]
+            ),
             "conventional_vqe_definition": "non-ADAPT matched-family replay from ADAPT handoff",
             "drive_default": "opt_in",
             "noiseless_energy_metric": "|E_method(t) - E_exact_sector_replay| with replay exact sector energy as baseline",
@@ -2759,6 +3598,9 @@ def assemble_payload(
         "command": str(run_command),
         "stage_pipeline": _stage_summary(stage_result, cfg),
         "dynamics_noiseless": dict(dynamics_noiseless),
+        "circuit_metrics": (
+            None if circuit_report is None else _strip_circuit_objects(dict(circuit_report))
+        ),
     }
     payload["comparisons"] = _compute_comparisons(payload)
     return payload
@@ -2812,7 +3654,7 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
         render_parameter_manifest(
             pdf,
             model="Hubbard-Holstein",
-            ansatz="warm: hh_hva_ptw; ADAPT: staged HH; final: matched-family replay",
+            ansatz=_staged_ansatz_manifest(cfg),
             drive_enabled=bool(cfg.dynamics.enable_drive),
             t=float(cfg.physics.t),
             U=float(cfg.physics.u),
@@ -2825,6 +3667,8 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
                 "boundary": str(cfg.physics.boundary),
                 "ordering": str(cfg.physics.ordering),
                 "warm_reps": int(cfg.warm_start.reps),
+                "seed_refine_family": (None if cfg.seed_refine.family is None else str(cfg.seed_refine.family)),
+                "seed_refine_reps": int(cfg.seed_refine.reps),
                 "adapt_mode": str(cfg.adapt.continuation_mode),
                 "replay_mode": str(cfg.replay.continuation_mode),
                 "methods": ",".join(cfg.dynamics.methods),
@@ -2837,9 +3681,42 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
         summary_lines = [
             "HH staged noiseless workflow summary",
             "",
-            f"Warm-start: E={warm.get('energy')} exact={warm.get('exact_energy')} delta={warm.get('delta_abs')} ecut_1={warm.get('ecut_1')}",
-            f"ADAPT: depth={adapt.get('depth')} pool={adapt.get('pool_type')} delta={adapt.get('delta_abs')} stop={adapt.get('stop_reason')}",
-            f"Replay: E={replay.get('energy')} exact={replay.get('exact_energy')} delta={replay.get('delta_abs')} ecut_2={replay.get('ecut_2')}",
+        ]
+        fixed_import = stage_pipeline.get("fixed_final_state_import", {}) if isinstance(stage_pipeline, Mapping) else {}
+        if isinstance(fixed_import, Mapping) and fixed_import:
+            summary_lines.extend(
+                [
+                    f"Fixed seed import: {fixed_import.get('source_json', '')}",
+                    f"Imported energy={fixed_import.get('energy')} exact={fixed_import.get('exact_energy')} delta={fixed_import.get('delta_abs')}",
+                ]
+            )
+        seed_refine = stage_pipeline.get("seed_refine", {}) if isinstance(stage_pipeline, Mapping) else {}
+        summary_lines.extend(
+            [
+                (
+                    f"Warm-start: E={warm.get('energy')} exact={warm.get('exact_energy')} "
+                    f"delta={warm.get('delta_abs')} ecut_1={warm.get('ecut_1')}"
+                    if not bool(warm.get("skipped", False))
+                    else f"Warm-start: skipped ({warm.get('skip_reason', '')})"
+                ),
+                (
+                    f"Seed refine: family={seed_refine.get('family')} delta={seed_refine.get('delta_abs')} "
+                    f"stop={seed_refine.get('stop_reason')}"
+                    if isinstance(seed_refine, Mapping) and seed_refine
+                    else "Seed refine: disabled"
+                ),
+                (
+                    f"ADAPT: depth={adapt.get('depth')} pool={adapt.get('pool_type')} "
+                    f"delta={adapt.get('delta_abs')} stop={adapt.get('stop_reason')}"
+                    if not bool(adapt.get("skipped", False))
+                    else f"ADAPT: skipped ({adapt.get('skip_reason', '')})"
+                ),
+                (
+                    f"Replay: E={replay.get('energy')} exact={replay.get('exact_energy')} "
+                    f"delta={replay.get('delta_abs')} ecut_2={replay.get('ecut_2')}"
+                    if not bool(replay.get("skipped", False))
+                    else f"Replay: skipped ({replay.get('skip_reason', '')})"
+                ),
             "Dynamics metrics: energy uses replay exact-sector GS baseline; fidelity uses exact propagation from psi_final.",
             "",
             "Artifacts",
@@ -2850,7 +3727,8 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
             f"- replay_csv: {cfg.artifacts.replay_output_csv}",
             f"- replay_md: {cfg.artifacts.replay_output_md}",
             f"- replay_log: {cfg.artifacts.replay_output_log}",
-        ]
+            ]
+        )
         render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.03)
 
         fig, axes = plt.subplots(2, 1, figsize=(11.0, 8.5))
@@ -2928,10 +3806,12 @@ def run_staged_hh_noiseless(cfg: StagedHHConfig, *, run_command: str | None = No
 
     stage_result = run_stage_pipeline(cfg)
     dynamics_noiseless = run_noiseless_profiles(stage_result, cfg)
+    circuit_report = build_stage_circuit_report_artifacts(stage_result, cfg)
     payload = assemble_payload(
         cfg=cfg,
         stage_result=stage_result,
         dynamics_noiseless=dynamics_noiseless,
+        circuit_report=circuit_report,
         run_command=run_command_str,
     )
     _write_json(cfg.artifacts.output_json, payload)

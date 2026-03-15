@@ -24,6 +24,8 @@ class TestProxyRowExtraction(unittest.TestCase):
                 "name": "HH-Layerwise",
                 "category": "conventional_vqe",
                 "num_params": "12",
+                "cx_proxy": "48",
+                "sq_proxy": "24",
                 "elapsed_s": "1.25",
                 "abs_delta_e": "1.0e-4",
                 "sector_leak_flag": "false",
@@ -35,6 +37,8 @@ class TestProxyRowExtraction(unittest.TestCase):
         self.assertEqual(row.L, 3)
         self.assertEqual(row.num_parameters, 12)
         self.assertEqual(row.depth_proxy, 12)
+        self.assertEqual(row.cx_proxy, 48)
+        self.assertEqual(row.sq_proxy, 24)
         self.assertAlmostEqual(float(row.runtime_s), 1.25)
         self.assertAlmostEqual(float(row.delta_E_abs), 1.0e-4)
         self.assertFalse(bool(row.sector_leak_flag))
@@ -50,6 +54,8 @@ class TestProxyRowExtraction(unittest.TestCase):
                 "pool_name": "paop_std",
                 "adapt_depth_reached": "7",
                 "num_parameters": "7",
+                "cx_proxy_total": "140",
+                "sq_proxy_total": "28",
                 "delta_E_abs": "2.5e-3",
                 "nfev": "123",
             }
@@ -69,6 +75,8 @@ class TestProxyRowExtraction(unittest.TestCase):
             }
         )
         self.assertEqual(adapt.depth_proxy, 7)
+        self.assertEqual(adapt.cx_proxy, 140)
+        self.assertEqual(adapt.sq_proxy, 28)
         self.assertEqual(conventional.depth_proxy, 6)
         self.assertIn("paop", adapt.operator_family_proxy)
         self.assertIn("hva", conventional.operator_family_proxy)
@@ -90,6 +98,8 @@ class TestProxySidecarWriter(unittest.TestCase):
                         "problem": "hh",
                         "L": 3,
                         "runtime_s": 1.0,
+                        "cx_proxy": 48,
+                        "sq_proxy": 24,
                         "delta_E_abs": 1.0e-3,
                     },
                     {
@@ -101,6 +111,8 @@ class TestProxySidecarWriter(unittest.TestCase):
                         "problem": "hh",
                         "L": 3,
                         "runtime_s": 2.0,
+                        "cx_proxy_total": 140,
+                        "sq_proxy_total": 28,
                         "delta_E_abs": 2.0e-3,
                         "adapt_depth_reached": 9,
                     },
@@ -121,6 +133,8 @@ class TestProxySidecarWriter(unittest.TestCase):
             payload = json.loads(sidecars["summary_json"].read_text(encoding="utf-8"))
             self.assertEqual(payload["schema"], SCHEMA_VERSION)
             self.assertEqual(payload["row_count"], 2)
+            self.assertEqual(payload["cx_proxy"]["max"], 140)
+            self.assertEqual(payload["sq_proxy"]["median"], 26.0)
             self.assertIn("source_composition_proxy", payload)
 
 if __name__ == "__main__":

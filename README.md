@@ -23,20 +23,37 @@ Jordan-Wigner operator construction, binary or unary bosonic encoding, blocked o
 
 ### Warm-start chain
 
-Warm-start runs follow the active three-stage HH continuation contract:
+Default staged HH runs follow the active three-stage continuation contract:
 
 1. Run HH-HVA VQE warm start with `hh_hva_ptw`.
+   - `hh_hva_ptw` remains the canonical staged warm-start default.
+   - `hh_hva` remains an explicit override only.
 2. Use that warm-start state as the ADAPT reference state.
-3. Run ADAPT from that warm-start state in staged HH continuation mode (`phase3_v1`, canonical default).
+3. Run ADAPT from that prepared state in staged HH continuation mode (`phase3_v1`, canonical default).
    - For new HH agent work, depth-0 ADAPT starts from the narrow physics-aligned core; current runtime resolves this to `paop_lf_std`.
    - `full_meta` remains a supported broad-pool preset, but only as controlled residual enrichment after plateau diagnosis, not the default depth-0 path.
    - Optional phase-3 follow-ons stay opt-in: `--phase3-runtime-split-mode shortlist_pauli_children_v1` is a shortlist-only continuation aid, and widened `--phase3-symmetry-mitigation-mode` choices remain phase-3 metadata/telemetry hooks on raw staged/hardcoded/replay paths.
 4. Replay conventional VQE from ADAPT with ADAPT-family matching (`--generator-family match_adapt`, fallback `full_meta`) via `pipelines/hardcoded/hh_vqe_from_adapt_family.py`.
 
-One-shot noiseless wrapper for this contract:
+Optional staged seed-refine insertion:
+
+- `pipelines/hardcoded/hh_staged_noiseless.py` can insert one explicit-family conventional VQE refine stage between warm start and ADAPT via `--seed-refine-family`.
+- Supported explicit seed-refine families are:
+  - `uccsd_otimes_paop_lf_std`
+  - `uccsd_otimes_paop_lf2_std`
+  - `uccsd_otimes_paop_bond_disp_std`
+- The refine stage materializes the requested family directly; it does **not** use `match_adapt` and does **not** auto-fallback to `full_meta`.
+- If the refine stage succeeds, the handoff bundle carries additive `seed_provenance`.
+- If the refine stage fails, the staged workflow aborts before ADAPT rather than silently skipping forward.
+
+One-shot noiseless wrapper for the default or refined contract:
 
 ```bash
 python pipelines/hardcoded/hh_staged_noiseless.py --L 2
+
+# Optional refine insertion:
+python pipelines/hardcoded/hh_staged_noiseless.py --L 2 \
+  --seed-refine-family uccsd_otimes_paop_lf_std
 ```
 
 This wrapper keeps drive opt-in, runs final matched-family replay (not fixed `hh_hva_*` replay), and reports Suzuki/CFQM dynamics from the replay seed with GS-baseline energy error plus seeded exact-reference fidelity.
@@ -52,9 +69,10 @@ Default artifact:
 
 Report contract:
 - one combined PDF with separate `L=2` and `L=3` sections,
-- per-`L` pages for manifest, stage summary, warm HH-HVA, ADAPT, matched-family replay, Suzuki2 macro-step, and CFQM4 macro-step,
-- each circuit stage/method gets both a representative view (high-level `PauliEvolutionGate` blocks) and an expanded one-level decomposition view,
+- per-`L` pages for manifest, stage summary, warm HH-HVA, ADAPT, matched-family replay, Suzuki2 macro-step, and a CFQM4 dynamics section,
+- each circuit stage/method gets both a representative view (high-level `PauliEvolutionGate` blocks) and an expanded one-level decomposition view when circuitization is supported,
 - dynamics pages show one representative macro-step only; the PDF states the repeat count and proxy totals for the full `trotter_steps` trajectory.
+- Numerical-only CFQM stage backends (`expm_multiply_sparse`, `dense_expm`) stay in the report as dynamics metadata but are marked unsupported to avoid misleading compiled-circuit artifacts; representative/expanded circuit pages and transpile/proxy summaries are skipped for those modes.
 
 ## Repository map (minimal)
 
@@ -176,6 +194,12 @@ graph TB
 - Experimental offline/local exact-noiseless probe families: `paop_lf3_std`, `paop_lf4_std`, `paop_sq_std`, `paop_sq_full`.
 - HH staged continuation default for new agent work: `phase3_v1` start from the narrow HH core and runtime-resolve depth-0 HH ADAPT to `paop_lf_std`.
 - HH built-in combined preset: `uccsd_paop_lf_full` = `uccsd_lifted + paop_lf_full` (deduplicated) via one CLI value.
+- HH explicit product families: `uccsd_otimes_paop_lf_std`, `uccsd_otimes_paop_lf2_std`, `uccsd_otimes_paop_bond_disp_std`.
+  - These are the canonical lifted-UCCSD ⊗ boson-only-phonon constructions in this repo: one lifted fermionic UCCSD factor times one boson-only phonon motif, locality-filtered, canonicalized, and deduplicated.
+  - They are available as explicit families for seed-refine, replay, and direct ADAPT pool materialization without mutating the older additive unions.
+- HH logical two-parameter product variants: `uccsd_otimes_paop_lf_std_seq2p`, `uccsd_otimes_paop_lf2_std_seq2p`, `uccsd_otimes_paop_bond_disp_std_seq2p`.
+  - These treat one logical `(F_a, M_μ)` pair as separate fermion/motif parameters during execution and replay.
+  - They are additive opt-in surfaces and do not change the staged `phase3_v1` default path.
 - HH full-meta preset: `full_meta` = `uccsd_lifted + hva + paop_full + paop_lf_full` (deduplicated) via one CLI value; keep it as a compatibility/broad-pool preset and replay fallback, not the default depth-0 staged HH pool.
 - Opt-in runtime split (`--phase3-runtime-split-mode shortlist_pauli_children_v1`) probes shortlisted macro generators as serialized child terms for continuation/replay provenance; it does **not** change the default HH pool curriculum or create a new replay mode.
 - `paop_min`: displacement-focused PAOP operators.
@@ -273,7 +297,21 @@ Cross-check suite (exact benchmark; auto-scaled by L/problem defaults):
 
 ```bash
 python pipelines/exact_bench/cross_check_suite.py --L 2 --problem hubbard
+
+# HH single-point seed-surface comparison:
+python pipelines/exact_bench/cross_check_suite.py \
+  --problem hh --L 2 --omega0 1.0 --g-ep 0.8 --n-ph-max 1 \
+  --hh-seed-refine-surface
+
+# HH mini preset (L=2,3 and g=0.8,1.2):
+python pipelines/exact_bench/cross_check_suite.py \
+  --problem hh --hh-seed-benchmark-preset mini4
 ```
+
+HH seed-surface notes:
+- `--hh-seed-refine-surface` is opt-in and HH-only.
+- The default cross-check matrix remains unchanged unless that flag or the preset is requested.
+- Seed-surface sidecars compare pre-ADAPT energy improvement against added proxy cost, with primary ranking by improvement per added `cx_proxy` and secondary views via `depth_proxy` and `sq_proxy`.
 
 CFQM propagation (hardcoded pipeline):
 
@@ -292,6 +330,7 @@ CFQM propagation status (hardcoded pipeline):
 - CFQM uses fixed scheme nodes (`c_j`) and ignores legacy midpoint/left/right `--drive-time-sampling`.
 - `--exact-steps-multiplier` remains a reference-only control and does not change CFQM macro-step count.
 - `--cfqm-stage-exp` default is `expm_multiply_sparse`; `--cfqm-coeff-drop-abs-tol` default is `0.0`; `--cfqm-normalize` default is off.
+- `--cfqm-stage-exp expm_multiply_sparse` and `--cfqm-stage-exp dense_expm` are the true numerical CFQM stage backends.
 - Sparse CFQM stage backend uses native sparse stage assembly + `scipy.sparse.linalg.expm_multiply` (no dense->csc stage materialization).
 - Shared Pauli-term exponentiation helpers are centralized in `src/quantum/pauli_actions.py` (used by both the hardcoded pipeline and CFQM backend).
 - Unknown drive labels are handled with a guardrail policy: nontrivial coefficients warn once per label then are ignored; tiny coefficients (`abs(coeff) <= 1e-14`) are silently ignored.
@@ -300,6 +339,9 @@ CFQM propagation status (hardcoded pipeline):
   `CFQM ignores midpoint/left/right sampling; uses fixed scheme nodes c_j.`
 - If `--cfqm-stage-exp pauli_suzuki2` is selected, runtime warns:
   `Inner Suzuki-2 makes overall method 2nd order; use expm_multiply_sparse/dense_expm for true CFQM order.`
+- `--cfqm-stage-exp pauli_suzuki2` is the only circuitizable CFQM profile in this repo. It is a hardware-facing surrogate, not true CFQM4/CFQM6 order.
+- Honest compiled/transpiled/CX/QPU artifacts exist only for `pauli_suzuki2`; dense/sparse CFQM remain numerical-only and are rejected or skipped by report/transpile/hardware-facing paths.
+- Pitfall: a `compiled/transpiled CFQM4 circuit` in this repo can describe the `pauli_suzuki2` surrogate profile rather than the true numerical CFQM4 implementation.
 
 CFQM6 command:
 
@@ -358,6 +400,7 @@ Why this benchmark:
   sweep-only row listing.
 - Default cost axis for fair matching is `cx_proxy_total`; fallback metric is `term_exp_count_total` when requested.
 - CFQM runs use `pauli_suzuki2` stage exponentials in this benchmark to produce hardware-comparable termwise gate proxies (this is a benchmarking profile, not the high-order dense/sparse CFQM profile).
+- Any compiled/transpiled CFQM4 artifact from this benchmark is therefore the surrogate circuitized profile, not the true numerical dense/sparse CFQM implementation.
 
 Artifacts:
 - `artifacts/cfqm_benchmark/cfqm_vs_suzuki_proxy_runs.json`
@@ -414,6 +457,7 @@ Efficiency-suite outputs:
 
 Efficiency-suite interpretation rules:
 - Main fair tables are exact-cost ties only (`delta=0`) for `cx_proxy`, `pauli_rot_count`, and `expm_calls`.
+- `exact_sparse` and `exact_dense` rows are numerical-only CFQM studies; only `pauli_suzuki2` rows are honest circuitized/transpile/proxy surfaces.
 - Wall-time comparisons are near-tie bins and explicitly marked approximate.
 - Fallback nearest-neighbor matches are appendix-only (non-fair direct comparisons).
 - `S` always means macro-step count (`trotter_steps`), never a fairness axis.
@@ -451,6 +495,7 @@ For staged heavy HH robustness with warm-start -> ADAPT Pool B -> final VQE and 
 Key additions:
 - strict ADAPT Pool B composition enforcement (`UCCSD_lifted + HVA + PAOP_full`)
 - noisy dynamics methods via `--noisy-methods` (default `suzuki2,cfqm4`)
+- when a CFQM noisy run is turned into circuit/proxy/transpile metrics, the hardware-facing surface is the `pauli_suzuki2` surrogate rather than dense/sparse numerical CFQM
 - shared oracle-backed `--symmetry-mitigation-mode` surface (default `off`; active modes remain opt-in and diagnostics-backed)
 - embedded benchmark metrics in JSON/PDF (`term_exp_count_total`, `cx_proxy_total`, `sq_proxy_total`, `depth_proxy_total`, `wall_total_s`, `oracle_eval_s_total`)
 - backward-compatible `dynamics_noisy.profiles.<profile>.modes` alias mirroring `suzuki2`

@@ -78,6 +78,8 @@ class LogicalScreenConfig:
     warm_ansatz: str
     adapt_pool: str | None
     adapt_continuation_mode: str
+    ordering: str = "blocked"
+    boundary: str = "open"
     include_prefix_50: bool = False
     warm_vqe_reps_override: int | None = None
     warm_vqe_restarts_override: int | None = None
@@ -380,12 +382,12 @@ def _stage_row_extrema(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 # math: weakest = argmin(removal_penalty, delta_energy_from_previous, -final_order_index, unit_index)
 
-def _select_weakest_adapt_unit(
+def _rank_adapt_units(
     *,
     units_in_acceptance_order: Sequence[Any],
     adapt_rows: Sequence[Mapping[str, Any]],
-) -> dict[str, Any] | None:
-    candidates: list[tuple[tuple[float, float, int, int], dict[str, Any]]] = []
+) -> list[dict[str, Any]]:
+    ranked: list[tuple[tuple[float, float, int, int], dict[str, Any]]] = []
     for unit, row in zip(units_in_acceptance_order, adapt_rows):
         final_order_index = getattr(unit, "final_order_index", None)
         if final_order_index is None:
@@ -398,6 +400,10 @@ def _select_weakest_adapt_unit(
             "insertion_position": int(getattr(unit, "insertion_position")),
             "removal_penalty": float(row.get("removal_penalty", float("nan"))),
             "delta_energy_from_previous": float(row.get("delta_energy_from_previous", float("nan"))),
+            "energy_gain_per_2q": row.get("energy_gain_per_2q"),
+            "energy_gain_per_depth": row.get("energy_gain_per_depth"),
+            "unit_logical_2q_count": int(row.get("unit_logical_2q_count", 0)),
+            "unit_logical_depth": int(row.get("unit_logical_depth", 0)),
         }
         key = (
             float(entry["removal_penalty"]),
@@ -405,11 +411,23 @@ def _select_weakest_adapt_unit(
             -int(entry["final_order_index"]),
             int(entry["unit_index"]),
         )
-        candidates.append((key, entry))
-    if len(candidates) <= 1:
+        ranked.append((key, entry))
+    ranked.sort(key=lambda item: item[0])
+    return [dict(item[1]) for item in ranked]
+
+
+def _select_weakest_adapt_unit(
+    *,
+    units_in_acceptance_order: Sequence[Any],
+    adapt_rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    ranked = _rank_adapt_units(
+        units_in_acceptance_order=units_in_acceptance_order,
+        adapt_rows=adapt_rows,
+    )
+    if len(ranked) <= 1:
         return None
-    candidates.sort(key=lambda item: item[0])
-    return dict(candidates[0][1])
+    return dict(ranked[0])
 
 
 # math: audit_ctx = emitted audit payload + stage rows + weakest adapt unit summary
@@ -431,7 +449,12 @@ def _build_audit_context(
     adapt_spec = specs_by_stage.get("adapt_vqe", None)
     adapt_rows = rows_by_stage.get("adapt_vqe", [])
     weakest = None
+    ranked_adapt_units: list[dict[str, Any]] = []
     if adapt_spec is not None:
+        ranked_adapt_units = _rank_adapt_units(
+            units_in_acceptance_order=getattr(adapt_spec, "units_in_acceptance_order", []),
+            adapt_rows=adapt_rows,
+        )
         weakest = _select_weakest_adapt_unit(
             units_in_acceptance_order=getattr(adapt_spec, "units_in_acceptance_order", []),
             adapt_rows=adapt_rows,
@@ -449,6 +472,7 @@ def _build_audit_context(
         "audit_json": Path(audit_cfg.output_json),
         "audit_csv": Path(audit_cfg.output_csv),
         "rows_by_stage": rows_by_stage,
+        "ranked_adapt_units": [dict(row) for row in ranked_adapt_units],
         "weakest_adapt_unit": weakest,
         "adapt_stage_metadata": adapt_stage_metadata,
         "seed_prefix_depth": int(seed_prefix_depth),
@@ -485,6 +509,8 @@ def build_screen_staged_cfg(
         warm_ansatz=str(screen_cfg.warm_ansatz),
         adapt_pool=(None if screen_cfg.adapt_pool is None else str(screen_cfg.adapt_pool)),
         adapt_continuation_mode=str(screen_cfg.adapt_continuation_mode),
+        ordering=str(screen_cfg.ordering),
+        boundary=str(screen_cfg.boundary),
     )
     staged_cfg = build_locked_staged_hh_audit_config(audit_cfg)
     staged_cfg = replace(
@@ -1127,6 +1153,8 @@ def run_hh_l2_logical_screen(screen_cfg: LogicalScreenConfig) -> dict[str, Any]:
             "warm_ansatz": str(screen_cfg.warm_ansatz),
             "adapt_pool": screen_cfg.adapt_pool,
             "adapt_continuation_mode": str(screen_cfg.adapt_continuation_mode),
+            "ordering": str(screen_cfg.ordering),
+            "boundary": str(screen_cfg.boundary),
             "include_prefix_50": bool(screen_cfg.include_prefix_50),
             "warm_vqe_reps_override": screen_cfg.warm_vqe_reps_override,
             "warm_vqe_restarts_override": screen_cfg.warm_vqe_restarts_override,
@@ -1184,6 +1212,8 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stress-point-count", type=int, default=_DEFAULT_STRESS_POINT_COUNT)
     parser.add_argument("--warm-ansatz", choices=["hh_hva", "hh_hva_ptw"], default="hh_hva_ptw")
     parser.add_argument("--adapt-pool", type=str, default="paop_lf_std")
+    parser.add_argument("--ordering", choices=["blocked", "interleaved"], default="blocked")
+    parser.add_argument("--boundary", choices=["open", "periodic"], default="open")
     parser.add_argument(
         "--adapt-continuation-mode",
         choices=["legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
@@ -1238,6 +1268,8 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> LogicalScreenConfig:
         warm_ansatz=str(args.warm_ansatz),
         adapt_pool=(None if args.adapt_pool is None else str(args.adapt_pool)),
         adapt_continuation_mode=str(args.adapt_continuation_mode),
+        ordering=str(args.ordering),
+        boundary=str(args.boundary),
         include_prefix_50=bool(args.include_prefix_50),
         warm_vqe_reps_override=_maybe_positive_int(args.warm_vqe_reps, flag="--warm-vqe-reps"),
         warm_vqe_restarts_override=_maybe_positive_int(args.warm_vqe_restarts, flag="--warm-vqe-restarts"),

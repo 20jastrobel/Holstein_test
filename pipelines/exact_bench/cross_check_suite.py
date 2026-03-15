@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -49,6 +50,10 @@ from docs.reports.report_pages import (
     render_manifest_overview_page,
     render_section_divider_page,
 )
+from docs.reports.qiskit_circuit_report import (
+    compute_sweep_proxy_cost,
+    compute_time_dynamics_proxy_cost,
+)
 
 # plt and PdfPages are fetched inside _write_pdf after require_matplotlib() guard.
 
@@ -66,6 +71,7 @@ from src.quantum.vqe_latex_python_pairs import (
     HardcodedUCCSDLayerwiseAnsatz,
     HubbardLayerwiseAnsatz,
     HubbardHolsteinTermwiseAnsatz,
+    HubbardHolsteinPhysicalTermwiseAnsatz,
     HubbardHolsteinLayerwiseAnsatz,
     apply_exp_pauli_polynomial,
     apply_pauli_string,
@@ -78,6 +84,7 @@ from src.quantum.vqe_latex_python_pairs import (
     vqe_minimize,
 )
 from pipelines.exact_bench.benchmark_metrics_proxy import write_proxy_sidecars
+from pipelines.hardcoded.hh_vqe_from_adapt_family import build_family_ansatz_context
 
 # ---------------------------------------------------------------------------
 # Structured-log helper
@@ -115,6 +122,70 @@ _ADAPT_PARAMS: dict[int, dict[str, Any]] = {
     4: {"max_depth": 100, "eps_grad": 1e-7, "eps_energy": 1e-9, "maxiter": 4000, "seed": 42},
     5: {"max_depth": 140, "eps_grad": 1e-7, "eps_energy": 1e-9, "maxiter": 6000, "seed": 42},
     6: {"max_depth": 200, "eps_grad": 1e-7, "eps_energy": 1e-9, "maxiter": 8000, "seed": 42},
+}
+
+_HH_SEED_REFINEMENT_FAMILIES: tuple[str, ...] = (
+    "uccsd_paop_lf_full",
+    "uccsd_otimes_paop_lf_std",
+    "uccsd_otimes_paop_lf2_std",
+    "uccsd_otimes_paop_bond_disp_std",
+)
+
+_HH_SEED_BENCHMARK_PRESETS: dict[str, tuple[dict[str, Any], ...]] = {
+    "mini4": (
+        {
+            "L": 2,
+            "problem": "hh",
+            "t": 1.0,
+            "U": 4.0,
+            "dv": 0.0,
+            "omega0": 1.0,
+            "g_ep": 0.8,
+            "n_ph_max": 1,
+            "boson_encoding": "binary",
+            "ordering": "blocked",
+            "boundary": "open",
+        },
+        {
+            "L": 2,
+            "problem": "hh",
+            "t": 1.0,
+            "U": 4.0,
+            "dv": 0.0,
+            "omega0": 1.0,
+            "g_ep": 1.2,
+            "n_ph_max": 1,
+            "boson_encoding": "binary",
+            "ordering": "blocked",
+            "boundary": "open",
+        },
+        {
+            "L": 3,
+            "problem": "hh",
+            "t": 1.0,
+            "U": 4.0,
+            "dv": 0.0,
+            "omega0": 1.0,
+            "g_ep": 0.8,
+            "n_ph_max": 1,
+            "boson_encoding": "binary",
+            "ordering": "blocked",
+            "boundary": "open",
+        },
+        {
+            "L": 3,
+            "problem": "hh",
+            "t": 1.0,
+            "U": 4.0,
+            "dv": 0.0,
+            "omega0": 1.0,
+            "g_ep": 1.2,
+            "n_ph_max": 1,
+            "boson_encoding": "binary",
+            "ordering": "blocked",
+            "boundary": "open",
+        },
+    )
 }
 
 
@@ -271,6 +342,273 @@ def _evolve_trotter_suzuki2(
 
 def _expectation_hamiltonian(psi: np.ndarray, hmat: np.ndarray) -> float:
     return float(np.real(np.vdot(psi, hmat @ psi)))
+
+
+class _SequentialCompositeAnsatz:
+    """Apply a warm ansatz followed by a family ansatz as one VQE object."""
+
+    def __init__(self, *, left: Any, right: Any) -> None:
+        self.left = left
+        self.right = right
+        self.num_parameters = int(getattr(left, "num_parameters", 0)) + int(getattr(right, "num_parameters", 0))
+        self.reps = int(getattr(left, "reps", 1))
+        self.nq = int(getattr(left, "nq", getattr(right, "nq", 0)))
+
+    def prepare_state(
+        self,
+        theta: np.ndarray,
+        psi_ref: np.ndarray,
+        *,
+        ignore_identity: bool = True,
+        coefficient_tolerance: float | None = None,
+        sort_terms: bool | None = None,
+    ) -> np.ndarray:
+        theta_vec = np.asarray(theta, dtype=float).reshape(-1)
+        n_left = int(getattr(self.left, "num_parameters", 0))
+        n_right = int(getattr(self.right, "num_parameters", 0))
+        if int(theta_vec.size) != int(n_left + n_right):
+            raise ValueError(
+                f"theta length {int(theta_vec.size)} does not match composite num_parameters={int(n_left + n_right)}"
+            )
+        psi_mid = np.asarray(
+            self.left.prepare_state(
+                theta_vec[:n_left],
+                psi_ref,
+                ignore_identity=ignore_identity,
+                coefficient_tolerance=coefficient_tolerance,
+                sort_terms=sort_terms,
+            ),
+            dtype=complex,
+        ).reshape(-1)
+        return np.asarray(
+            self.right.prepare_state(
+                theta_vec[n_left:],
+                psi_mid,
+                ignore_identity=ignore_identity,
+                coefficient_tolerance=coefficient_tolerance,
+                sort_terms=sort_terms,
+            ),
+            dtype=complex,
+        ).reshape(-1)
+
+
+def _non_identity_pauli_labels(poly: Any, *, tol: float = 1e-12) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for term in poly.return_polynomial():
+        coeff = complex(term.p_coeff)
+        if abs(coeff) <= float(tol):
+            continue
+        label = str(term.pw2strng())
+        if all(ch == "e" for ch in label):
+            continue
+        if label not in seen:
+            seen.add(label)
+            ordered.append(label)
+    return ordered
+
+
+def _ansatz_generator_polynomials(ansatz: Any) -> list[Any]:
+    if isinstance(ansatz, _SequentialCompositeAnsatz):
+        return _ansatz_generator_polynomials(ansatz.left) + _ansatz_generator_polynomials(ansatz.right)
+
+    layer_term_groups = getattr(ansatz, "layer_term_groups", None)
+    reps = int(getattr(ansatz, "reps", 1))
+    if isinstance(layer_term_groups, list) and layer_term_groups:
+        out: list[Any] = []
+        for _ in range(reps):
+            for _name, group_terms in layer_term_groups:
+                out.extend(term.polynomial for term in list(group_terms))
+        return out
+
+    base_terms = list(getattr(ansatz, "base_terms", []))
+    if base_terms:
+        return [term.polynomial for _ in range(reps) for term in base_terms]
+    return []
+
+
+def _ansatz_prep_proxy_metrics(ansatz: Any) -> dict[str, int]:
+    total_term_exp = 0
+    total_cx = 0
+    total_sq = 0
+    for poly in _ansatz_generator_polynomials(ansatz):
+        active_labels = _non_identity_pauli_labels(poly)
+        if not active_labels:
+            continue
+        sweep = compute_sweep_proxy_cost(active_labels)
+        total_term_exp += int(sweep["term_exp_count"])
+        total_cx += int(sweep["cx_proxy"])
+        total_sq += int(sweep["sq_proxy"])
+    return {
+        "depth_proxy": int(total_term_exp),
+        "cx_proxy": int(total_cx),
+        "sq_proxy": int(total_sq),
+    }
+
+
+def _hh_seed_point_id(*, L: int, g_ep: float) -> str:
+    return f"L{int(L)}_g{float(g_ep):.3f}".replace(".000", "")
+
+
+def _family_builder_cfg(
+    *,
+    L: int,
+    t_hop: float,
+    U: float,
+    dv: float,
+    omega0: float,
+    g_ep: float,
+    n_ph_max: int,
+    boson_enc: str,
+    ordering: str,
+    boundary: str,
+    reps: int,
+    restarts: int,
+    maxiter: int,
+    method: str,
+    seed: int,
+) -> SimpleNamespace:
+    sector_n_up, sector_n_dn = half_filled_num_particles(int(L))
+    return SimpleNamespace(
+        L=int(L),
+        t=float(t_hop),
+        u=float(U),
+        dv=float(dv),
+        omega0=float(omega0),
+        g_ep=float(g_ep),
+        n_ph_max=int(n_ph_max),
+        boson_encoding=str(boson_enc),
+        ordering=str(ordering),
+        boundary=str(boundary),
+        sector_n_up=int(sector_n_up),
+        sector_n_dn=int(sector_n_dn),
+        reps=int(reps),
+        restarts=int(restarts),
+        maxiter=int(maxiter),
+        method=str(method),
+        seed=int(seed),
+        paop_r=1,
+        paop_split_paulis=False,
+        paop_prune_eps=0.0,
+        paop_normalization="none",
+    )
+
+
+def _time_dynamics_proxy_bundle(
+    *,
+    ordered_labels: list[str],
+    coeff_map: dict[str, complex],
+    t_final: float,
+    trotter_steps: int,
+) -> dict[str, int]:
+    return compute_time_dynamics_proxy_cost(
+        method="suzuki2",
+        t_final=float(t_final),
+        trotter_steps=int(trotter_steps),
+        drive_t0=0.0,
+        drive_time_sampling="midpoint",
+        ordered_labels_exyz=list(ordered_labels),
+        static_coeff_map_exyz=dict(coeff_map),
+        drive_provider_exyz=None,
+        cfqm_stage_exp="pauli_suzuki2",
+    )
+
+
+def _summarize_hh_seed_surface(trials: list[dict[str, Any]]) -> dict[str, Any]:
+    baselines: dict[str, dict[str, Any]] = {}
+    for row in trials:
+        if str(row.get("seed_surface_role", "")) == "warm_only":
+            warm_ansatz = str(row.get("seed_surface_warm_ansatz", ""))
+            if warm_ansatz != "":
+                baselines[warm_ansatz] = row
+
+    comparisons: list[dict[str, Any]] = []
+    for row in trials:
+        role = str(row.get("seed_surface_role", ""))
+        if role in {"", "warm_only"}:
+            continue
+        warm_ansatz = str(row.get("seed_surface_warm_ansatz", ""))
+        baseline = baselines.get(warm_ansatz)
+        if baseline is None:
+            continue
+        improvement_abs = float(baseline["delta_E_abs"]) - float(row["delta_E_abs"])
+        cx_delta = None if row.get("cx_proxy") is None or baseline.get("cx_proxy") is None else int(row["cx_proxy"]) - int(baseline["cx_proxy"])
+        sq_delta = None if row.get("sq_proxy") is None or baseline.get("sq_proxy") is None else int(row["sq_proxy"]) - int(baseline["sq_proxy"])
+        depth_delta = None if row.get("depth_proxy") is None or baseline.get("depth_proxy") is None else int(row["depth_proxy"]) - int(baseline["depth_proxy"])
+        comparisons.append(
+            {
+                "run_id": str(row.get("run_id")),
+                "benchmark_point_id": str(row.get("benchmark_point_id", "")),
+                "warm_ansatz": warm_ansatz,
+                "refine_family": row.get("seed_surface_refine_family", None),
+                "role": role,
+                "baseline_run_id": str(baseline.get("run_id", "")),
+                "baseline_delta_E_abs": float(baseline["delta_E_abs"]),
+                "trial_delta_E_abs": float(row["delta_E_abs"]),
+                "improvement_abs": float(improvement_abs),
+                "added_cx_proxy": cx_delta,
+                "added_sq_proxy": sq_delta,
+                "added_depth_proxy": depth_delta,
+                "improvement_per_added_cx_proxy": (
+                    float(improvement_abs / float(cx_delta)) if cx_delta is not None and cx_delta > 0 else None
+                ),
+                "improvement_per_added_sq_proxy": (
+                    float(improvement_abs / float(sq_delta)) if sq_delta is not None and sq_delta > 0 else None
+                ),
+                "improvement_per_added_depth_proxy": (
+                    float(improvement_abs / float(depth_delta)) if depth_delta is not None and depth_delta > 0 else None
+                ),
+            }
+        )
+
+    comparisons_sorted = sorted(
+        comparisons,
+        key=lambda rec: (
+            rec["warm_ansatz"],
+            float("-inf") if rec["improvement_per_added_cx_proxy"] is None else -float(rec["improvement_per_added_cx_proxy"]),
+            str(rec.get("refine_family", "")),
+            str(rec.get("run_id", "")),
+        ),
+    )
+    return {
+        "enabled": True,
+        "baseline_run_ids": {key: str(val.get("run_id", "")) for key, val in baselines.items()},
+        "comparisons": comparisons_sorted,
+    }
+
+
+def _summarize_hh_seed_preset(points: list[dict[str, Any]]) -> dict[str, Any]:
+    family_rows: dict[str, list[float]] = {}
+    for point in points:
+        for rec in point.get("seed_surface", {}).get("comparisons", []):
+            if str(rec.get("warm_ansatz")) != "hh_hva_ptw":
+                continue
+            fam = rec.get("refine_family", None)
+            score = rec.get("improvement_per_added_cx_proxy", None)
+            if not isinstance(fam, str) or score is None:
+                continue
+            family_rows.setdefault(fam, []).append(float(score))
+
+    median_rankings = []
+    for fam, vals in family_rows.items():
+        median_rankings.append(
+            {
+                "refine_family": str(fam),
+                "points": int(len(vals)),
+                "median_improvement_per_added_cx_proxy": float(np.median(np.asarray(vals, dtype=float))),
+            }
+        )
+    median_rankings.sort(
+        key=lambda rec: (-float(rec["median_improvement_per_added_cx_proxy"]), str(rec["refine_family"]))
+    )
+    best_family = median_rankings[0]["refine_family"] if median_rankings else None
+    return {
+        "points_evaluated": int(len(points)),
+        "ptw_median_rankings": median_rankings,
+        "pre_adapt_best_family_by_median_cx_proxy": best_family,
+        "promotion_recommendation": None,
+        "promotion_gate_reason": "staged_followup_not_run_in_cross_check_suite",
+    }
 
 
 def _spin_orbital_bit_index(site: int, spin: int, num_sites: int, ordering: str) -> int:
@@ -584,6 +922,7 @@ class TrialResult:
     name: str
     category: str  # "conventional_vqe" or "adapt_vqe"
     ansatz_label: str
+    pool_name: str
     energy: float
     exact_energy: float
     delta_e: float
@@ -591,6 +930,7 @@ class TrialResult:
     nfev: int
     psi_vqe: np.ndarray
     elapsed_s: float
+    row_metadata: dict[str, Any] = field(default_factory=dict)
     # ADAPT-specific
     adapt_depth: int = 0
     adapt_stop_reason: str = ""
@@ -663,6 +1003,8 @@ def _run_conventional_vqe_trial(
     seed: int,
     maxiter: int,
     method: str,
+    pool_name: str = "",
+    row_metadata: dict[str, Any] | None = None,
 ) -> TrialResult:
     _ai_log("trial_start", name=name, category="conventional_vqe", num_params=int(ansatz.num_parameters))
     t0 = time.perf_counter()
@@ -680,6 +1022,7 @@ def _run_conventional_vqe_trial(
         name=name,
         category="conventional_vqe",
         ansatz_label=name,
+        pool_name=str(pool_name),
         energy=float(result.energy),
         exact_energy=exact_energy,
         delta_e=float(result.energy - exact_energy),
@@ -687,6 +1030,7 @@ def _run_conventional_vqe_trial(
         nfev=int(getattr(result, "nfev", 0)),
         psi_vqe=psi_vqe,
         elapsed_s=elapsed,
+        row_metadata=dict(row_metadata or {}),
     )
 
 
@@ -702,6 +1046,8 @@ def _run_adapt_vqe_trial(
     eps_energy: float,
     maxiter: int,
     seed: int,
+    pool_name: str = "",
+    row_metadata: dict[str, Any] | None = None,
 ) -> TrialResult:
     _ai_log("trial_start", name=name, category="adapt_vqe", pool_size=len(pool))
     t0 = time.perf_counter()
@@ -720,6 +1066,7 @@ def _run_adapt_vqe_trial(
         name=name,
         category="adapt_vqe",
         ansatz_label=name,
+        pool_name=str(pool_name),
         energy=energy,
         exact_energy=exact_energy,
         delta_e=float(energy - exact_energy),
@@ -727,6 +1074,7 @@ def _run_adapt_vqe_trial(
         nfev=nfev,
         psi_vqe=psi,
         elapsed_s=elapsed,
+        row_metadata=dict(row_metadata or {}),
         adapt_depth=depth,
         adapt_stop_reason=stop,
     )
@@ -825,8 +1173,97 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
     # --- 5. Build and run all trials ---
     trials: list[TrialResult] = []
     pbc_flag = (boundary == "periodic")
+    benchmark_point_id = _hh_seed_point_id(L=L, g_ep=float(args.g_ep)) if is_hh else f"L{int(L)}"
 
     if is_hh:
+        hh_family_cfg = _family_builder_cfg(
+            L=L,
+            t_hop=t_hop,
+            U=U,
+            dv=dv,
+            omega0=omega0,
+            g_ep=g_ep,
+            n_ph_max=n_ph_max,
+            boson_enc=boson_enc,
+            ordering=ordering,
+            boundary=boundary,
+            reps=reps,
+            restarts=restarts,
+            maxiter=maxiter,
+            method=method,
+            seed=seed,
+        )
+
+        def _seed_surface_row_metadata(
+            *,
+            warm_ansatz: str,
+            role: str,
+            refine_family: str | None = None,
+            family_kind: str | None = None,
+            pool_meta: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            meta: dict[str, Any] = {
+                "benchmark_point_id": str(benchmark_point_id),
+                "seed_surface_warm_ansatz": str(warm_ansatz),
+                "seed_surface_role": str(role),
+                "seed_surface_refine_family": refine_family,
+                "seed_surface_family_kind": family_kind,
+            }
+            if isinstance(pool_meta, dict) and pool_meta:
+                motif_families = pool_meta.get("motif_families", None)
+                if motif_families is not None:
+                    meta["seed_surface_paop_motif_families"] = list(motif_families)
+                elif pool_meta.get("motif_family", None) is not None:
+                    meta["seed_surface_paop_motif_families"] = [str(pool_meta["motif_family"])]
+            return meta
+
+        def _run_seed_surface_trial(
+            *,
+            name: str,
+            warm_ansatz_name: str,
+            warm_ansatz: Any,
+            refine_family: str | None,
+            role: str,
+        ) -> TrialResult:
+            ansatz_obj = warm_ansatz
+            pool_name = warm_ansatz_name
+            family_kind = None
+            pool_meta: dict[str, Any] | None = None
+            if refine_family is not None:
+                family_ctx = build_family_ansatz_context(
+                    hh_family_cfg,
+                    psi_ref=psi_ref,
+                    h_poly=h_poly,
+                    family=str(refine_family),
+                    e_exact=gs_energy,
+                )
+                ansatz_obj = _SequentialCompositeAnsatz(left=warm_ansatz, right=family_ctx["ansatz"])
+                pool_name = str(refine_family)
+                pool_meta = dict(family_ctx["pool_meta"])
+                family_kind = str(pool_meta.get("family_kind", "explicit_family"))
+            return _run_conventional_vqe_trial(
+                name=name,
+                ansatz=ansatz_obj,
+                h_poly=h_poly,
+                psi_ref=psi_ref,
+                exact_energy=gs_energy,
+                restarts=restarts,
+                seed=seed,
+                maxiter=maxiter,
+                method=method,
+                pool_name=pool_name,
+                row_metadata={
+                    **_seed_surface_row_metadata(
+                        warm_ansatz=warm_ansatz_name,
+                        role=role,
+                        refine_family=refine_family,
+                        family_kind=family_kind,
+                        pool_meta=pool_meta,
+                    ),
+                    **_ansatz_prep_proxy_metrics(ansatz_obj),
+                },
+            )
+
         # Trial 1: HH Termwise
         _ai_log("building_ansatz", name="HH-Termwise")
         ans_tw = HubbardHolsteinTermwiseAnsatz(
@@ -837,7 +1274,40 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
         trials.append(_run_conventional_vqe_trial(
             name="HH-Termwise", ansatz=ans_tw, h_poly=h_poly, psi_ref=psi_ref,
             exact_energy=gs_energy, restarts=restarts, seed=seed, maxiter=maxiter, method=method,
+            pool_name="hh_termwise",
+            row_metadata={
+                "benchmark_point_id": str(benchmark_point_id),
+                **_ansatz_prep_proxy_metrics(ans_tw),
+            },
         ))
+
+        if bool(args.hh_seed_refine_surface):
+            _ai_log("building_ansatz", name="HH-PhysicalTermwise")
+            ans_ptw = HubbardHolsteinPhysicalTermwiseAnsatz(
+                dims=L, J=t_hop, U=U, omega0=omega0, g=g_ep,
+                n_ph_max=n_ph_max, boson_encoding=boson_enc,
+                reps=reps, repr_mode="JW", indexing=ordering, pbc=pbc_flag,
+            )
+            trials.append(
+                _run_seed_surface_trial(
+                    name="HH-PhysicalTermwise",
+                    warm_ansatz_name="hh_hva_ptw",
+                    warm_ansatz=ans_ptw,
+                    refine_family=None,
+                    role="warm_only",
+                )
+            )
+            for refine_family in _HH_SEED_REFINEMENT_FAMILIES:
+                role = "additive_union" if refine_family == "uccsd_paop_lf_full" else "product_family"
+                trials.append(
+                    _run_seed_surface_trial(
+                        name=f"HH-PhysicalTermwise + {refine_family}",
+                        warm_ansatz_name="hh_hva_ptw",
+                        warm_ansatz=ans_ptw,
+                        refine_family=refine_family,
+                        role=role,
+                    )
+                )
 
         # Trial 2: HH Layerwise
         _ai_log("building_ansatz", name="HH-Layerwise")
@@ -849,7 +1319,31 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
         trials.append(_run_conventional_vqe_trial(
             name="HH-Layerwise", ansatz=ans_lw, h_poly=h_poly, psi_ref=psi_ref,
             exact_energy=gs_energy, restarts=restarts, seed=seed, maxiter=maxiter, method=method,
+            pool_name="hh_hva",
+            row_metadata={
+                "benchmark_point_id": str(benchmark_point_id),
+                **(
+                    _seed_surface_row_metadata(
+                        warm_ansatz="hh_hva",
+                        role="warm_only",
+                    )
+                    if bool(args.hh_seed_refine_surface)
+                    else {}
+                ),
+                **_ansatz_prep_proxy_metrics(ans_lw),
+            },
         ))
+
+        if bool(args.hh_seed_refine_surface) and int(L) == 2:
+            trials.append(
+                _run_seed_surface_trial(
+                    name="HH-Layerwise + uccsd_otimes_paop_lf_std",
+                    warm_ansatz_name="hh_hva",
+                    warm_ansatz=ans_lw,
+                    refine_family="uccsd_otimes_paop_lf_std",
+                    role="reduced_comparison",
+                )
+            )
 
         # Trial 3: ADAPT(full_hamiltonian) for HH
         pool_fh = _build_adapt_pool_hh(h_poly, L, num_particles, ordering, "full_hamiltonian", n_ph_max, boson_enc)
@@ -859,6 +1353,10 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
                 exact_energy=gs_energy, max_depth=adapt_params["max_depth"],
                 eps_grad=adapt_params["eps_grad"], eps_energy=adapt_params["eps_energy"],
                 maxiter=adapt_params["maxiter"], seed=adapt_params["seed"],
+                pool_name="full_hamiltonian",
+                row_metadata={
+                    "benchmark_point_id": str(benchmark_point_id),
+                },
             ))
 
     else:
@@ -873,6 +1371,11 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
         trials.append(_run_conventional_vqe_trial(
             name="HVA-Layerwise", ansatz=ans_hva, h_poly=h_poly, psi_ref=psi_ref,
             exact_energy=gs_energy, restarts=restarts, seed=seed, maxiter=maxiter, method=method,
+            pool_name="hva",
+            row_metadata={
+                "benchmark_point_id": str(benchmark_point_id),
+                **_ansatz_prep_proxy_metrics(ans_hva),
+            },
         ))
 
         # Trial 2: UCCSD Layerwise
@@ -885,6 +1388,11 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
         trials.append(_run_conventional_vqe_trial(
             name="UCCSD-Layerwise", ansatz=ans_uccsd, h_poly=h_poly, psi_ref=psi_ref,
             exact_energy=gs_energy, restarts=restarts, seed=seed, maxiter=maxiter, method=method,
+            pool_name="uccsd",
+            row_metadata={
+                "benchmark_point_id": str(benchmark_point_id),
+                **_ansatz_prep_proxy_metrics(ans_uccsd),
+            },
         ))
 
         # Trial 3: ADAPT(uccsd)
@@ -895,6 +1403,8 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
                 exact_energy=gs_energy, max_depth=adapt_params["max_depth"],
                 eps_grad=adapt_params["eps_grad"], eps_energy=adapt_params["eps_energy"],
                 maxiter=adapt_params["maxiter"], seed=adapt_params["seed"],
+                pool_name="uccsd",
+                row_metadata={"benchmark_point_id": str(benchmark_point_id)},
             ))
 
         # Trial 4: ADAPT(full_hamiltonian)
@@ -905,6 +1415,8 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
                 exact_energy=gs_energy, max_depth=adapt_params["max_depth"],
                 eps_grad=adapt_params["eps_grad"], eps_energy=adapt_params["eps_energy"],
                 maxiter=adapt_params["maxiter"], seed=adapt_params["seed"],
+                pool_name="full_hamiltonian",
+                row_metadata={"benchmark_point_id": str(benchmark_point_id)},
             ))
 
     # --- 6. Run Trotter trajectories for each trial ---
@@ -927,7 +1439,13 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
                 final_fidelity=trial.trajectory[-1]["fidelity"] if trial.trajectory else None)
 
     # --- 7. Build output payload ---
-    payload = _build_payload(args, trials, gs_energy, hub_params, adapt_params)
+    shared_dynamics_proxy = _time_dynamics_proxy_bundle(
+        ordered_labels=ordered_labels,
+        coeff_map=coeff_map,
+        t_final=t_final,
+        trotter_steps=trotter_steps,
+    )
+    payload = _build_payload(args, trials, gs_energy, hub_params, adapt_params, shared_dynamics_proxy)
 
     # --- 8. Write artifacts ---
     out_dir = Path(args.output_dir)
@@ -957,6 +1475,10 @@ def run_cross_check(args: argparse.Namespace) -> dict[str, Any]:
             "vqe_restarts": int(restarts),
             "vqe_maxiter": int(maxiter),
         },
+        summary_extras={
+            "shared_time_dynamics_proxy": dict(shared_dynamics_proxy),
+            "seed_surface": payload.get("seed_surface", None),
+        },
     )
     _ai_log(
         "metrics_proxy_written",
@@ -979,6 +1501,7 @@ def _build_payload(
     exact_energy: float,
     hub_params: dict,
     adapt_params: dict,
+    shared_dynamics_proxy: dict[str, int],
 ) -> dict[str, Any]:
     trial_summaries = []
     for tr in trials:
@@ -987,6 +1510,7 @@ def _build_payload(
             "method_id": tr.name,
             "method_kind": tr.category,
             "ansatz_name": tr.ansatz_label,
+            "pool_name": tr.pool_name,
             "name": tr.name,
             "category": tr.category,
             "energy": tr.energy,
@@ -1000,6 +1524,8 @@ def _build_payload(
             "runtime_s": round(tr.elapsed_s, 3),
             "elapsed_s": round(tr.elapsed_s, 3),
         }
+        if tr.row_metadata:
+            d.update(dict(tr.row_metadata))
         if tr.category == "adapt_vqe":
             d["adapt_depth_reached"] = tr.adapt_depth
             d["adapt_depth"] = tr.adapt_depth
@@ -1009,6 +1535,11 @@ def _build_payload(
             d["min_fidelity"] = min(r["fidelity"] for r in tr.trajectory)
         trial_summaries.append(d)
 
+    seed_surface_summary = (
+        _summarize_hh_seed_surface(trial_summaries)
+        if str(args.problem).strip().lower() == "hh" and bool(getattr(args, "hh_seed_refine_surface", False))
+        else None
+    )
     return {
         "cross_check_suite": True,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1022,8 +1553,12 @@ def _build_payload(
             "boundary": str(args.boundary),
             "auto_scaled_hub": hub_params,
             "auto_scaled_adapt": adapt_params,
+            "hh_seed_refine_surface": bool(getattr(args, "hh_seed_refine_surface", False)),
+            "hh_seed_benchmark_preset": getattr(args, "hh_seed_benchmark_preset", None),
         },
         "exact_ground_energy": exact_energy,
+        "shared_time_dynamics_proxy": dict(shared_dynamics_proxy),
+        "seed_surface": seed_surface_summary,
         "trials": trial_summaries,
     }
 
@@ -1319,12 +1854,74 @@ def _write_pdf(
 # CLI
 # ---------------------------------------------------------------------------
 
+
+def run_cross_check_preset(args: argparse.Namespace) -> dict[str, Any]:
+    preset_key = str(args.hh_seed_benchmark_preset).strip().lower()
+    points = _HH_SEED_BENCHMARK_PRESETS.get(preset_key)
+    if points is None:
+        raise ValueError(f"Unsupported HH seed benchmark preset: {preset_key}")
+
+    root_out = Path(args.output_dir)
+    preset_out = root_out / f"hh_seed_benchmark_{preset_key}"
+    preset_out.mkdir(parents=True, exist_ok=True)
+
+    point_payloads: list[dict[str, Any]] = []
+    aggregate_rows: list[dict[str, Any]] = []
+    for point in points:
+        point_args = argparse.Namespace(**vars(args))
+        point_args.hh_seed_refine_surface = True
+        for key, value in point.items():
+            setattr(point_args, key, value)
+        point_id = _hh_seed_point_id(L=int(point["L"]), g_ep=float(point["g_ep"]))
+        point_args.output_dir = str(preset_out / point_id)
+        payload = run_cross_check(point_args)
+        point_payloads.append(payload)
+        for row in payload.get("trials", []):
+            rec = dict(row)
+            rec["run_id"] = f"{point_id}::{row.get('run_id', '')}"
+            rec["method_id"] = f"{point_id}::{row.get('method_id', '')}"
+            aggregate_rows.append(rec)
+
+    summary_dir = preset_out / "summary"
+    sidecars = write_proxy_sidecars(
+        aggregate_rows,
+        summary_dir,
+        defaults={"problem": "hh"},
+        summary_extras={
+            "preset": preset_key,
+            "decision_metrics": _summarize_hh_seed_preset(point_payloads),
+        },
+    )
+    aggregate_payload = {
+        "cross_check_suite": True,
+        "hh_seed_benchmark_preset": str(preset_key),
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "points": point_payloads,
+        "decision_metrics": _summarize_hh_seed_preset(point_payloads),
+        "artifacts": {
+            "preset_output_dir": str(preset_out),
+            "summary_csv": str(sidecars["csv"]),
+            "summary_jsonl": str(sidecars["jsonl"]),
+            "summary_json": str(sidecars["summary_json"]),
+        },
+    }
+    summary_json = preset_out / f"xchk_hh_seed_benchmark_{preset_key}.json"
+    summary_json.write_text(json.dumps(aggregate_payload, indent=2, default=str), encoding="utf-8")
+    _ai_log(
+        "cross_check_preset_done",
+        preset=preset_key,
+        points=len(point_payloads),
+        summary_json=str(summary_json),
+    )
+    return aggregate_payload
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Cross-check suite: compare multiple ansätze vs exact ED.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--L", type=int, required=True, help="Number of sites")
+    p.add_argument("--L", type=int, default=None, help="Number of sites")
     p.add_argument("--problem", choices=["hubbard", "hh"], default="hubbard",
                    help="Problem type (default: hubbard)")
     p.add_argument("--t", type=float, default=1.0, help="Hopping parameter")
@@ -1358,8 +1955,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     # Output
     p.add_argument("--output-dir", default=str(REPO_ROOT / "artifacts" / "cross_check"),
                    help="Output directory for JSON and PDF")
+    p.add_argument(
+        "--hh-seed-refine-surface",
+        action="store_true",
+        help="Add the opt-in HH warm/refine conventional-VQE comparison arms for the current HH point.",
+    )
+    p.add_argument(
+        "--hh-seed-benchmark-preset",
+        choices=sorted(_HH_SEED_BENCHMARK_PRESETS.keys()),
+        default=None,
+        help="Run the small HH seed benchmark preset sweep instead of a single-point cross-check.",
+    )
 
     args = p.parse_args(argv)
+    if args.hh_seed_benchmark_preset is None and args.L is None:
+        raise ValueError("--L is required unless --hh-seed-benchmark-preset is used.")
+    if args.hh_seed_benchmark_preset is not None and str(args.problem).strip().lower() != "hh":
+        raise ValueError("--hh-seed-benchmark-preset is HH-only; use --problem hh.")
+    if bool(args.hh_seed_refine_surface) and str(args.problem).strip().lower() != "hh":
+        raise ValueError("--hh-seed-refine-surface is HH-only; use --problem hh.")
     if str(args.problem).strip().lower() == "hh" and args.vqe_method is not None and str(args.vqe_method).strip().upper() != "SPSA":
         raise ValueError(
             "HH cross-check is SPSA-only for --vqe-method. "
@@ -1370,6 +1984,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.hh_seed_benchmark_preset is not None:
+        run_cross_check_preset(args)
+        return
     run_cross_check(args)
 
 

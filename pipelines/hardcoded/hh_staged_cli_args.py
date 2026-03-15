@@ -52,6 +52,29 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
         help="Auto-stop warm HH-VQE once abs(E_warm_best - E_exact_filtered) is <= this value.",
     )
 
+    # Optional seed-refine conventional family-VQE
+    p.add_argument(
+        "--seed-refine-family",
+        choices=[
+            "uccsd_otimes_paop_lf_std",
+            "uccsd_otimes_paop_lf2_std",
+            "uccsd_otimes_paop_bond_disp_std",
+        ],
+        default=None,
+        help=(
+            "Optional explicit-family conventional VQE refine stage inserted between warm-start "
+            "and ADAPT. Disabled by default."
+        ),
+    )
+    p.add_argument("--seed-refine-reps", type=int, default=None)
+    p.add_argument("--seed-refine-maxiter", type=int, default=None)
+    p.add_argument(
+        "--seed-refine-optimizer",
+        choices=["SPSA"],
+        default=None,
+        help="Optimizer for optional seed-refine conventional VQE (default: SPSA).",
+    )
+
     # Shared VQE backend / SPSA knobs
     p.add_argument(
         "--vqe-energy-backend",
@@ -194,12 +217,47 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--exact-steps-multiplier", type=int, default=None)
     p.add_argument("--fidelity-subspace-energy-tol", type=float, default=1e-9)
     p.add_argument(
+        "--fixed-final-state-json",
+        type=Path,
+        default=None,
+        help=(
+            "Skip warm/ADAPT/replay and import the time-dynamics seed from "
+            "initial_state.amplitudes_qn_to_q0 in an existing HH JSON."
+        ),
+    )
+    p.set_defaults(fixed_final_state_strict_match=True)
+    p.add_argument(
+        "--fixed-final-state-strict-match",
+        dest="fixed_final_state_strict_match",
+        action="store_true",
+        help="Require imported fixed-state metadata to match the requested HH physics exactly.",
+    )
+    p.add_argument(
+        "--no-fixed-final-state-strict-match",
+        dest="fixed_final_state_strict_match",
+        action="store_false",
+        help="Allow imported fixed-state metadata mismatches and record them in provenance.",
+    )
+    p.add_argument(
         "--cfqm-stage-exp",
         choices=["expm_multiply_sparse", "dense_expm", "pauli_suzuki2"],
         default="expm_multiply_sparse",
     )
     p.add_argument("--cfqm-coeff-drop-abs-tol", type=float, default=0.0)
     p.add_argument("--cfqm-normalize", action="store_true")
+    p.add_argument(
+        "--circuit-backend-name",
+        type=str,
+        default=None,
+        help="Backend topology name for local transpile metrics only.",
+    )
+    p.add_argument(
+        "--circuit-use-fake-backend",
+        action="store_true",
+        help="Resolve --circuit-backend-name via fake backend providers for local transpilation.",
+    )
+    p.add_argument("--circuit-transpile-optimization-level", type=int, default=3)
+    p.add_argument("--circuit-seed-transpiler", type=int, default=7)
 
     # Drive remains opt-in for this wrapper.
     p.add_argument("--enable-drive", action="store_true")

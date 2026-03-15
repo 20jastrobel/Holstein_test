@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -61,6 +62,7 @@ PdfPages = get_PdfPages() if HAS_MATPLOTLIB else type("PdfPages", (), {})  # typ
 # Imports from the active repo quantum modules (no pydephasing fallback).
 # ---------------------------------------------------------------------------
 from src.quantum.hubbard_latex_python_pairs import (
+    bravais_nearest_neighbor_edges,
     build_hubbard_hamiltonian,
     build_hubbard_holstein_hamiltonian,
     boson_qubits_per_site,
@@ -155,9 +157,11 @@ from pipelines.hardcoded.hh_continuation_pruning import (
 
 try:
     from src.quantum.operator_pools import make_pool as make_paop_pool
+    from src.quantum.operator_pools.polaron_paop import make_phonon_motifs
     from src.quantum.operator_pools.vlf_sq import build_vlf_sq_pool as build_vlf_sq_family
 except Exception as exc:  # pragma: no cover - defensive fallback
     make_paop_pool = None
+    make_phonon_motifs = None
     build_vlf_sq_family = None
     _PAOP_IMPORT_ERROR = str(exc)
 else:
@@ -386,6 +390,40 @@ def _load_adapt_initial_state(
 
 
 _HH_STAGED_CONTINUATION_MODES = frozenset({"phase1_v1", "phase2_v1", "phase3_v1"})
+_HH_UCCSD_PAOP_PRODUCT_SPECS: dict[str, dict[str, Any]] = {
+    "uccsd_otimes_paop_lf_std": {
+        "motif_family": "paop_lf_std",
+        "parameterization": "single_product",
+        "adapt_visible": True,
+    },
+    "uccsd_otimes_paop_lf2_std": {
+        "motif_family": "paop_lf2_std",
+        "parameterization": "single_product",
+        "adapt_visible": True,
+    },
+    "uccsd_otimes_paop_bond_disp_std": {
+        "motif_family": "paop_bond_disp_std",
+        "parameterization": "single_product",
+        "adapt_visible": True,
+    },
+    "uccsd_otimes_paop_lf_std_seq2p": {
+        "motif_family": "paop_lf_std",
+        "parameterization": "double_sequential",
+        "adapt_visible": True,
+    },
+    "uccsd_otimes_paop_lf2_std_seq2p": {
+        "motif_family": "paop_lf2_std",
+        "parameterization": "double_sequential",
+        "adapt_visible": True,
+    },
+    "uccsd_otimes_paop_bond_disp_std_seq2p": {
+        "motif_family": "paop_bond_disp_std",
+        "parameterization": "double_sequential",
+        "adapt_visible": True,
+    },
+}
+_UCCSD_SINGLE_LABEL_RE = re.compile(r"^uccsd_sing\((alpha|beta):(\d+)->(\d+)\)$")
+_UCCSD_DOUBLE_LABEL_RE = re.compile(r"^uccsd_dbl\((aa|bb|ab):(\d+),(\d+)->(\d+),(\d+)\)$")
 
 
 def _extract_nested(payload: Mapping[str, Any], *keys: str) -> Any:
@@ -500,6 +538,64 @@ class AdaptVQEResult:
     history: list[dict[str, Any]]
     stop_reason: str
     nfev_total: int
+
+
+@dataclass(frozen=True)
+class _ADAPTLogicalCandidate:
+    """Private ADAPT selection unit for multi-parameter logical pool elements."""
+    logical_label: str
+    pool_indices: tuple[int, ...]
+    parameterization: str
+    family_id: str
+
+
+def _parse_seq2p_step_label(label: str) -> tuple[str, str] | None:
+    raw = str(label).strip()
+    for step_name in ("ferm", "motif"):
+        suffix = f"::step={step_name}"
+        if raw.endswith(suffix):
+            return raw[: -len(suffix)], step_name
+    return None
+
+
+def _build_seq2p_logical_candidates(
+    pool: Sequence[AnsatzTerm],
+    *,
+    family_id: str,
+) -> list[_ADAPTLogicalCandidate]:
+    candidates: list[_ADAPTLogicalCandidate] = []
+    idx = 0
+    while idx < len(pool):
+        if idx + 1 >= len(pool):
+            raise ValueError("Malformed seq2p pool: trailing unpaired flat term.")
+        lhs = _parse_seq2p_step_label(str(pool[idx].label))
+        rhs = _parse_seq2p_step_label(str(pool[idx + 1].label))
+        if lhs is None or rhs is None:
+            raise ValueError("Malformed seq2p pool: expected paired ::step=ferm/::step=motif labels.")
+        lhs_base, lhs_step = lhs
+        rhs_base, rhs_step = rhs
+        if lhs_step != "ferm" or rhs_step != "motif" or lhs_base != rhs_base:
+            raise ValueError("Malformed seq2p pool: expected adjacent ferm/motif terms for each logical pair.")
+        candidates.append(
+            _ADAPTLogicalCandidate(
+                logical_label=str(lhs_base),
+                pool_indices=(int(idx), int(idx + 1)),
+                parameterization="double_sequential",
+                family_id=str(family_id),
+            )
+        )
+        idx += 2
+    return candidates
+
+
+def _logical_candidate_gradient_summary(
+    candidate: _ADAPTLogicalCandidate,
+    gradients: np.ndarray,
+) -> tuple[float, list[float], list[float]]:
+    signed_components = [float(gradients[int(idx)]) for idx in candidate.pool_indices]
+    abs_components = [abs(float(val)) for val in signed_components]
+    score = math.sqrt(sum(float(val) * float(val) for val in abs_components))
+    return float(score), signed_components, abs_components
 
 
 def _build_uccsd_pool(
@@ -830,6 +926,226 @@ def _build_vlf_sq_pool(
     return [AnsatzTerm(label=label, polynomial=poly) for label, poly in pool_specs], dict(meta)
 
 
+def _clean_real_pool_polynomial(poly: Any, prune_eps: float = 0.0) -> PauliPolynomial:
+    terms = poly.return_polynomial()
+    if not terms:
+        return PauliPolynomial("JW")
+    nq = int(terms[0].nqubit())
+    cleaned = PauliPolynomial("JW")
+    for term in terms:
+        coeff = complex(term.p_coeff)
+        if abs(coeff) <= float(prune_eps):
+            continue
+        if abs(coeff.imag) > 1e-10:
+            raise ValueError(f"Non-negligible imaginary coefficient in product-family pool term: {coeff}")
+        cleaned.add_term(PauliTerm(nq, ps=str(term.pw2strng()), pc=float(coeff.real)))
+    cleaned._reduce()
+    return cleaned
+
+
+def _fermion_mode_to_site(mode: int, *, num_sites: int, ordering: str) -> int:
+    mode_i = int(mode)
+    n_sites = int(num_sites)
+    ordering_key = str(ordering).strip().lower()
+    if mode_i < 0 or mode_i >= 2 * n_sites:
+        raise ValueError(f"Fermion mode {mode_i} out of range for num_sites={n_sites}")
+    if ordering_key == "interleaved":
+        return mode_i // 2
+    if ordering_key == "blocked":
+        if mode_i < n_sites:
+            return mode_i
+        return mode_i - n_sites
+    raise ValueError(f"Unsupported fermion ordering '{ordering}'.")
+
+
+def _parse_lifted_uccsd_support(
+    label: str,
+    *,
+    num_sites: int,
+    ordering: str,
+) -> tuple[str, tuple[int, ...]]:
+    raw = str(label).strip()
+    prefix = "uccsd_ferm_lifted::"
+    if not raw.startswith(prefix):
+        raise ValueError(f"Unsupported lifted UCCSD label '{raw}'.")
+    body = raw[len(prefix):]
+
+    m_single = _UCCSD_SINGLE_LABEL_RE.match(body)
+    if m_single is not None:
+        modes = [int(m_single.group(2)), int(m_single.group(3))]
+        kind = "single"
+    else:
+        m_double = _UCCSD_DOUBLE_LABEL_RE.match(body)
+        if m_double is None:
+            raise ValueError(f"Could not parse lifted UCCSD label '{raw}'.")
+        modes = [
+            int(m_double.group(2)),
+            int(m_double.group(3)),
+            int(m_double.group(4)),
+            int(m_double.group(5)),
+        ]
+        kind = "double"
+
+    sites = tuple(
+        sorted(
+            {
+                _fermion_mode_to_site(mode, num_sites=int(num_sites), ordering=str(ordering))
+                for mode in modes
+            }
+        )
+    )
+    return kind, sites
+
+
+def _motif_matches_excitation_support(
+    *,
+    motif: Any,
+    motif_family: str,
+    support_sites: tuple[int, ...],
+    nearest_neighbor_bonds: set[tuple[int, int]],
+) -> bool:
+    support_set = {int(site) for site in support_sites}
+    motif_sites = {int(site) for site in getattr(motif, "sites", ())}
+    motif_bonds = tuple(tuple(sorted((int(i), int(j)))) for i, j in getattr(motif, "bonds", ()))
+    if not motif_sites:
+        return False
+    if not motif_bonds:
+        return bool(motif_sites & support_set)
+
+    if str(motif_family).strip().lower() == "paop_bond_disp_std":
+        for bond in motif_bonds:
+            if set(bond).issubset(support_set):
+                return True
+            if bond in nearest_neighbor_bonds and bond[0] in support_set and bond[1] in support_set:
+                return True
+        return False
+
+    return bool(motif_sites & support_set)
+
+
+def _build_hh_uccsd_paop_product_pool(
+    num_sites: int,
+    n_ph_max: int,
+    boson_encoding: str,
+    ordering: str,
+    boundary: str,
+    family_key: str,
+    paop_r: int,
+    paop_split_paulis: bool,
+    paop_prune_eps: float,
+    paop_normalization: str,
+    num_particles: tuple[int, int],
+) -> tuple[list[AnsatzTerm], dict[str, Any]]:
+    del paop_r  # reserved for future locality extensions
+    if make_phonon_motifs is None:
+        raise RuntimeError(f"PAOP product pool requested but operator_pools module unavailable: {_PAOP_IMPORT_ERROR}")
+
+    family_key_norm = str(family_key).strip().lower()
+    spec = _HH_UCCSD_PAOP_PRODUCT_SPECS.get(family_key_norm)
+    if spec is None:
+        raise ValueError(f"Unsupported HH UCCSD⊗PAOP product family '{family_key}'.")
+    if bool(paop_split_paulis):
+        raise ValueError("UCCSD⊗PAOP product families do not support --paop-split-paulis; keep grouped logical generators intact.")
+
+    motif_family = str(spec["motif_family"])
+    parameterization = str(spec["parameterization"])
+    seq2p = parameterization == "double_sequential"
+    family_label_prefix = "uccsd_otimes_paop_seq2p" if seq2p else "uccsd_otimes_paop"
+
+    uccsd_lifted_pool = _build_hh_uccsd_fermion_lifted_pool(
+        int(num_sites),
+        int(n_ph_max),
+        str(boson_encoding),
+        str(ordering),
+        str(boundary),
+        num_particles=tuple(num_particles),
+    )
+    motifs = make_phonon_motifs(
+        motif_family,
+        num_sites=int(num_sites),
+        n_ph_max=int(n_ph_max),
+        boson_encoding=str(boson_encoding),
+        boundary=str(boundary),
+        prune_eps=float(paop_prune_eps),
+        normalization=str(paop_normalization),
+    )
+    nearest_neighbor_bonds = {
+        tuple(sorted((int(i), int(j))))
+        for i, j in bravais_nearest_neighbor_edges(
+            int(num_sites),
+            pbc=(str(boundary).strip().lower() == "periodic"),
+        )
+    }
+
+    sorted_uccsd = sorted(
+        list(uccsd_lifted_pool),
+        key=lambda op: (
+            0 if _parse_lifted_uccsd_support(str(op.label), num_sites=int(num_sites), ordering=str(ordering))[0] == "single" else 1,
+            str(op.label),
+        ),
+    )
+    ordered_motifs = sorted(list(motifs), key=lambda motif: (str(motif.family), str(motif.label)))
+
+    raw_pool: list[AnsatzTerm] = []
+    raw_pair_count = 0
+    for op in sorted_uccsd:
+        _kind, support_sites = _parse_lifted_uccsd_support(
+            str(op.label),
+            num_sites=int(num_sites),
+            ordering=str(ordering),
+        )
+        for motif in ordered_motifs:
+            if not _motif_matches_excitation_support(
+                motif=motif,
+                motif_family=motif_family,
+                support_sites=support_sites,
+                nearest_neighbor_bonds=nearest_neighbor_bonds,
+            ):
+                continue
+            raw_pair_count += 1
+            base_label = f"{family_label_prefix}::{op.label}::{motif.family}::{motif.label}"
+            if seq2p:
+                raw_pool.append(AnsatzTerm(label=f"{base_label}::step=ferm", polynomial=op.polynomial))
+                raw_pool.append(AnsatzTerm(label=f"{base_label}::step=motif", polynomial=motif.poly))
+                continue
+            product_poly = _clean_real_pool_polynomial(op.polynomial * motif.poly, float(paop_prune_eps))
+            if not product_poly.return_polynomial():
+                continue
+            raw_pool.append(AnsatzTerm(label=base_label, polynomial=product_poly))
+
+    if seq2p:
+        pool = list(raw_pool)
+        dedup_strategy = "disabled_pair_label_preserving"
+    elif int(n_ph_max) >= 2:
+        pool = _deduplicate_pool_terms_lightweight(raw_pool)
+        dedup_strategy = "signature_digest"
+    else:
+        pool = _deduplicate_pool_terms(raw_pool)
+        dedup_strategy = "signature"
+
+    return list(pool), {
+        "family": family_key_norm,
+        "family_kind": "uccsd_paop_product",
+        "parameterization": parameterization,
+        "motif_family": motif_family,
+        "locality_rule": (
+            "lf_overlap"
+            if motif_family in {"paop_lf_std", "paop_lf2_std"}
+            else "bond_disp_local_compatible"
+        ),
+        "raw_sizes": {
+            "raw_uccsd_lifted": int(len(uccsd_lifted_pool)),
+            "raw_phonon_motifs": int(len(motifs)),
+            "raw_logical_pairs": int(raw_pair_count),
+            "raw_emitted_terms": int(len(raw_pool)),
+        },
+        "logical_element_count": int(raw_pair_count),
+        "expanded_term_count": int(len(pool)),
+        "dedup_strategy": dedup_strategy,
+        "dedup_total": int(len(pool)),
+    }
+
+
 def _deduplicate_pool_terms(pool: list[AnsatzTerm]) -> list[AnsatzTerm]:
     """Deduplicate pool operators by canonical polynomial signature."""
     seen: set[tuple[tuple[str, float], ...]] = set()
@@ -893,7 +1209,7 @@ def _build_hh_full_meta_pool(
     paop_normalization: str,
     num_particles: tuple[int, int],
 ) -> tuple[list[AnsatzTerm], dict[str, int]]:
-    """Build HH full meta-pool: uccsd_lifted + hva + paop_full + paop_lf_full."""
+    """Build HH full meta-pool: uccsd_lifted + hva + hh_termwise_augmented + paop_full + paop_lf_full."""
     uccsd_lifted_pool = _build_hh_uccsd_fermion_lifted_pool(
         int(num_sites),
         int(n_ph_max),
@@ -963,6 +1279,111 @@ def _build_hh_full_meta_pool(
     }
     # n_ph_max>=2 can create very large term signatures; use streaming digest
     # dedup to avoid high transient memory spikes from tuple materialization.
+    if int(n_ph_max) >= 2:
+        dedup_pool = _deduplicate_pool_terms_lightweight(merged)
+    else:
+        dedup_pool = _deduplicate_pool_terms(merged)
+    return dedup_pool, meta
+
+
+def _build_hh_all_meta_v1_pool(
+    *,
+    h_poly: Any,
+    num_sites: int,
+    t: float,
+    u: float,
+    omega0: float,
+    g_ep: float,
+    dv: float,
+    n_ph_max: int,
+    boson_encoding: str,
+    ordering: str,
+    boundary: str,
+    paop_r: int,
+    paop_split_paulis: bool,
+    paop_prune_eps: float,
+    paop_normalization: str,
+    num_particles: tuple[int, int],
+) -> tuple[list[AnsatzTerm], dict[str, int]]:
+    """Build exhaustive HH union pool used for offline overcomplete L=2 experiments."""
+    full_meta_pool, full_meta_sizes = _build_hh_full_meta_pool(
+        h_poly=h_poly,
+        num_sites=int(num_sites),
+        t=float(t),
+        u=float(u),
+        omega0=float(omega0),
+        g_ep=float(g_ep),
+        dv=float(dv),
+        n_ph_max=int(n_ph_max),
+        boson_encoding=str(boson_encoding),
+        ordering=str(ordering),
+        boundary=str(boundary),
+        paop_r=int(paop_r),
+        paop_split_paulis=bool(paop_split_paulis),
+        paop_prune_eps=float(paop_prune_eps),
+        paop_normalization=str(paop_normalization),
+        num_particles=tuple(num_particles),
+    )
+    full_hamiltonian_pool = _build_full_hamiltonian_pool(h_poly, normalize_coeff=True)
+    extra_paop_pools = {
+        pool_name: _build_paop_pool(
+            int(num_sites),
+            int(n_ph_max),
+            str(boson_encoding),
+            str(ordering),
+            str(boundary),
+            str(pool_name),
+            int(paop_r),
+            bool(paop_split_paulis),
+            float(paop_prune_eps),
+            str(paop_normalization),
+            tuple(num_particles),
+        )
+        for pool_name in (
+            "paop_lf3_std",
+            "paop_lf4_std",
+            "paop_sq_std",
+            "paop_sq_full",
+            "paop_bond_disp_std",
+            "paop_hop_sq_std",
+            "paop_pair_sq_std",
+        )
+    }
+    extra_vlf_pools: dict[str, list[AnsatzTerm]] = {}
+    for pool_name in ("vlf_only", "sq_only", "vlf_sq", "sq_dens_only", "vlf_sq_dens"):
+        try:
+            pool_terms, _pool_meta = _build_vlf_sq_pool(
+                int(num_sites),
+                int(n_ph_max),
+                str(boson_encoding),
+                str(ordering),
+                str(boundary),
+                str(pool_name),
+                int(paop_r),
+                bool(paop_split_paulis),
+                float(paop_prune_eps),
+                str(paop_normalization),
+                tuple(num_particles),
+            )
+        except ValueError as exc:
+            msg = str(exc)
+            if "produced no surviving" not in msg:
+                raise
+            pool_terms = []
+        extra_vlf_pools[str(pool_name)] = list(pool_terms)
+    merged = list(full_meta_pool) + list(full_hamiltonian_pool)
+    for pool_terms in extra_paop_pools.values():
+        merged.extend(list(pool_terms))
+    for pool_terms in extra_vlf_pools.values():
+        merged.extend(list(pool_terms))
+    meta = {
+        **{f"full_meta_{str(key)}": int(val) for key, val in full_meta_sizes.items()},
+        "raw_full_meta_dedup": int(len(full_meta_pool)),
+        "raw_full_hamiltonian": int(len(full_hamiltonian_pool)),
+        **{f"raw_{str(name)}": int(len(pool_terms)) for name, pool_terms in extra_paop_pools.items()},
+        **{f"raw_{str(name)}": int(len(pool_terms)) for name, pool_terms in extra_vlf_pools.items()},
+        "raw_total": int(len(merged)),
+    }
     if int(n_ph_max) >= 2:
         dedup_pool = _deduplicate_pool_terms_lightweight(merged)
     else:
@@ -1464,6 +1885,35 @@ def _splice_candidate_at_position(
     return new_ops, np.asarray(new_theta, dtype=float)
 
 
+def _splice_logical_candidate_at_position(
+    *,
+    ops: list[AnsatzTerm],
+    theta: np.ndarray,
+    candidate: _ADAPTLogicalCandidate,
+    pool: Sequence[AnsatzTerm],
+    position_id: int,
+    init_theta_values: Sequence[float] | None = None,
+) -> tuple[list[AnsatzTerm], np.ndarray]:
+    theta_arr = np.asarray(theta, dtype=float).reshape(-1)
+    append_position = int(theta_arr.size)
+    pos = max(0, min(int(append_position), int(position_id)))
+    theta_values = (
+        [0.0] * int(len(candidate.pool_indices))
+        if init_theta_values is None
+        else [float(x) for x in init_theta_values]
+    )
+    if len(theta_values) != int(len(candidate.pool_indices)):
+        raise ValueError("Logical candidate insertion requires one init theta per emitted term.")
+
+    new_ops = list(ops)
+    new_theta = np.asarray(theta_arr, dtype=float)
+    for offset, (pool_idx, theta_val) in enumerate(zip(candidate.pool_indices, theta_values)):
+        insert_at = int(pos + offset)
+        new_ops.insert(insert_at, pool[int(pool_idx)])
+        new_theta = np.insert(new_theta, insert_at, float(theta_val))
+    return new_ops, np.asarray(new_theta, dtype=float)
+
+
 def _predict_reopt_window_for_position(
     *,
     theta: np.ndarray,
@@ -1926,6 +2376,61 @@ def _run_hardcoded_adapt_vqe(
                 dedup_total=int(len(pool_full)),
             )
             return list(pool_full), "hardcoded_adapt_vqe_full_meta"
+        if key == "all_hh_meta_v1":
+            pool_all, all_meta_sizes = _build_hh_all_meta_v1_pool(
+                h_poly=h_poly,
+                num_sites=int(num_sites),
+                t=float(t),
+                u=float(u),
+                omega0=float(omega0),
+                g_ep=float(g_ep),
+                dv=float(dv),
+                n_ph_max=int(n_ph_max),
+                boson_encoding=str(boson_encoding),
+                ordering=str(ordering),
+                boundary=str(boundary),
+                paop_r=int(paop_r),
+                paop_split_paulis=bool(paop_split_paulis),
+                paop_prune_eps=float(paop_prune_eps),
+                paop_normalization=str(paop_normalization),
+                num_particles=num_particles,
+            )
+            _ai_log(
+                "hardcoded_adapt_all_hh_meta_v1_pool_built",
+                **all_meta_sizes,
+                dedup_total=int(len(pool_all)),
+            )
+            return list(pool_all), "hardcoded_adapt_vqe_all_hh_meta_v1"
+        if key in _HH_UCCSD_PAOP_PRODUCT_SPECS:
+            product_spec = _HH_UCCSD_PAOP_PRODUCT_SPECS[key]
+            if not bool(product_spec.get("adapt_visible", False)):
+                raise ValueError(
+                    f"HH ADAPT pool '{key}' is explicit/replay-only; pair-aware ADAPT selection is not implemented."
+                )
+            product_pool, product_meta = _build_hh_uccsd_paop_product_pool(
+                int(num_sites),
+                int(n_ph_max),
+                str(boson_encoding),
+                str(ordering),
+                str(boundary),
+                key,
+                int(paop_r),
+                bool(paop_split_paulis),
+                float(paop_prune_eps),
+                str(paop_normalization),
+                num_particles,
+            )
+            _ai_log(
+                "hardcoded_adapt_hh_uccsd_paop_product_pool_built",
+                family=str(key),
+                motif_family=str(product_meta.get("motif_family")),
+                parameterization=str(product_meta.get("parameterization")),
+                raw_uccsd_lifted=int(product_meta.get("raw_sizes", {}).get("raw_uccsd_lifted", 0)),
+                raw_phonon_motifs=int(product_meta.get("raw_sizes", {}).get("raw_phonon_motifs", 0)),
+                raw_logical_pairs=int(product_meta.get("raw_sizes", {}).get("raw_logical_pairs", 0)),
+                dedup_total=int(len(product_pool)),
+            )
+            return list(product_pool), f"hardcoded_adapt_vqe_{key}"
         if key == "uccsd_paop_lf_full":
             uccsd_lifted_pool = _build_hh_uccsd_fermion_lifted_pool(
                 int(num_sites),
@@ -2026,10 +2531,24 @@ def _run_hardcoded_adapt_vqe(
             return _build_full_hamiltonian_pool(h_poly, normalize_coeff=True), "hardcoded_adapt_vqe_full_hamiltonian_hh"
         raise ValueError(
             "For problem='hh', supported ADAPT pools are: "
-            "hva, full_meta, uccsd_paop_lf_full, paop, paop_min, paop_std, paop_full, "
+            "hva, full_meta, all_hh_meta_v1, uccsd_paop_lf_full, "
+            "uccsd_otimes_paop_lf_std, uccsd_otimes_paop_lf2_std, uccsd_otimes_paop_bond_disp_std, "
+            "uccsd_otimes_paop_lf_std_seq2p, uccsd_otimes_paop_lf2_std_seq2p, uccsd_otimes_paop_bond_disp_std_seq2p, "
+            "paop, paop_min, paop_std, paop_full, "
             "paop_lf, paop_lf_std, paop_lf2_std, paop_lf3_std, paop_lf4_std, "
             "paop_lf_full, paop_sq_std, paop_sq_full, paop_bond_disp_std, paop_hop_sq_std, paop_pair_sq_std, "
             "vlf_only, sq_only, vlf_sq, sq_dens_only, vlf_sq_dens, full_hamiltonian"
+        )
+
+    if (
+        problem_key == "hh"
+        and pool_key_input in _HH_UCCSD_PAOP_PRODUCT_SPECS
+        and str(_HH_UCCSD_PAOP_PRODUCT_SPECS[str(pool_key_input)]["parameterization"]) == "double_sequential"
+        and continuation_mode in _HH_STAGED_CONTINUATION_MODES
+    ):
+        raise ValueError(
+            "HH ADAPT seq2p product pools require --adapt-continuation-mode legacy; "
+            "staged HH continuation semantics remain unchanged."
         )
 
     pool_stage_family: list[str] = []
@@ -2097,6 +2616,17 @@ def _run_hardcoded_adapt_vqe(
 
     if len(pool) == 0:
         raise ValueError(f"ADAPT pool '{pool_key}' produced no operators for problem='{problem_key}'.")
+
+    seq2p_logical_mode = bool(
+        problem_key == "hh"
+        and pool_key in _HH_UCCSD_PAOP_PRODUCT_SPECS
+        and str(_HH_UCCSD_PAOP_PRODUCT_SPECS[str(pool_key)]["parameterization"]) == "double_sequential"
+    )
+    logical_candidates = (
+        _build_seq2p_logical_candidates(pool, family_id=str(pool_key))
+        if seq2p_logical_mode
+        else []
+    )
     _ai_log(
         "hardcoded_adapt_pool_built",
         pool_type=str(pool_key),
@@ -2245,6 +2775,16 @@ def _run_hardcoded_adapt_vqe(
         else set(range(len(pool)))
     )
     selection_counts = np.zeros(len(pool), dtype=np.int64)
+    logical_available_indices = (
+        set(range(len(logical_candidates)))
+        if seq2p_logical_mode
+        else set()
+    )
+    logical_selection_counts = (
+        np.zeros(len(logical_candidates), dtype=np.int64)
+        if seq2p_logical_mode
+        else np.zeros(0, dtype=np.int64)
+    )
     phase1_stage_cfg = StageControllerConfig(
         plateau_patience=int(max(1, phase1_plateau_patience)),
         weak_drop_threshold=(
@@ -2771,10 +3311,54 @@ def _run_hardcoded_adapt_vqe(
         phase2_last_shortlist_eval_records = []
         phase2_last_batch_selected = False
         phase2_last_batch_penalty_total = 0.0
-        if available_indices:
+        best_logical_idx: int | None = None
+        selected_logical_label: str | None = None
+        selected_logical_size = 1
+        selected_logical_pool_indices: list[int] = []
+        selected_grad_signed_components: list[float] = []
+        selected_grad_abs_components: list[float] = []
+        logical_grad_scores = (
+            np.zeros(len(logical_candidates), dtype=float)
+            if seq2p_logical_mode
+            else np.zeros(0, dtype=float)
+        )
+        logical_grad_signed_components_all: list[list[float]] = (
+            [[] for _ in logical_candidates]
+            if seq2p_logical_mode
+            else []
+        )
+        logical_grad_abs_components_all: list[list[float]] = (
+            [[] for _ in logical_candidates]
+            if seq2p_logical_mode
+            else []
+        )
+        if seq2p_logical_mode:
+            for logical_idx, logical_candidate in enumerate(logical_candidates):
+                score, signed_components, abs_components = _logical_candidate_gradient_summary(
+                    logical_candidate,
+                    gradients,
+                )
+                logical_grad_scores[int(logical_idx)] = float(score)
+                logical_grad_signed_components_all[int(logical_idx)] = [float(x) for x in signed_components]
+                logical_grad_abs_components_all[int(logical_idx)] = [float(x) for x in abs_components]
+        if seq2p_logical_mode:
+            if logical_available_indices:
+                max_grad = float(max(float(logical_grad_scores[i]) for i in logical_available_indices))
+            else:
+                max_grad = 0.0
+        elif available_indices:
             max_grad = float(max(float(grad_magnitudes[i]) for i in available_indices))
         else:
             max_grad = 0.0
+        if seq2p_logical_mode and (not allow_repeats) and len(logical_available_indices) == 0:
+            stop_reason = "pool_exhausted"
+            _ai_log(
+                "hardcoded_adapt_pool_exhausted",
+                depth=int(depth + 1),
+                pool_type=str(pool_key),
+                continuation_mode=str(continuation_mode),
+            )
+            break
         if phase1_enabled and available_indices:
             stage_name = str(phase1_stage.stage_name)
             append_position = int(theta.size)
@@ -3289,13 +3873,37 @@ def _run_hardcoded_adapt_vqe(
                     residual_count=int(len(phase1_residual_indices)),
                 )
         else:
-            if allow_repeats:
-                repeat_bias = 1.5
-                scores = grad_magnitudes / (1.0 + repeat_bias * selection_counts.astype(float))
-                best_idx = int(np.argmax(scores))
+            if seq2p_logical_mode:
+                if allow_repeats:
+                    repeat_bias = 1.5
+                    logical_scores = logical_grad_scores / (1.0 + repeat_bias * logical_selection_counts.astype(float))
+                    best_logical_idx = int(
+                        max(logical_available_indices, key=lambda idx: float(logical_scores[int(idx)]))
+                    )
+                else:
+                    best_logical_idx = int(
+                        max(logical_available_indices, key=lambda idx: float(logical_grad_scores[int(idx)]))
+                    )
+                logical_candidate = logical_candidates[int(best_logical_idx)]
+                best_idx = int(logical_candidate.pool_indices[0])
+                selected_logical_label = str(logical_candidate.logical_label)
+                selected_logical_size = int(len(logical_candidate.pool_indices))
+                selected_logical_pool_indices = [int(x) for x in logical_candidate.pool_indices]
+                selected_grad_signed_components = list(
+                    logical_grad_signed_components_all[int(best_logical_idx)]
+                )
+                selected_grad_abs_components = list(
+                    logical_grad_abs_components_all[int(best_logical_idx)]
+                )
+                selection_mode = "gradient_seq2p"
             else:
-                best_idx = int(np.argmax(grad_magnitudes))
-            selection_mode = "gradient"
+                if allow_repeats:
+                    repeat_bias = 1.5
+                    scores = grad_magnitudes / (1.0 + repeat_bias * selection_counts.astype(float))
+                    best_idx = int(np.argmax(scores))
+                else:
+                    best_idx = int(np.argmax(grad_magnitudes))
+                selection_mode = "gradient"
 
         _ai_log(
             "hardcoded_adapt_iter",
@@ -3311,7 +3919,11 @@ def _run_hardcoded_adapt_vqe(
                     str(phase1_feature_selected.get("candidate_label"))
                     if isinstance(phase1_feature_selected, dict)
                     and phase1_feature_selected.get("candidate_label") is not None
-                    else str(pool[best_idx].label)
+                    else (
+                        str(selected_logical_label)
+                        if selected_logical_label is not None
+                        else str(pool[best_idx].label)
+                    )
                 )
             ),
             selected_position=int(selected_position),
@@ -3321,102 +3933,226 @@ def _run_hardcoded_adapt_vqe(
         )
 
         # 3) Check gradient convergence (with optional finite-angle fallback)
-        if not phase1_enabled:
+        if not phase1_enabled and not seq2p_logical_mode:
             selection_mode = "gradient"
         init_theta = 0.0
+        init_theta_values: list[float] = (
+            [0.0] * int(selected_logical_size)
+            if seq2p_logical_mode and selected_logical_size > 1
+            else [0.0]
+        )
         fallback_scan_size = 0
         fallback_best_probe_delta_e = None
         fallback_best_probe_theta = None
         if max_grad < float(eps_grad):
-            if bool(finite_angle_fallback) and available_indices:
-                fallback_scan_size = int(len(available_indices))
-                best_probe_energy = float(energy_current)
-                best_probe_idx = None
-                best_probe_theta = None
-                fallback_executor_cache: dict[int, CompiledAnsatzExecutor] = {}
+            if bool(finite_angle_fallback) and (logical_available_indices if seq2p_logical_mode else available_indices):
+                if seq2p_logical_mode:
+                    fallback_scan_size = int(len(logical_available_indices))
+                    best_probe_energy = float(energy_current)
+                    best_probe_theta_values: list[float] | None = None
+                    best_probe_logical_idx: int | None = None
+                    fallback_executor_cache: dict[int, CompiledAnsatzExecutor] = {}
 
-                for idx in available_indices:
-                    trial_ops = selected_ops + [pool[idx]]
-                    for trial_theta in (float(finite_angle), -float(finite_angle)):
-                        trial_theta_vec = np.append(theta, trial_theta)
-                        if adapt_state_backend_key == "compiled":
-                            trial_executor = fallback_executor_cache.get(int(idx))
-                            if trial_executor is None:
-                                trial_executor = _build_compiled_executor(trial_ops)
-                                fallback_executor_cache[int(idx)] = trial_executor
-                            psi_trial = trial_executor.prepare_state(trial_theta_vec, psi_ref)
-                            probe_energy, _ = energy_via_one_apply(psi_trial, h_compiled)
-                            probe_energy = float(probe_energy)
-                        else:
-                            probe_energy = _adapt_energy_fn(
-                                h_poly,
-                                psi_ref,
-                                trial_ops,
-                                trial_theta_vec,
-                                h_compiled=h_compiled,
-                            )
-                        nfev_total += 1
-                        if probe_energy < best_probe_energy:
-                            best_probe_energy = float(probe_energy)
-                            best_probe_idx = int(idx)
-                            best_probe_theta = float(trial_theta)
+                    for logical_idx in logical_available_indices:
+                        logical_candidate = logical_candidates[int(logical_idx)]
+                        trial_ops = list(selected_ops) + [
+                            pool[int(pool_idx)]
+                            for pool_idx in logical_candidate.pool_indices
+                        ]
+                        for theta_ferm in (float(finite_angle), -float(finite_angle)):
+                            for theta_motif in (float(finite_angle), -float(finite_angle)):
+                                theta_pair = [float(theta_ferm), float(theta_motif)]
+                                trial_theta_vec = np.append(theta, theta_pair)
+                                if adapt_state_backend_key == "compiled":
+                                    trial_executor = fallback_executor_cache.get(int(logical_idx))
+                                    if trial_executor is None:
+                                        trial_executor = _build_compiled_executor(trial_ops)
+                                        fallback_executor_cache[int(logical_idx)] = trial_executor
+                                    psi_trial = trial_executor.prepare_state(trial_theta_vec, psi_ref)
+                                    probe_energy, _ = energy_via_one_apply(psi_trial, h_compiled)
+                                    probe_energy = float(probe_energy)
+                                else:
+                                    probe_energy = _adapt_energy_fn(
+                                        h_poly,
+                                        psi_ref,
+                                        trial_ops,
+                                        trial_theta_vec,
+                                        h_compiled=h_compiled,
+                                    )
+                                nfev_total += 1
+                                if probe_energy < best_probe_energy:
+                                    best_probe_energy = float(probe_energy)
+                                    best_probe_logical_idx = int(logical_idx)
+                                    best_probe_theta_values = [float(x) for x in theta_pair]
 
-                fallback_best_probe_delta_e = float(best_probe_energy - energy_current)
-                fallback_best_probe_theta = float(best_probe_theta) if best_probe_theta is not None else None
-                _ai_log(
-                    "hardcoded_adapt_fallback_scan",
-                    depth=int(depth + 1),
-                    scan_size=int(fallback_scan_size),
-                    finite_angle=float(finite_angle),
-                    best_probe_idx=(int(best_probe_idx) if best_probe_idx is not None else None),
-                    best_probe_op=(str(pool[best_probe_idx].label) if best_probe_idx is not None else None),
-                    best_probe_delta_e=float(fallback_best_probe_delta_e),
-                )
-
-                if (
-                    best_probe_idx is not None
-                    and (energy_current - best_probe_energy) > float(finite_angle_min_improvement)
-                ):
-                    best_idx = int(best_probe_idx)
-                    selected_position = int(append_position)
-                    phase1_feature_selected = None
-                    phase2_selected_records = []
-                    phase1_last_selected_score = None
-                    phase1_last_positions_considered = [int(append_position)]
-                    selection_mode = "finite_angle_fallback"
-                    init_theta = float(best_probe_theta)
-                    _ai_log(
-                        "hardcoded_adapt_fallback_selected",
-                        depth=int(depth + 1),
-                        selected_idx=int(best_idx),
-                        selected_op=str(pool[best_idx].label),
-                        init_theta=float(init_theta),
-                        probe_delta_e=float(fallback_best_probe_delta_e),
+                    fallback_best_probe_delta_e = float(best_probe_energy - energy_current)
+                    fallback_best_probe_theta = (
+                        [float(x) for x in best_probe_theta_values]
+                        if best_probe_theta_values is not None
+                        else None
                     )
-                else:
-                    if bool(eps_grad_termination_enabled):
-                        stop_reason = "eps_grad"
+                    _ai_log(
+                        "hardcoded_adapt_fallback_scan",
+                        depth=int(depth + 1),
+                        scan_size=int(fallback_scan_size),
+                        finite_angle=float(finite_angle),
+                        best_probe_idx=(int(best_probe_logical_idx) if best_probe_logical_idx is not None else None),
+                        best_probe_op=(
+                            str(logical_candidates[int(best_probe_logical_idx)].logical_label)
+                            if best_probe_logical_idx is not None
+                            else None
+                        ),
+                        best_probe_delta_e=float(fallback_best_probe_delta_e),
+                    )
+
+                    if (
+                        best_probe_logical_idx is not None
+                        and (energy_current - best_probe_energy) > float(finite_angle_min_improvement)
+                    ):
+                        best_logical_idx = int(best_probe_logical_idx)
+                        logical_candidate = logical_candidates[int(best_logical_idx)]
+                        best_idx = int(logical_candidate.pool_indices[0])
+                        selected_position = int(append_position)
+                        phase1_feature_selected = None
+                        phase2_selected_records = []
+                        phase1_last_selected_score = None
+                        phase1_last_positions_considered = [int(append_position)]
+                        selection_mode = "finite_angle_fallback_seq2p"
+                        selected_logical_label = str(logical_candidate.logical_label)
+                        selected_logical_size = int(len(logical_candidate.pool_indices))
+                        selected_logical_pool_indices = [int(x) for x in logical_candidate.pool_indices]
+                        selected_grad_signed_components = list(
+                            logical_grad_signed_components_all[int(best_logical_idx)]
+                        )
+                        selected_grad_abs_components = list(
+                            logical_grad_abs_components_all[int(best_logical_idx)]
+                        )
+                        init_theta_values = (
+                            [float(x) for x in best_probe_theta_values]
+                            if best_probe_theta_values is not None
+                            else [0.0] * int(selected_logical_size)
+                        )
                         _ai_log(
-                            "hardcoded_adapt_converged_grad",
+                            "hardcoded_adapt_fallback_selected",
+                            depth=int(depth + 1),
+                            selected_idx=int(best_logical_idx),
+                            selected_op=str(selected_logical_label),
+                            init_theta_values=[float(x) for x in init_theta_values],
+                            probe_delta_e=float(fallback_best_probe_delta_e),
+                        )
+                    else:
+                        if bool(eps_grad_termination_enabled):
+                            stop_reason = "eps_grad"
+                            _ai_log(
+                                "hardcoded_adapt_converged_grad",
+                                max_grad=float(max_grad),
+                                eps_grad=float(eps_grad),
+                                fallback_attempted=True,
+                                fallback_best_probe_delta_e=float(fallback_best_probe_delta_e),
+                                finite_angle_min_improvement=float(finite_angle_min_improvement),
+                            )
+                            break
+                        selection_mode = "eps_grad_suppressed_continue"
+                        _ai_log(
+                            "hardcoded_adapt_eps_grad_termination_suppressed",
+                            depth=int(depth + 1),
                             max_grad=float(max_grad),
                             eps_grad=float(eps_grad),
                             fallback_attempted=True,
                             fallback_best_probe_delta_e=float(fallback_best_probe_delta_e),
                             finite_angle_min_improvement=float(finite_angle_min_improvement),
+                            continuation_mode=str(continuation_mode),
+                            problem=str(problem_key),
                         )
-                        break
-                    selection_mode = "eps_grad_suppressed_continue"
+                else:
+                    fallback_scan_size = int(len(available_indices))
+                    best_probe_energy = float(energy_current)
+                    best_probe_idx = None
+                    best_probe_theta = None
+                    fallback_executor_cache: dict[int, CompiledAnsatzExecutor] = {}
+
+                    for idx in available_indices:
+                        trial_ops = selected_ops + [pool[idx]]
+                        for trial_theta in (float(finite_angle), -float(finite_angle)):
+                            trial_theta_vec = np.append(theta, trial_theta)
+                            if adapt_state_backend_key == "compiled":
+                                trial_executor = fallback_executor_cache.get(int(idx))
+                                if trial_executor is None:
+                                    trial_executor = _build_compiled_executor(trial_ops)
+                                    fallback_executor_cache[int(idx)] = trial_executor
+                                psi_trial = trial_executor.prepare_state(trial_theta_vec, psi_ref)
+                                probe_energy, _ = energy_via_one_apply(psi_trial, h_compiled)
+                                probe_energy = float(probe_energy)
+                            else:
+                                probe_energy = _adapt_energy_fn(
+                                    h_poly,
+                                    psi_ref,
+                                    trial_ops,
+                                    trial_theta_vec,
+                                    h_compiled=h_compiled,
+                                )
+                            nfev_total += 1
+                            if probe_energy < best_probe_energy:
+                                best_probe_energy = float(probe_energy)
+                                best_probe_idx = int(idx)
+                                best_probe_theta = float(trial_theta)
+
+                    fallback_best_probe_delta_e = float(best_probe_energy - energy_current)
+                    fallback_best_probe_theta = float(best_probe_theta) if best_probe_theta is not None else None
                     _ai_log(
-                        "hardcoded_adapt_eps_grad_termination_suppressed",
+                        "hardcoded_adapt_fallback_scan",
                         depth=int(depth + 1),
-                        max_grad=float(max_grad),
-                        eps_grad=float(eps_grad),
-                        fallback_attempted=True,
-                        fallback_best_probe_delta_e=float(fallback_best_probe_delta_e),
-                        finite_angle_min_improvement=float(finite_angle_min_improvement),
-                        continuation_mode=str(continuation_mode),
-                        problem=str(problem_key),
+                        scan_size=int(fallback_scan_size),
+                        finite_angle=float(finite_angle),
+                        best_probe_idx=(int(best_probe_idx) if best_probe_idx is not None else None),
+                        best_probe_op=(str(pool[best_probe_idx].label) if best_probe_idx is not None else None),
+                        best_probe_delta_e=float(fallback_best_probe_delta_e),
                     )
+
+                    if (
+                        best_probe_idx is not None
+                        and (energy_current - best_probe_energy) > float(finite_angle_min_improvement)
+                    ):
+                        best_idx = int(best_probe_idx)
+                        selected_position = int(append_position)
+                        phase1_feature_selected = None
+                        phase2_selected_records = []
+                        phase1_last_selected_score = None
+                        phase1_last_positions_considered = [int(append_position)]
+                        selection_mode = "finite_angle_fallback"
+                        init_theta = float(best_probe_theta)
+                        _ai_log(
+                            "hardcoded_adapt_fallback_selected",
+                            depth=int(depth + 1),
+                            selected_idx=int(best_idx),
+                            selected_op=str(pool[best_idx].label),
+                            init_theta=float(init_theta),
+                            probe_delta_e=float(fallback_best_probe_delta_e),
+                        )
+                    else:
+                        if bool(eps_grad_termination_enabled):
+                            stop_reason = "eps_grad"
+                            _ai_log(
+                                "hardcoded_adapt_converged_grad",
+                                max_grad=float(max_grad),
+                                eps_grad=float(eps_grad),
+                                fallback_attempted=True,
+                                fallback_best_probe_delta_e=float(fallback_best_probe_delta_e),
+                                finite_angle_min_improvement=float(finite_angle_min_improvement),
+                            )
+                            break
+                        selection_mode = "eps_grad_suppressed_continue"
+                        _ai_log(
+                            "hardcoded_adapt_eps_grad_termination_suppressed",
+                            depth=int(depth + 1),
+                            max_grad=float(max_grad),
+                            eps_grad=float(eps_grad),
+                            fallback_attempted=True,
+                            fallback_best_probe_delta_e=float(fallback_best_probe_delta_e),
+                            finite_angle_min_improvement=float(finite_angle_min_improvement),
+                            continuation_mode=str(continuation_mode),
+                            problem=str(problem_key),
+                        )
             else:
                 if bool(eps_grad_termination_enabled):
                     stop_reason = "eps_grad"
@@ -3438,6 +4174,7 @@ def _run_hardcoded_adapt_vqe(
         selected_batch_labels: list[str] = []
         selected_batch_positions: list[int] = []
         selected_batch_indices: list[int] = []
+        selected_new_parameter_indices: list[int] = []
         if phase1_enabled and phase2_enabled and len(phase2_selected_records) > 0:
             original_positions_seen: list[int] = []
             for rec in phase2_selected_records:
@@ -3517,15 +4254,47 @@ def _run_hardcoded_adapt_vqe(
             selected_batch_labels.append(str(pool[int(best_idx)].label))
             selected_batch_positions.append(int(selected_position))
             selected_batch_indices.append(int(best_idx))
+            selected_new_parameter_indices.append(int(selected_position))
         else:
-            selected_ops.append(pool[best_idx])
-            theta = np.append(theta, float(init_theta))
-            selection_counts[best_idx] += 1
-            if not allow_repeats:
-                available_indices.discard(best_idx)
-            selected_batch_labels.append(str(pool[int(best_idx)].label))
-            selected_batch_positions.append(int(selected_position))
-            selected_batch_indices.append(int(best_idx))
+            if seq2p_logical_mode:
+                if best_logical_idx is None:
+                    raise RuntimeError("Missing logical seq2p selection in legacy ADAPT path.")
+                logical_candidate = logical_candidates[int(best_logical_idx)]
+                theta_values = (
+                    [float(x) for x in init_theta_values]
+                    if len(init_theta_values) == int(len(logical_candidate.pool_indices))
+                    else [0.0] * int(len(logical_candidate.pool_indices))
+                )
+                selected_ops, theta = _splice_logical_candidate_at_position(
+                    ops=selected_ops,
+                    theta=np.asarray(theta, dtype=float),
+                    candidate=logical_candidate,
+                    pool=pool,
+                    position_id=int(selected_position),
+                    init_theta_values=theta_values,
+                )
+                logical_selection_counts[int(best_logical_idx)] += 1
+                if not allow_repeats:
+                    logical_available_indices.discard(int(best_logical_idx))
+                for offset, idx_sel in enumerate(logical_candidate.pool_indices):
+                    idx_sel_i = int(idx_sel)
+                    selection_counts[idx_sel_i] += 1
+                    if not allow_repeats:
+                        available_indices.discard(idx_sel_i)
+                    selected_batch_labels.append(str(pool[idx_sel_i].label))
+                    selected_batch_positions.append(int(selected_position + offset))
+                    selected_batch_indices.append(int(idx_sel_i))
+                    selected_new_parameter_indices.append(int(selected_position + offset))
+            else:
+                selected_ops.append(pool[best_idx])
+                theta = np.append(theta, float(init_theta))
+                selection_counts[best_idx] += 1
+                if not allow_repeats:
+                    available_indices.discard(best_idx)
+                selected_batch_labels.append(str(pool[int(best_idx)].label))
+                selected_batch_positions.append(int(selected_position))
+                selected_batch_indices.append(int(best_idx))
+                selected_new_parameter_indices.append(int(selected_position))
         if adapt_state_backend_key == "compiled":
             selected_executor = _build_compiled_executor(selected_ops)
         else:
@@ -3596,6 +4365,16 @@ def _run_hardcoded_adapt_vqe(
             window_topk=adapt_window_topk_val,
             periodic_full_refit_triggered=periodic_full_refit_triggered,
         )
+        if seq2p_logical_mode and len(selected_new_parameter_indices) > 1:
+            if str(reopt_policy_effective) == "append_only":
+                reopt_active_indices = sorted(int(i) for i in selected_new_parameter_indices)
+                reopt_policy_effective = "append_only_logical_pair"
+            elif str(reopt_policy_effective).startswith("windowed"):
+                reopt_active_indices = sorted(
+                    set(int(i) for i in reopt_active_indices)
+                    | set(int(i) for i in selected_new_parameter_indices)
+                )
+                reopt_policy_effective = f"{reopt_policy_effective}_logical_pair"
         inherited_reopt_indices = [
             int(i) for i in reopt_active_indices
             if (not phase1_enabled) or int(i) != int(selected_position)
@@ -3785,35 +4564,92 @@ def _run_hardcoded_adapt_vqe(
                 else str(pool[best_idx].label)
             )
         )
+        selected_logical_primary_label = (
+            str(selected_logical_label)
+            if selected_logical_label is not None
+            else str(selected_primary_label)
+        )
         selected_grad_signed_value = (
-            float(phase1_feature_selected.get("g_signed"))
-            if isinstance(phase1_feature_selected, dict)
-            and phase1_feature_selected.get("g_signed") is not None
-            else float(gradients[best_idx])
+            float(selected_grad_signed_components[0])
+            if selected_logical_label is not None and selected_grad_signed_components
+            else (
+                float(phase1_feature_selected.get("g_signed"))
+                if isinstance(phase1_feature_selected, dict)
+                and phase1_feature_selected.get("g_signed") is not None
+                else float(gradients[best_idx])
+            )
         )
         selected_grad_abs_value = (
-            float(phase1_feature_selected.get("g_abs"))
-            if isinstance(phase1_feature_selected, dict)
-            and phase1_feature_selected.get("g_abs") is not None
-            else float(grad_magnitudes[best_idx])
+            float(selected_grad_abs_components[0])
+            if selected_logical_label is not None and selected_grad_abs_components
+            else (
+                float(phase1_feature_selected.get("g_abs"))
+                if isinstance(phase1_feature_selected, dict)
+                and phase1_feature_selected.get("g_abs") is not None
+                else float(grad_magnitudes[best_idx])
+            )
+        )
+        selected_logical_grad_abs_value = (
+            float(math.sqrt(sum(float(x) * float(x) for x in selected_grad_abs_components)))
+            if selected_logical_label is not None and selected_grad_abs_components
+            else float(selected_grad_abs_value)
         )
         history_row = {
             "depth": int(depth + 1),
             "selected_op": str(selected_primary_label),
+            "selected_logical_op": str(selected_logical_primary_label),
+            "selected_logical_size": int(selected_logical_size),
+            "selected_logical_pool_indices": (
+                [int(x) for x in selected_logical_pool_indices]
+                if selected_logical_pool_indices
+                else [int(best_idx)]
+            ),
             "pool_index": int(best_idx),
             "selected_ops": [str(x) for x in selected_batch_labels],
             "selected_pool_indices": [int(x) for x in selected_batch_indices],
             "selection_mode": str(selection_mode),
-            "init_theta": float(init_theta),
+            "init_theta": (
+                float(init_theta_values[0])
+                if selected_logical_label is not None and init_theta_values
+                else float(init_theta)
+            ),
+            "init_theta_values": (
+                [float(x) for x in init_theta_values]
+                if selected_logical_label is not None
+                else [float(init_theta)]
+            ),
             "max_grad": float(max_grad),
             "selected_grad_signed": float(selected_grad_signed_value),
             "selected_grad_abs": float(selected_grad_abs_value),
+            "selected_logical_grad_abs": float(selected_logical_grad_abs_value),
+            "selected_grad_signed_components": (
+                [float(x) for x in selected_grad_signed_components]
+                if selected_grad_signed_components
+                else [float(selected_grad_signed_value)]
+            ),
+            "selected_grad_abs_components": (
+                [float(x) for x in selected_grad_abs_components]
+                if selected_grad_abs_components
+                else [float(selected_grad_abs_value)]
+            ),
+            "parameterization": ("double_sequential" if selected_logical_label is not None else "single_term"),
             "fallback_scan_size": int(fallback_scan_size),
             "fallback_best_probe_delta_e": (
                 float(fallback_best_probe_delta_e) if fallback_best_probe_delta_e is not None else None
             ),
             "fallback_best_probe_theta": (
-                float(fallback_best_probe_theta) if fallback_best_probe_theta is not None else None
+                float(fallback_best_probe_theta[0])
+                if isinstance(fallback_best_probe_theta, (list, tuple, np.ndarray))
+                else (float(fallback_best_probe_theta) if fallback_best_probe_theta is not None else None)
+            ),
+            "fallback_best_probe_theta_values": (
+                [float(x) for x in fallback_best_probe_theta]
+                if isinstance(fallback_best_probe_theta, (list, tuple, np.ndarray))
+                else (
+                    [float(fallback_best_probe_theta)]
+                    if fallback_best_probe_theta is not None
+                    else None
+                )
             ),
             "energy_before_opt": float(energy_prev),
             "energy_after_opt": float(energy_current),
@@ -4821,6 +5657,22 @@ def _run_hardcoded_adapt_vqe(
         "elapsed_s": float(elapsed),
         "hf_bitstring_qn_to_q0": str(hf_bits),
     }
+    if seq2p_logical_mode:
+        payload.update(
+            {
+                "logical_parameterization": "double_sequential",
+                "logical_operator_count": int(len(history)),
+                "logical_operator_labels": [
+                    str(row.get("selected_logical_op", row.get("selected_op", "")))
+                    for row in history
+                ],
+                "logical_operator_sizes": [
+                    int(row.get("selected_logical_size", 1))
+                    for row in history
+                ],
+                "expanded_operator_count": int(len(selected_ops)),
+            }
+        )
     if phase1_enabled:
         measurement_plan = phase1_measure_cache.plan_for([])
         payload.update(
@@ -5226,7 +6078,14 @@ def parse_args() -> argparse.Namespace:
             "full_hamiltonian",
             "hva",
             "full_meta",
+            "all_hh_meta_v1",
             "uccsd_paop_lf_full",
+            "uccsd_otimes_paop_lf_std",
+            "uccsd_otimes_paop_lf2_std",
+            "uccsd_otimes_paop_bond_disp_std",
+            "uccsd_otimes_paop_lf_std_seq2p",
+            "uccsd_otimes_paop_lf2_std_seq2p",
+            "uccsd_otimes_paop_bond_disp_std_seq2p",
             "paop",
             "paop_min",
             "paop_std",
@@ -5251,7 +6110,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "ADAPT pool family. If omitted, runtime resolves problem-aware defaults: "
-            "hubbard->uccsd, hh+legacy->full_meta, hh+phase1_v1/phase2_v1/phase3_v1->paop_lf_std core + residual full_meta."
+            "hubbard->uccsd, hh+legacy->full_meta, hh+phase1_v1/phase2_v1/phase3_v1->paop_lf_std core + residual full_meta. "
+            "The *_seq2p UCCSD⊗PAOP families are legacy-only logical two-parameter candidates."
         ),
     )
     p.add_argument(
