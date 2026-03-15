@@ -22,8 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
     return build_staged_hh_parser(
         description=(
             "Staged HH noise workflow: HF -> warm-start HH-HVA "
-            "(hh_hva_ptw default; --warm-ansatz hh_hva opt-in) -> staged ADAPT -> "
-            "matched-family conventional replay -> final-only noisy/noiseless dynamics."
+            "(hh_hva_ptw default; --warm-ansatz hh_hva opt-in) -> staged ADAPT, "
+            "with replay optional before final noisy/noiseless dynamics."
         ),
         include_noise=True,
     )
@@ -41,7 +41,8 @@ def main(argv: list[str] | None = None) -> None:
     if not bool(cfg.staged.artifacts.skip_pdf):
         print(f"workflow_pdf={payload['artifacts']['workflow']['output_pdf']}")
     print(f"adapt_handoff_json={payload['artifacts']['intermediate']['adapt_handoff_json']}")
-    print(f"replay_json={payload['artifacts']['intermediate']['replay_output_json']}")
+    if bool(getattr(getattr(cfg.staged, "replay", None), "enabled", False)):
+        print(f"replay_json={payload['artifacts']['intermediate']['replay_output_json']}")
 
 
 if __name__ == "__main__":

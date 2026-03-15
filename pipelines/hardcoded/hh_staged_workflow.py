@@ -146,6 +146,9 @@ class AdaptConfig:
     window_topk: int
     full_refit_every: int
     final_full_refit: bool
+    beam_live_branches: int
+    beam_children_per_parent: int | None
+    beam_terminated_keep: int | None
     paop_r: int
     paop_split_paulis: bool
     paop_prune_eps: float
@@ -181,6 +184,7 @@ class AdaptConfig:
 
 @dataclass(frozen=True)
 class ReplayConfig:
+    enabled: bool
     generator_family: str
     fallback_family: str
     legacy_paop_key: str
@@ -216,6 +220,7 @@ class ReplayConfig:
 
 @dataclass(frozen=True)
 class DynamicsConfig:
+    enabled: bool
     methods: tuple[str, ...]
     t_final: float
     num_times: int
@@ -594,12 +599,104 @@ def _resolve_checkpoint_energy(payload: Mapping[str, Any]) -> float | None:
     return None
 
 
+def _read_json_object(json_path: Path, *, label: str) -> dict[str, Any]:
+    if not json_path.exists():
+        raise FileNotFoundError(f"{label} not found: {json_path}")
+    raw = json.loads(json_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{label} must be a top-level object: {json_path}")
+    return raw
+
+
+def _resolve_json_reference(source_json: Path, raw_candidate: Any) -> Path | None:
+    if raw_candidate in {None, "", "none"}:
+        return None
+    candidate = Path(raw_candidate).expanduser()
+    search_paths: list[Path]
+    if candidate.is_absolute():
+        search_paths = [candidate]
+    else:
+        search_paths = [
+            source_json.parent / candidate,
+            REPO_ROOT / candidate,
+            candidate,
+        ]
+    for path in search_paths:
+        if path.exists():
+            return path.resolve()
+    return None
+
+
+def _resolve_fixed_final_state_payload(
+    source_json: Path,
+) -> tuple[Path, dict[str, Any], str | None]:
+    raw_payload = _read_json_object(source_json, label="Fixed final-state JSON")
+    if isinstance(raw_payload.get("initial_state"), Mapping):
+        return source_json, raw_payload, None
+
+    candidate_refs: list[tuple[str, Any]] = []
+    artifacts = raw_payload.get("artifacts", {})
+    if isinstance(artifacts, Mapping):
+        intermediate = artifacts.get("intermediate", {})
+        if isinstance(intermediate, Mapping):
+            candidate_refs.append(
+                ("artifacts.intermediate.adapt_handoff_json", intermediate.get("adapt_handoff_json"))
+            )
+            candidate_refs.append(
+                ("artifacts.intermediate.fixed_final_state_json", intermediate.get("fixed_final_state_json"))
+            )
+    stage_pipeline = raw_payload.get("stage_pipeline", {})
+    if isinstance(stage_pipeline, Mapping):
+        adapt_block = stage_pipeline.get("adapt_vqe", {})
+        if isinstance(adapt_block, Mapping):
+            candidate_refs.append(
+                ("stage_pipeline.adapt_vqe.handoff_json", adapt_block.get("handoff_json"))
+            )
+        fixed_import = stage_pipeline.get("fixed_final_state_import", {})
+        if isinstance(fixed_import, Mapping):
+            candidate_refs.append(
+                (
+                    "stage_pipeline.fixed_final_state_import.source_json",
+                    fixed_import.get("source_json"),
+                )
+            )
+
+    attempted_refs: list[str] = []
+    for ref_label, raw_candidate in candidate_refs:
+        if raw_candidate in {None, "", "none"}:
+            continue
+        attempted_refs.append(f"{ref_label}={raw_candidate}")
+        candidate_json = _resolve_json_reference(source_json, raw_candidate)
+        if candidate_json is None:
+            continue
+        candidate_payload = _read_json_object(
+            candidate_json,
+            label=f"Resolved fixed final-state JSON via {ref_label}",
+        )
+        if isinstance(candidate_payload.get("initial_state"), Mapping):
+            return candidate_json, candidate_payload, ref_label
+
+    attempted_text = (
+        ""
+        if not attempted_refs
+        else " Attempted reusable references: " + ", ".join(attempted_refs) + "."
+    )
+    raise ValueError(
+        "Fixed final-state JSON {} is missing top-level initial_state.amplitudes_qn_to_q0, "
+        "and no reusable staged handoff bundle could be resolved. Pass a handoff-style bundle "
+        "directly or a staged workflow JSON with artifacts.intermediate.adapt_handoff_json."
+        "{}".format(source_json, attempted_text)
+    )
+
+
 def _build_fixed_final_state_import(
     cfg: StagedHHConfig,
     *,
     source_json: Path,
     raw_payload: Mapping[str, Any],
     nq_total: int,
+    requested_source_json: Path | None = None,
+    resolved_via: str | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     psi_final, import_meta = adapt_mod._load_adapt_initial_state(Path(source_json), int(nq_total))
     exact_energy = adapt_mod._resolve_exact_energy_from_payload(raw_payload)
@@ -625,7 +722,9 @@ def _build_fixed_final_state_import(
 
     delta_abs = float(abs(float(imported_energy) - float(exact_energy)))
     fixed_import = {
-        "source_json": str(source_json),
+        "source_json": str(requested_source_json if requested_source_json is not None else source_json),
+        "resolved_json": str(source_json),
+        "resolved_via": resolved_via,
         "strict_match": bool(cfg.fixed_final_state and cfg.fixed_final_state.strict_match),
         "mismatches": [str(item) for item in mismatches],
         "initial_state_source": import_meta.get("initial_state_source"),
@@ -1725,6 +1824,17 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         window_topk=int(getattr(args, "adapt_window_topk")),
         full_refit_every=int(getattr(args, "adapt_full_refit_every")),
         final_full_refit=bool(getattr(args, "adapt_final_full_refit")),
+        beam_live_branches=int(getattr(args, "adapt_beam_live_branches")),
+        beam_children_per_parent=(
+            None
+            if getattr(args, "adapt_beam_children_per_parent", None) is None
+            else int(getattr(args, "adapt_beam_children_per_parent"))
+        ),
+        beam_terminated_keep=(
+            None
+            if getattr(args, "adapt_beam_terminated_keep", None) is None
+            else int(getattr(args, "adapt_beam_terminated_keep"))
+        ),
         paop_r=int(getattr(args, "paop_r")),
         paop_split_paulis=bool(getattr(args, "paop_split_paulis")),
         paop_prune_eps=float(getattr(args, "paop_prune_eps")),
@@ -1769,6 +1879,7 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         else "cli"
     )
     replay = ReplayConfig(
+        enabled=bool(getattr(args, "run_replay", False)),
         generator_family="match_adapt",
         fallback_family="full_meta",
         legacy_paop_key=str(getattr(args, "legacy_paop_key")),
@@ -1802,6 +1913,7 @@ def resolve_staged_hh_config(args: Any) -> StagedHHConfig:
         phase3_symmetry_mitigation_mode=str(getattr(args, "phase3_symmetry_mitigation_mode")),
     )
     dynamics = DynamicsConfig(
+        enabled=bool(getattr(args, "run_dynamics", False)),
         methods=_parse_noiseless_methods(getattr(args, "noiseless_methods")),
         t_final=float(cfg_values["t_final"]),
         num_times=int(cfg_values["num_times"]),
@@ -2393,7 +2505,11 @@ def _staged_ansatz_manifest(cfg: StagedHHConfig) -> str:
     if cfg.seed_refine.family is not None:
         parts.append(f"seed refine: {cfg.seed_refine.family}")
     parts.append(f"ADAPT: {cfg.adapt.continuation_mode}")
-    parts.append("final: matched-family replay")
+    parts.append(
+        "final: matched-family replay"
+        if bool(cfg.replay.enabled)
+        else "final: replay disabled"
+    )
     return "; ".join(parts)
 
 
@@ -2475,6 +2591,30 @@ def _assemble_stage_circuit_contexts(
     }
 
 
+def _workflow_stage_chain(cfg: StagedHHConfig, *, fixed_mode: bool) -> list[str]:
+    if fixed_mode:
+        chain = ["hf_reference", "fixed_final_state_import"]
+    else:
+        chain = ["hf_reference", "warm_start_hva"]
+        if cfg.seed_refine.family is not None:
+            chain.append("seed_refine_vqe")
+        chain.append("adapt_vqe")
+        if bool(cfg.replay.enabled):
+            chain.append("matched_family_replay")
+    if bool(cfg.dynamics.enabled):
+        chain.append("final_only_noiseless_dynamics")
+    return chain
+
+
+def _terminal_reference_energy(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> tuple[float, str]:
+    if bool(cfg.replay.enabled) and not bool(stage_result.replay_payload.get("skipped", False)):
+        replay_exact = float(stage_result.replay_payload.get("exact", {}).get("E_exact_sector", float("nan")))
+        if math.isfinite(replay_exact):
+            return replay_exact, "stage_pipeline.conventional_replay.exact_energy"
+    adapt_exact = float(stage_result.adapt_payload.get("exact_gs_energy", float("nan")))
+    return adapt_exact, "stage_pipeline.adapt_vqe.exact_energy"
+
+
 def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
     h_poly, hmat, ordered_labels_exyz, coeff_map_exyz, psi_hf = _build_hh_context(cfg)
     adapt_diagnostics: dict[str, Any] = {}
@@ -2488,13 +2628,17 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         warm_cutover_json=str(cfg.artifacts.warm_cutover_json),
     )
     if cfg.fixed_final_state is not None:
-        source_json = Path(cfg.fixed_final_state.json_path)
-        raw_payload = json.loads(source_json.read_text(encoding="utf-8"))
+        requested_source_json = Path(cfg.fixed_final_state.json_path)
+        source_json, raw_payload, resolved_via = _resolve_fixed_final_state_payload(
+            requested_source_json
+        )
         psi_final, fixed_import, warm_payload, adapt_payload, replay_payload = _build_fixed_final_state_import(
             cfg,
             source_json=source_json,
             raw_payload=raw_payload,
             nq_total=_hh_nq_total(cfg.physics.L, cfg.physics.n_ph_max, cfg.physics.boson_encoding),
+            requested_source_json=requested_source_json,
+            resolved_via=resolved_via,
         )
         _write_fixed_final_state_sidecars(
             cfg,
@@ -2505,7 +2649,9 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         _append_workflow_log(
             cfg,
             "fixed_final_state_import",
-            source_json=str(source_json),
+            source_json=str(requested_source_json),
+            resolved_json=str(source_json),
+            resolved_via=resolved_via,
             strict_match=bool(cfg.fixed_final_state.strict_match),
             mismatch_count=int(len(fixed_import.get("mismatches", []))),
         )
@@ -2607,6 +2753,9 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         adapt_window_topk=int(cfg.adapt.window_topk),
         adapt_full_refit_every=int(cfg.adapt.full_refit_every),
         adapt_final_full_refit=bool(cfg.adapt.final_full_refit),
+        adapt_beam_live_branches=int(cfg.adapt.beam_live_branches),
+        adapt_beam_children_per_parent=cfg.adapt.beam_children_per_parent,
+        adapt_beam_terminated_keep=cfg.adapt.beam_terminated_keep,
         adapt_continuation_mode=str(cfg.adapt.continuation_mode),
         phase1_lambda_F=float(cfg.adapt.phase1_lambda_F),
         phase1_lambda_compile=float(cfg.adapt.phase1_lambda_compile),
@@ -2643,73 +2792,98 @@ def run_stage_pipeline(cfg: StagedHHConfig) -> StageExecutionResult:
         np.asarray(psi_adapt, dtype=complex).reshape(-1),
         seed_provenance=_build_seed_provenance(cfg, seed_refine_payload),
     )
-    replay_cfg = replay_mod.RunConfig(
-        adapt_input_json=Path(cfg.artifacts.handoff_json),
-        output_json=Path(cfg.artifacts.replay_output_json),
-        output_csv=Path(cfg.artifacts.replay_output_csv),
-        output_md=Path(cfg.artifacts.replay_output_md),
-        output_log=Path(cfg.artifacts.replay_output_log),
-        tag=f"{cfg.artifacts.tag}_replay",
-        generator_family=str(cfg.replay.generator_family),
-        fallback_family=str(cfg.replay.fallback_family),
-        legacy_paop_key=str(cfg.replay.legacy_paop_key),
-        replay_seed_policy=str(cfg.replay.replay_seed_policy),
-        replay_continuation_mode=str(cfg.replay.continuation_mode),
-        L=int(cfg.physics.L),
-        t=float(cfg.physics.t),
-        u=float(cfg.physics.u),
-        dv=float(cfg.physics.dv),
-        omega0=float(cfg.physics.omega0),
-        g_ep=float(cfg.physics.g_ep),
-        n_ph_max=int(cfg.physics.n_ph_max),
-        boson_encoding=str(cfg.physics.boson_encoding),
-        ordering=str(cfg.physics.ordering),
-        boundary=str(cfg.physics.boundary),
-        sector_n_up=int(cfg.physics.sector_n_up),
-        sector_n_dn=int(cfg.physics.sector_n_dn),
-        reps=int(cfg.replay.reps),
-        restarts=int(cfg.replay.restarts),
-        maxiter=int(cfg.replay.maxiter),
-        method=str(cfg.replay.method),
-        seed=int(cfg.replay.seed),
-        energy_backend=str(cfg.replay.energy_backend),
-        progress_every_s=float(cfg.replay.progress_every_s),
-        wallclock_cap_s=int(cfg.replay.wallclock_cap_s),
-        paop_r=int(cfg.replay.paop_r),
-        paop_split_paulis=bool(cfg.replay.paop_split_paulis),
-        paop_prune_eps=float(cfg.replay.paop_prune_eps),
-        paop_normalization=str(cfg.replay.paop_normalization),
-        spsa_a=float(cfg.replay.spsa_a),
-        spsa_c=float(cfg.replay.spsa_c),
-        spsa_alpha=float(cfg.replay.spsa_alpha),
-        spsa_gamma=float(cfg.replay.spsa_gamma),
-        spsa_A=float(cfg.replay.spsa_A),
-        spsa_avg_last=int(cfg.replay.spsa_avg_last),
-        spsa_eval_repeats=int(cfg.replay.spsa_eval_repeats),
-        spsa_eval_agg=str(cfg.replay.spsa_eval_agg),
-        replay_freeze_fraction=float(cfg.replay.replay_freeze_fraction),
-        replay_unfreeze_fraction=float(cfg.replay.replay_unfreeze_fraction),
-        replay_full_fraction=float(cfg.replay.replay_full_fraction),
-        replay_qn_spsa_refresh_every=int(cfg.replay.replay_qn_spsa_refresh_every),
-        replay_qn_spsa_refresh_mode=str(cfg.replay.replay_qn_spsa_refresh_mode),
-        phase3_symmetry_mitigation_mode=str(cfg.replay.phase3_symmetry_mitigation_mode),
-    )
-    try:
-        replay_payload = replay_mod.run(replay_cfg, diagnostics_out=replay_diagnostics)
-    except TypeError as exc:
-        if "diagnostics_out" not in str(exc):
-            raise
-        replay_payload = replay_mod.run(replay_cfg)
-        replay_diagnostics = {}
     nq_total = _hh_nq_total(cfg.physics.L, cfg.physics.n_ph_max, cfg.physics.boson_encoding)
-    best_state = replay_payload.get("best_state", {})
-    if not isinstance(best_state, Mapping):
-        raise ValueError("Replay payload missing best_state block.")
-    amplitudes = best_state.get("amplitudes_qn_to_q0", None)
-    if not isinstance(amplitudes, Mapping):
-        raise ValueError("Replay payload missing best_state.amplitudes_qn_to_q0.")
-    psi_final = hc_pipeline._state_from_amplitudes_qn_to_q0(amplitudes, int(nq_total))
-    psi_final = hc_pipeline._normalize_state(np.asarray(psi_final, dtype=complex).reshape(-1))
+    if bool(cfg.replay.enabled):
+        replay_cfg = replay_mod.RunConfig(
+            adapt_input_json=Path(cfg.artifacts.handoff_json),
+            output_json=Path(cfg.artifacts.replay_output_json),
+            output_csv=Path(cfg.artifacts.replay_output_csv),
+            output_md=Path(cfg.artifacts.replay_output_md),
+            output_log=Path(cfg.artifacts.replay_output_log),
+            tag=f"{cfg.artifacts.tag}_replay",
+            generator_family=str(cfg.replay.generator_family),
+            fallback_family=str(cfg.replay.fallback_family),
+            legacy_paop_key=str(cfg.replay.legacy_paop_key),
+            replay_seed_policy=str(cfg.replay.replay_seed_policy),
+            replay_continuation_mode=str(cfg.replay.continuation_mode),
+            L=int(cfg.physics.L),
+            t=float(cfg.physics.t),
+            u=float(cfg.physics.u),
+            dv=float(cfg.physics.dv),
+            omega0=float(cfg.physics.omega0),
+            g_ep=float(cfg.physics.g_ep),
+            n_ph_max=int(cfg.physics.n_ph_max),
+            boson_encoding=str(cfg.physics.boson_encoding),
+            ordering=str(cfg.physics.ordering),
+            boundary=str(cfg.physics.boundary),
+            sector_n_up=int(cfg.physics.sector_n_up),
+            sector_n_dn=int(cfg.physics.sector_n_dn),
+            reps=int(cfg.replay.reps),
+            restarts=int(cfg.replay.restarts),
+            maxiter=int(cfg.replay.maxiter),
+            method=str(cfg.replay.method),
+            seed=int(cfg.replay.seed),
+            energy_backend=str(cfg.replay.energy_backend),
+            progress_every_s=float(cfg.replay.progress_every_s),
+            wallclock_cap_s=int(cfg.replay.wallclock_cap_s),
+            paop_r=int(cfg.replay.paop_r),
+            paop_split_paulis=bool(cfg.replay.paop_split_paulis),
+            paop_prune_eps=float(cfg.replay.paop_prune_eps),
+            paop_normalization=str(cfg.replay.paop_normalization),
+            spsa_a=float(cfg.replay.spsa_a),
+            spsa_c=float(cfg.replay.spsa_c),
+            spsa_alpha=float(cfg.replay.spsa_alpha),
+            spsa_gamma=float(cfg.replay.spsa_gamma),
+            spsa_A=float(cfg.replay.spsa_A),
+            spsa_avg_last=int(cfg.replay.spsa_avg_last),
+            spsa_eval_repeats=int(cfg.replay.spsa_eval_repeats),
+            spsa_eval_agg=str(cfg.replay.spsa_eval_agg),
+            replay_freeze_fraction=float(cfg.replay.replay_freeze_fraction),
+            replay_unfreeze_fraction=float(cfg.replay.replay_unfreeze_fraction),
+            replay_full_fraction=float(cfg.replay.replay_full_fraction),
+            replay_qn_spsa_refresh_every=int(cfg.replay.replay_qn_spsa_refresh_every),
+            replay_qn_spsa_refresh_mode=str(cfg.replay.replay_qn_spsa_refresh_mode),
+            phase3_symmetry_mitigation_mode=str(cfg.replay.phase3_symmetry_mitigation_mode),
+        )
+        try:
+            replay_payload = replay_mod.run(replay_cfg, diagnostics_out=replay_diagnostics)
+        except TypeError as exc:
+            if "diagnostics_out" not in str(exc):
+                raise
+            replay_payload = replay_mod.run(replay_cfg)
+            replay_diagnostics = {}
+        best_state = replay_payload.get("best_state", {})
+        if not isinstance(best_state, Mapping):
+            raise ValueError("Replay payload missing best_state block.")
+        amplitudes = best_state.get("amplitudes_qn_to_q0", None)
+        if not isinstance(amplitudes, Mapping):
+            raise ValueError("Replay payload missing best_state.amplitudes_qn_to_q0.")
+        psi_final = hc_pipeline._state_from_amplitudes_qn_to_q0(amplitudes, int(nq_total))
+        psi_final = hc_pipeline._normalize_state(np.asarray(psi_final, dtype=complex).reshape(-1))
+    else:
+        replay_payload = {
+            "generator_family": {
+                "requested": str(cfg.replay.generator_family),
+                "resolved": None,
+                "fallback": str(cfg.replay.fallback_family),
+            },
+            "seed_baseline": {},
+            "replay_contract": {
+                "continuation_mode": str(cfg.replay.continuation_mode),
+                "seed_policy_requested": str(cfg.replay.replay_seed_policy),
+            },
+            "vqe": {},
+            "exact": {},
+            "skipped": True,
+            "skip_reason": "run_replay_false",
+        }
+        psi_final = hc_pipeline._normalize_state(np.asarray(psi_adapt, dtype=complex).reshape(-1))
+        _append_workflow_log(
+            cfg,
+            "replay_stage_skipped",
+            reason="run_replay_false",
+            adapt_handoff_json=str(cfg.artifacts.handoff_json),
+        )
     circuit_contexts = _assemble_stage_circuit_contexts(
         cfg=cfg,
         psi_hf=np.asarray(psi_hf, dtype=complex).reshape(-1),
@@ -2799,6 +2973,7 @@ def _run_noiseless_profile(
     coeff_map_exyz: dict[str, complex],
     drive_enabled: bool,
     ground_state_reference_energy: float,
+    ground_state_reference_source: str,
 ) -> dict[str, Any]:
     drive_provider = None
     drive_meta = None
@@ -2887,7 +3062,7 @@ def _run_noiseless_profile(
         "ground_state_reference": {
             "energy": float(ground_state_energy),
             "kind": "filtered_sector_ground_state_static",
-            "source": "stage_pipeline.conventional_replay.exact_energy",
+            "source": str(ground_state_reference_source),
         },
         "reference": {
             "kind": "seeded_exact_reference",
@@ -2905,7 +3080,7 @@ def _run_noiseless_profile(
 
 
 def run_noiseless_profiles(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> dict[str, Any]:
-    replay_exact = float(stage_result.replay_payload.get("exact", {}).get("E_exact_sector", float("nan")))
+    terminal_exact, terminal_source = _terminal_reference_energy(stage_result, cfg)
     profiles = {
         "static": _run_noiseless_profile(
             cfg=cfg,
@@ -2914,7 +3089,8 @@ def run_noiseless_profiles(stage_result: StageExecutionResult, cfg: StagedHHConf
             ordered_labels_exyz=stage_result.ordered_labels_exyz,
             coeff_map_exyz=stage_result.coeff_map_exyz,
             drive_enabled=False,
-            ground_state_reference_energy=replay_exact,
+            ground_state_reference_energy=terminal_exact,
+            ground_state_reference_source=terminal_source,
         )
     }
     if bool(cfg.dynamics.enable_drive):
@@ -2925,7 +3101,8 @@ def run_noiseless_profiles(stage_result: StageExecutionResult, cfg: StagedHHConf
             ordered_labels_exyz=stage_result.ordered_labels_exyz,
             coeff_map_exyz=stage_result.coeff_map_exyz,
             drive_enabled=True,
-            ground_state_reference_energy=replay_exact,
+            ground_state_reference_energy=terminal_exact,
+            ground_state_reference_source=terminal_source,
         )
     return {"profiles": profiles}
 
@@ -3033,6 +3210,7 @@ def build_stage_circuit_report_artifacts(
         }
 
     adapt_ctx = stage_result.adapt_circuit_context
+    adapt_circuit = None
     if isinstance(adapt_ctx, Mapping) and adapt_ctx.get("reference_state") is not None:
         adapt_circuit = adapt_ops_to_circuit(
             list(adapt_ctx.get("selected_ops", [])),
@@ -3087,6 +3265,14 @@ def build_stage_circuit_report_artifacts(
             ],
         }
 
+    dynamics_bundles: dict[str, dict[str, Any]] = {}
+    if not bool(cfg.dynamics.enabled):
+        return {
+            "transpile_target": _transpile_target_metadata(cfg),
+            "stages": stage_bundles,
+            "dynamics": dynamics_bundles,
+        }
+
     ordered_for_run = list(stage_result.ordered_labels_exyz)
     drive_provider = None
     drive_profile = None
@@ -3098,9 +3284,8 @@ def build_stage_circuit_report_artifacts(
         )
 
     macro_time = float(cfg.dynamics.t_final) / float(cfg.dynamics.trotter_steps)
-    prep_plus_initial = replay_circuit if replay_circuit is not None else None
+    prep_plus_initial = replay_circuit if replay_circuit is not None else adapt_circuit
     empty_initial = _empty_qiskit_circuit(int(stage_result.nq_total))
-    dynamics_bundles: dict[str, dict[str, Any]] = {}
     report_methods = tuple(
         method
         for method in cfg.dynamics.methods
@@ -3265,6 +3450,8 @@ def write_hh_staged_circuit_report_section(
             "n_ph_max": int(cfg.physics.n_ph_max),
             "boundary": str(cfg.physics.boundary),
             "ordering": str(cfg.physics.ordering),
+            "run_replay": bool(cfg.replay.enabled),
+            "run_dynamics": bool(cfg.dynamics.enabled),
             "warm_reps": int(cfg.warm_start.reps),
             "seed_refine_family": (None if cfg.seed_refine.family is None else str(cfg.seed_refine.family)),
             "seed_refine_reps": int(cfg.seed_refine.reps),
@@ -3333,7 +3520,11 @@ def write_hh_staged_circuit_report_section(
         "Section semantics",
         "- Representative view keeps high-level PauliEvolutionGate blocks.",
         "- Expanded view performs one decomposition pass to expose term-level layers.",
-        "- Dynamics pages show one macro-step only; proxy totals summarize the full repeat count.",
+        (
+            "- Dynamics pages show one macro-step only; proxy totals summarize the full repeat count."
+            if bool(cfg.dynamics.enabled)
+            else "- Dynamics pages omitted: run_dynamics=false."
+        ),
         ]
     )
     render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.03, max_line_width=110)
@@ -3408,6 +3599,7 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
     warm_delta = float(abs(warm_energy - warm_exact))
     adapt_delta = float(abs(adapt_energy - adapt_exact))
     final_delta = float(abs(final_energy - final_exact))
+    replay_skipped = bool(stage_result.replay_payload.get("skipped", False))
     summary = {
         "hf_reference": {
             "state_kind": "reference_state",
@@ -3458,13 +3650,17 @@ def _stage_summary(stage_result: StageExecutionResult, cfg: StagedHHConfig) -> d
             "energy": float(final_energy),
             "exact_energy": float(final_exact),
             "delta_abs": float(final_delta),
-            "ecut_2": {"threshold": float(cfg.gates.ecut_2), "pass": bool(final_delta <= float(cfg.gates.ecut_2))},
+            "ecut_2": {
+                "threshold": float(cfg.gates.ecut_2),
+                "pass": (None if replay_skipped else bool(final_delta <= float(cfg.gates.ecut_2))),
+                "evaluated": bool(not replay_skipped),
+            },
             "generator_family": dict(stage_result.replay_payload.get("generator_family", {})),
             "seed_baseline": dict(stage_result.replay_payload.get("seed_baseline", {})),
             "stop_reason": str(replay_vqe.get("stop_reason", replay_vqe.get("message", ""))),
             "replay_continuation_mode": str(stage_result.replay_payload.get("replay_contract", {}).get("continuation_mode", cfg.replay.continuation_mode)),
             "replay_output_json": str(cfg.artifacts.replay_output_json),
-            "skipped": bool(stage_result.replay_payload.get("skipped", False)),
+            "skipped": replay_skipped,
             "skip_reason": stage_result.replay_payload.get("skip_reason"),
         },
     }
@@ -3572,25 +3768,29 @@ def assemble_payload(
     run_command: str,
 ) -> dict[str, Any]:
     fixed_mode = bool(stage_result.fixed_final_state_import)
+    dynamics_enabled = bool(cfg.dynamics.enabled)
+    replay_enabled = bool(cfg.replay.enabled)
     payload = {
         "generated_utc": _now_utc(),
         "pipeline": "hh_staged_noiseless",
         "workflow_contract": {
-            "stage_chain": (
-                ["hf_reference", "fixed_final_state_import", "final_only_noiseless_dynamics"]
-                if fixed_mode
-                else [
-                    "hf_reference",
-                    "warm_start_hva",
-                    "adapt_vqe",
-                    "matched_family_replay",
-                    "final_only_noiseless_dynamics",
-                ]
+            "stage_chain": _workflow_stage_chain(cfg, fixed_mode=fixed_mode),
+            "conventional_vqe_definition": (
+                "non-ADAPT matched-family replay from ADAPT handoff"
+                if replay_enabled
+                else "disabled (run_replay=false)"
             ),
-            "conventional_vqe_definition": "non-ADAPT matched-family replay from ADAPT handoff",
             "drive_default": "opt_in",
-            "noiseless_energy_metric": "|E_method(t) - E_exact_sector_replay| with replay exact sector energy as baseline",
-            "noiseless_fidelity_metric": "fidelity(method(t), exact-propagated psi_final)",
+            "noiseless_energy_metric": (
+                "|E_method(t) - E_exact_sector_terminal| with terminal prepared-state exact energy as baseline"
+                if dynamics_enabled
+                else "not_run (run_dynamics=false)"
+            ),
+            "noiseless_fidelity_metric": (
+                "fidelity(method(t), exact-propagated psi_final)"
+                if dynamics_enabled
+                else "not_run (run_dynamics=false)"
+            ),
         },
         "settings": _jsonable(asdict(cfg)),
         "default_provenance": dict(cfg.default_provenance),
@@ -3666,6 +3866,8 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
                 "n_ph_max": int(cfg.physics.n_ph_max),
                 "boundary": str(cfg.physics.boundary),
                 "ordering": str(cfg.physics.ordering),
+                "run_replay": bool(cfg.replay.enabled),
+                "run_dynamics": bool(cfg.dynamics.enabled),
                 "warm_reps": int(cfg.warm_start.reps),
                 "seed_refine_family": (None if cfg.seed_refine.family is None else str(cfg.seed_refine.family)),
                 "seed_refine_reps": int(cfg.seed_refine.reps),
@@ -3717,18 +3919,28 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
                     if not bool(replay.get("skipped", False))
                     else f"Replay: skipped ({replay.get('skip_reason', '')})"
                 ),
-            "Dynamics metrics: energy uses replay exact-sector GS baseline; fidelity uses exact propagation from psi_final.",
+            (
+                "Dynamics metrics: energy uses the terminal-stage exact-sector GS baseline; "
+                "fidelity uses exact propagation from psi_final."
+                if bool(cfg.dynamics.enabled)
+                else "Dynamics: skipped (run_dynamics=false)"
+            ),
             "",
             "Artifacts",
             f"- workflow_json: {cfg.artifacts.output_json}",
             f"- workflow_pdf: {cfg.artifacts.output_pdf}",
             f"- adapt_handoff_json: {cfg.artifacts.handoff_json}",
-            f"- replay_json: {cfg.artifacts.replay_output_json}",
-            f"- replay_csv: {cfg.artifacts.replay_output_csv}",
-            f"- replay_md: {cfg.artifacts.replay_output_md}",
-            f"- replay_log: {cfg.artifacts.replay_output_log}",
             ]
         )
+        if bool(cfg.replay.enabled):
+            summary_lines.extend(
+                [
+                    f"- replay_json: {cfg.artifacts.replay_output_json}",
+                    f"- replay_csv: {cfg.artifacts.replay_output_csv}",
+                    f"- replay_md: {cfg.artifacts.replay_output_md}",
+                    f"- replay_log: {cfg.artifacts.replay_output_log}",
+                ]
+            )
         render_text_page(pdf, summary_lines, fontsize=10, line_spacing=0.03)
 
         fig, axes = plt.subplots(2, 1, figsize=(11.0, 8.5))
@@ -3776,10 +3988,14 @@ def write_staged_hh_pdf(payload: Mapping[str, Any], cfg: StagedHHConfig, run_com
             pdf,
             str(run_command),
             script_name="pipelines/hardcoded/hh_staged_noiseless.py",
-            extra_header_lines=[
-                f"workflow_json: {cfg.artifacts.output_json}",
-                f"replay_json: {cfg.artifacts.replay_output_json}",
-            ],
+            extra_header_lines=(
+                [
+                    f"workflow_json: {cfg.artifacts.output_json}",
+                    f"replay_json: {cfg.artifacts.replay_output_json}",
+                ]
+                if bool(cfg.replay.enabled)
+                else [f"workflow_json: {cfg.artifacts.output_json}"]
+            ),
         )
 
 
@@ -3805,7 +4021,16 @@ def run_staged_hh_noiseless(cfg: StagedHHConfig, *, run_command: str | None = No
     )
 
     stage_result = run_stage_pipeline(cfg)
-    dynamics_noiseless = run_noiseless_profiles(stage_result, cfg)
+    if bool(cfg.dynamics.enabled):
+        dynamics_noiseless = run_noiseless_profiles(stage_result, cfg)
+    else:
+        dynamics_noiseless = {"profiles": {}, "skipped": True, "skip_reason": "run_dynamics_false"}
+        _append_workflow_log(
+            cfg,
+            "dynamics_noiseless_skipped",
+            reason="run_dynamics_false",
+            adapt_handoff_json=str(cfg.artifacts.handoff_json),
+        )
     circuit_report = build_stage_circuit_report_artifacts(stage_result, cfg)
     payload = assemble_payload(
         cfg=cfg,
@@ -3820,7 +4045,7 @@ def run_staged_hh_noiseless(cfg: StagedHHConfig, *, run_command: str | None = No
         "workflow_json_written",
         output_json=str(cfg.artifacts.output_json),
         replay_json=str(cfg.artifacts.replay_output_json),
-        ecut_2_pass=bool(payload.get("stage_pipeline", {}).get("conventional_replay", {}).get("ecut_2", {}).get("pass", False)),
+        ecut_2_pass=payload.get("stage_pipeline", {}).get("conventional_replay", {}).get("ecut_2", {}).get("pass"),
     )
     if not bool(cfg.artifacts.skip_pdf):
         write_staged_hh_pdf(payload, cfg, run_command_str)

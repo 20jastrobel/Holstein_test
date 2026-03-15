@@ -452,7 +452,7 @@ def write_staged_hh_noise_pdf(payload: Mapping[str, Any], cfg: StagedHHNoiseConf
         render_parameter_manifest(
             pdf,
             model="Hubbard-Holstein",
-            ansatz="warm: hh_hva_ptw; ADAPT: staged HH; final: matched-family replay; noisy final-only dynamics",
+            ansatz="warm: hh_hva_ptw; ADAPT: staged HH; final: optional matched-family replay; noisy final-only dynamics",
             drive_enabled=bool(staged_cfg.dynamics.enable_drive),
             t=float(staged_cfg.physics.t),
             U=float(staged_cfg.physics.u),

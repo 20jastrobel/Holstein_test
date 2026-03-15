@@ -52,11 +52,13 @@ def test_resolve_staged_defaults_from_run_guide_formulae() -> None:
     assert int(cfg.replay.reps) == 3
     assert int(cfg.replay.restarts) == 5
     assert int(cfg.replay.maxiter) == 4000
+    assert bool(cfg.replay.enabled) is False
     assert cfg.seed_refine.family is None
     assert int(cfg.seed_refine.reps) == 3
     assert int(cfg.seed_refine.maxiter) == 4000
     assert str(cfg.seed_refine.optimizer) == "SPSA"
     assert str(cfg.replay.continuation_mode) == "phase3_v1"
+    assert bool(cfg.dynamics.enabled) is False
     assert int(cfg.dynamics.t_final) == 15
     assert int(cfg.dynamics.trotter_steps) == 192
     assert int(cfg.dynamics.num_times) == 201
@@ -67,6 +69,15 @@ def test_resolve_staged_defaults_from_run_guide_formulae() -> None:
     assert cfg.default_provenance["warm_ansatz"] == "workflow.warm_ansatz.default=hh_hva_ptw"
     assert cfg.default_provenance["warm_reps"] == "run_guide.ws_reps(L)=L"
     assert cfg.default_provenance["replay_continuation_mode"] == "workflow.replay_mode := adapt_continuation_mode"
+
+
+def test_replay_and_dynamics_flags_roundtrip() -> None:
+    cfg = resolve_staged_hh_config(
+        parse_args(["--L", "2", "--skip-pdf", "--run-replay", "--run-dynamics"])
+    )
+
+    assert bool(cfg.replay.enabled) is True
+    assert bool(cfg.dynamics.enabled) is True
 
 
 def test_warm_ansatz_override_is_resolved_and_retagged() -> None:
@@ -103,6 +114,28 @@ def test_seed_refine_cli_fields_roundtrip() -> None:
     assert int(cfg.seed_refine.maxiter) == 2000
     assert str(cfg.seed_refine.optimizer) == "SPSA"
     assert "refineuccsd_otimes_paop_lf_std" in str(cfg.artifacts.tag)
+
+
+def test_adapt_beam_capacity_cli_fields_roundtrip() -> None:
+    cfg = resolve_staged_hh_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--adapt-beam-live-branches",
+                "4",
+                "--adapt-beam-children-per-parent",
+                "3",
+                "--adapt-beam-terminated-keep",
+                "5",
+            ]
+        )
+    )
+
+    assert int(cfg.adapt.beam_live_branches) == 4
+    assert int(cfg.adapt.beam_children_per_parent) == 3
+    assert int(cfg.adapt.beam_terminated_keep) == 5
 
 
 def test_adapt_drop_policy_overrides_roundtrip() -> None:
@@ -223,11 +256,47 @@ def test_nondefault_sector_override_rejected_cleanly() -> None:
 
 
 
-def test_staged_hh_parse_rejects_non_spsa_methods() -> None:
+def test_staged_hh_parse_rejects_unsupported_warm_and_final_methods() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--L", "2", "--warm-method", "COBYLA", "--skip-pdf"])
     with pytest.raises(SystemExit):
         parse_args(["--L", "2", "--final-method", "COBYLA", "--skip-pdf"])
+    with pytest.raises(SystemExit):
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--seed-refine-family",
+                "uccsd_otimes_paop_lf_std",
+                "--seed-refine-optimizer",
+                "COBYLA",
+                "--skip-pdf",
+            ]
+        )
+
+
+def test_staged_hh_parse_accepts_powell_methods() -> None:
+    args = parse_args(
+        [
+            "--L",
+            "2",
+            "--warm-method",
+            "Powell",
+            "--seed-refine-family",
+            "uccsd_otimes_paop_lf_std",
+            "--seed-refine-optimizer",
+            "Powell",
+            "--adapt-inner-optimizer",
+            "Powell",
+            "--final-method",
+            "Powell",
+            "--skip-pdf",
+        ]
+    )
+    assert str(args.warm_method) == "Powell"
+    assert str(args.seed_refine_optimizer) == "Powell"
+    assert str(args.adapt_inner_optimizer) == "Powell"
+    assert str(args.final_method) == "Powell"
 
 
 def test_underparameterized_override_rejected_without_smoke_flag() -> None:
@@ -680,6 +749,122 @@ def test_run_stage_pipeline_uses_fixed_final_state_and_skips_prep(
     assert cfg.artifacts.replay_output_json.exists()
 
 
+def test_run_stage_pipeline_resolves_fixed_final_state_from_workflow_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    nq_total = int(wf._hh_nq_total(2, 1, "binary"))
+    dim = 1 << nq_total
+    psi_hf = _basis(dim, 0)
+    psi_seed = _basis(dim, 5)
+    handoff_json = tmp_path / "handoff_seed.json"
+    handoff_json.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "L": 2,
+                    "problem": "hh",
+                    "ordering": "blocked",
+                    "boundary": "open",
+                    "t": 1.0,
+                    "u": 2.0,
+                    "dv": 0.0,
+                    "omega0": 1.0,
+                    "g_ep": 1.0,
+                    "n_ph_max": 1,
+                    "boson_encoding": "binary",
+                },
+                "initial_state": {
+                    "source": "fixed_final_state_import",
+                    "amplitudes_qn_to_q0": _amplitudes_qn_to_q0(psi_seed),
+                },
+                "adapt_vqe": {
+                    "energy": -1.015,
+                    "exact_gs_energy": -1.02,
+                },
+                "ground_state": {
+                    "exact_energy_filtered": -1.02,
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    workflow_json = tmp_path / "workflow.json"
+    workflow_json.write_text(
+        json.dumps(
+            {
+                "artifacts": {
+                    "intermediate": {
+                        "adapt_handoff_json": str(handoff_json),
+                    }
+                },
+                "stage_pipeline": {
+                    "adapt_vqe": {
+                        "handoff_json": str(handoff_json),
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        wf,
+        "_build_hh_context",
+        lambda _cfg: (
+            object(),
+            np.eye(dim, dtype=complex),
+            ["eeeeee"],
+            {"eeeeee": 1.0 + 0.0j},
+            np.array(psi_hf, copy=True),
+        ),
+    )
+    monkeypatch.setattr(wf, "_run_warm_start_stage", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("warm stage should be skipped")))
+    monkeypatch.setattr(wf.adapt_mod, "_run_hardcoded_adapt_vqe", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ADAPT should be skipped")))
+    monkeypatch.setattr(wf.replay_mod, "run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("replay should be skipped")))
+
+    cfg = resolve_staged_hh_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--fixed-final-state-json",
+                str(workflow_json),
+                "--tag",
+                "fixed_seed_workflow_test",
+                "--output-json",
+                str(tmp_path / "workflow_out.json"),
+                "--output-pdf",
+                str(tmp_path / "workflow_out.pdf"),
+            ]
+        )
+    )
+    cfg = replace(
+        cfg,
+        artifacts=replace(
+            cfg.artifacts,
+            handoff_json=tmp_path / "handoff_out.json",
+            replay_output_json=tmp_path / "replay_out.json",
+        ),
+    )
+    stage_result = wf.run_stage_pipeline(cfg)
+
+    assert np.allclose(stage_result.psi_final, psi_seed)
+    assert stage_result.fixed_final_state_import is not None
+    assert stage_result.fixed_final_state_import["source_json"] == str(workflow_json)
+    assert stage_result.fixed_final_state_import["resolved_json"] == str(handoff_json)
+    assert (
+        stage_result.fixed_final_state_import["resolved_via"]
+        == "artifacts.intermediate.adapt_handoff_json"
+    )
+    assert stage_result.warm_payload["skipped"] is True
+    assert stage_result.adapt_payload["skipped"] is True
+    assert stage_result.replay_payload["skipped"] is True
+
+
 def test_run_stage_pipeline_inserts_seed_refine_before_adapt(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -998,11 +1183,19 @@ def test_workflow_runs_matched_family_replay_and_static_plus_drive_profiles(
             "--L",
             "2",
             "--skip-pdf",
+            "--run-replay",
+            "--run-dynamics",
             "--enable-drive",
             "--output-json",
             str(tmp_path / "hh_staged.json"),
             "--output-pdf",
             str(tmp_path / "hh_staged.pdf"),
+            "--adapt-beam-live-branches",
+            "3",
+            "--adapt-beam-children-per-parent",
+            "2",
+            "--adapt-beam-terminated-keep",
+            "4",
         ]
     )
     cfg = resolve_staged_hh_config(args)
@@ -1016,6 +1209,13 @@ def test_workflow_runs_matched_family_replay_and_static_plus_drive_profiles(
     assert warm_kwargs["ansatz_name"] == "hh_hva_ptw"
     assert str(adapt_kwargs["adapt_ref_json"]) == str(cfg.artifacts.warm_cutover_json)
     assert Path(adapt_kwargs["adapt_ref_json"]).exists()
+    assert int(adapt_kwargs["adapt_beam_live_branches"]) == 3
+    assert int(adapt_kwargs["adapt_beam_children_per_parent"]) == 2
+    assert int(adapt_kwargs["adapt_beam_terminated_keep"]) == 4
+    assert adapt_handoff["adapt_vqe"]["operators"] == ["op_1", "op_2"]
+    assert adapt_handoff["adapt_vqe"]["optimal_point"] == [0.1, 0.2]
+    assert isinstance(adapt_handoff["adapt_vqe"]["operators"], list)
+    assert isinstance(adapt_handoff["adapt_vqe"]["optimal_point"], list)
     assert adapt_handoff["initial_state"]["handoff_state_kind"] == "prepared_state"
     assert adapt_handoff["settings"]["adapt_pool"] == "paop_lf_std"
     assert adapt_handoff["continuation"]["replay_contract"]["generator_family"]["requested"] == "match_adapt"
@@ -1038,9 +1238,94 @@ def test_workflow_runs_matched_family_replay_and_static_plus_drive_profiles(
     assert payload["comparisons"]["noiseless_vs_ground_state"]["static"]["suzuki2"]["final_abs_energy_error"] == pytest.approx(5e-3)
     assert payload["comparisons"]["noiseless_vs_reference"]["static"]["suzuki2"]["final_fidelity"] == pytest.approx(0.99)
     assert "noiseless_vs_exact" not in payload["comparisons"]
-    assert payload["workflow_contract"]["noiseless_energy_metric"].startswith("|E_method(t) - E_exact_sector_replay|")
+    assert payload["workflow_contract"]["noiseless_energy_metric"].startswith("|E_method(t) - E_exact_sector_terminal|")
     assert calls["propagators"] == ["suzuki2", "cfqm4", "suzuki2", "cfqm4"]
     assert Path(cfg.artifacts.output_json).exists()
+
+
+def test_workflow_skips_replay_and_dynamics_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dim = 1 << int(wf._hh_nq_total(2, 1, "binary"))
+    psi_hf = _basis(dim, 0)
+    psi_warm = _basis(dim, 1)
+    psi_adapt = _basis(dim, 2)
+
+    monkeypatch.setattr(wf, "build_hubbard_holstein_hamiltonian", lambda **kwargs: object())
+    monkeypatch.setattr(wf, "hubbard_holstein_reference_state", lambda **kwargs: np.array(psi_hf, copy=True))
+    monkeypatch.setattr(wf.hc_pipeline, "_collect_hardcoded_terms_exyz", lambda h: (["eeeeee"], {"eeeeee": 1.0 + 0.0j}))
+    monkeypatch.setattr(wf.hc_pipeline, "_build_hamiltonian_matrix", lambda coeff: np.eye(dim, dtype=complex))
+    monkeypatch.setattr(
+        wf.hc_pipeline,
+        "_run_hardcoded_vqe",
+        lambda **kwargs: (
+            {
+                "success": True,
+                "ansatz": str(kwargs["ansatz_name"]),
+                "optimizer_method": str(kwargs["method"]),
+                "energy": -1.00,
+                "exact_filtered_energy": -1.02,
+                "message": "warm_ok",
+            },
+            np.array(psi_warm, copy=True),
+        ),
+    )
+    monkeypatch.setattr(
+        wf.adapt_mod,
+        "_run_hardcoded_adapt_vqe",
+        lambda **kwargs: (
+            {
+                "success": True,
+                "energy": -1.03,
+                "exact_gs_energy": -1.04,
+                "abs_delta_e": 0.01,
+                "ansatz_depth": 2,
+                "pool_type": "paop_lf_std",
+                "continuation_mode": str(kwargs["adapt_continuation_mode"]),
+                "stop_reason": "eps_grad",
+                "operators": ["op_1", "op_2"],
+                "optimal_point": [0.1, 0.2],
+                "continuation": {
+                    "selected_generator_metadata": [{"generator_id": "g1", "family_id": "paop_lf_std"}],
+                },
+            },
+            np.array(psi_adapt, copy=True),
+        ),
+    )
+    monkeypatch.setattr(wf.replay_mod, "run", lambda *args, **kwargs: pytest.fail("replay should be skipped"))
+    monkeypatch.setattr(
+        wf.hc_pipeline,
+        "_simulate_trajectory",
+        lambda **kwargs: pytest.fail("dynamics should be skipped"),
+    )
+    monkeypatch.setattr(wf, "exact_ground_energy_sector_hh", lambda *args, **kwargs: -1.02)
+
+    cfg = resolve_staged_hh_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--output-json",
+                str(tmp_path / "hh_staged.json"),
+                "--output-pdf",
+                str(tmp_path / "hh_staged.pdf"),
+            ]
+        )
+    )
+    payload = wf.run_staged_hh_noiseless(cfg, run_command="python pipelines/hardcoded/hh_staged_noiseless.py --L 2")
+
+    assert payload["workflow_contract"]["stage_chain"] == ["hf_reference", "warm_start_hva", "adapt_vqe"]
+    assert payload["workflow_contract"]["conventional_vqe_definition"] == "disabled (run_replay=false)"
+    assert payload["workflow_contract"]["noiseless_energy_metric"] == "not_run (run_dynamics=false)"
+    assert payload["stage_pipeline"]["conventional_replay"]["skipped"] is True
+    assert payload["stage_pipeline"]["conventional_replay"]["skip_reason"] == "run_replay_false"
+    assert payload["stage_pipeline"]["conventional_replay"]["ecut_2"]["pass"] is None
+    assert payload["dynamics_noiseless"]["skipped"] is True
+    assert payload["dynamics_noiseless"]["skip_reason"] == "run_dynamics_false"
+    assert Path(cfg.artifacts.handoff_json).exists()
+    assert not Path(cfg.artifacts.replay_output_json).exists()
 
 
 def test_infer_handoff_adapt_pool_prefers_selected_and_rejects_mixed() -> None:

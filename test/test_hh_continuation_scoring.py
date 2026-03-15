@@ -117,6 +117,34 @@ def test_measurement_cache_reuse_accounting() -> None:
     assert str(summary["plan_version"]) == "phase1_grouped_label_reuse"
 
 
+def test_measurement_cache_clone_isolated_from_parent_and_sibling() -> None:
+    cache = MeasurementCacheAudit(nominal_shots_per_group=10)
+    cache.commit(["a"])
+    child_a = cache.clone()
+    child_b = cache.clone()
+
+    child_a.commit(["b"])
+    child_b.commit(["c"])
+
+    parent_stats = cache.estimate(["a", "b", "c"])
+    child_a_stats = child_a.estimate(["a", "b", "c"])
+    child_b_stats = child_b.estimate(["a", "b", "c"])
+
+    assert parent_stats.groups_reused == 1
+    assert child_a_stats.groups_reused == 2
+    assert child_b_stats.groups_reused == 2
+
+
+def test_measurement_cache_snapshot_roundtrip() -> None:
+    cache = MeasurementCacheAudit(nominal_shots_per_group=7)
+    cache.commit(["alpha", "beta"])
+    restored = MeasurementCacheAudit.from_snapshot(cache.snapshot())
+
+    assert restored.summary() == cache.summary()
+    assert restored.estimate(["alpha", "beta", "gamma"]).groups_reused == 2
+    assert restored.estimate(["alpha", "beta", "gamma"]).groups_new == 1
+
+
 def test_trust_region_drop_matches_newton_branch() -> None:
     got = trust_region_drop(0.4, 2.0, 1.0, 1.0)
     assert got == pytest.approx(0.04)

@@ -251,3 +251,37 @@ def test_run_phase3_replay_emits_generator_motif_and_symmetry_fields() -> None:
     assert cfg_out["generator_ids"] == ["gen:a", "gen:b"]
     assert cfg_out["motif_reference_ids"] == ["motif:1"]
     assert cfg_out["qn_spsa_refresh"]["enabled"] is True
+
+
+def test_run_phase3_replay_skips_empty_seed_burn_in_phase() -> None:
+    psi_ref = np.zeros(4, dtype=complex)
+    psi_ref[0] = 1.0 + 0.0j
+    theta, hist, meta = run_phase3_replay(
+        vqe_minimize_fn=_fake_vqe_minimize,
+        h_poly=None,
+        ansatz=_DummyAnsatz(6),
+        psi_ref=psi_ref,
+        seed_theta=np.zeros(6, dtype=float),
+        scaffold_block_size=6,
+        seed_policy_resolved="residual_only",
+        handoff_state_kind="prepared_state",
+        cfg=ReplayControllerConfig(),
+        restarts=2,
+        seed=7,
+        maxiter=60,
+        method="SPSA",
+        progress_every_s=60.0,
+        exact_energy=None,
+        kwargs={},
+        incoming_optimizer_memory=None,
+        generator_ids=["gen:a"],
+        motif_reference_ids=[],
+    )
+    assert len(theta) == 6
+    assert len(hist) == 3
+    assert hist[0]["phase_name"] == "seed_burn_in"
+    assert hist[0]["active_count"] == 0
+    assert hist[0]["nfev"] == 0
+    assert hist[1]["phase_name"] == "constrained_unfreeze"
+    assert hist[1]["active_count"] > 0
+    assert meta["result"]["success"] is True

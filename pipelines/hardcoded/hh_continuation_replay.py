@@ -350,6 +350,30 @@ def _run_phase_replay_controller(
             cfg=cfg,
         )
         refresh_plans.append(refresh_plan)
+        if (not active_indices) or int(phase_steps) <= 0:
+            tel = ReplayPhaseTelemetry(
+                phase_name=str(phase_name),
+                nfev=0,
+                nit=0,
+                success=True,
+                energy_before=float("nan"),
+                energy_after=float("nan"),
+                delta_abs_before=None,
+                delta_abs_after=None,
+                active_count=int(len(active_indices)),
+                frozen_count=int(npar - len(active_indices)),
+                optimizer_memory_reused=bool(
+                    isinstance(active_memory, Mapping) and bool(active_memory.get("reused", False))
+                ),
+                optimizer_memory_source=str(
+                    active_memory.get("source", "unavailable")
+                    if isinstance(active_memory, Mapping)
+                    else "unavailable"
+                ),
+                qn_spsa_refresh_points=[],
+            )
+            history.append(tel.__dict__)
+            continue
         theta_cur, tel, result = _run_phase(
             phase_name=str(phase_name),
             vqe_minimize_fn=vqe_minimize_fn,
@@ -391,6 +415,16 @@ def _run_phase_replay_controller(
         ]
         refresh_points_total.extend(x for x in refresh_points if x not in refresh_points_total)
         history.append(tel.__dict__)
+
+    if last_result is None:
+        class _ReplayNoopResult:
+            energy = float("nan")
+            nfev = 0
+            nit = 0
+            success = True
+            message = "no_active_replay_phases"
+
+        last_result = _ReplayNoopResult()
 
     replay_meta = {
         "replay_phase_config": {

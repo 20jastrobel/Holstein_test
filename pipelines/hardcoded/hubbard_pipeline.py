@@ -995,6 +995,9 @@ def _run_internal_adapt_paop(
     adapt_window_topk: int = 0,
     adapt_full_refit_every: int = 0,
     adapt_final_full_refit: bool = True,
+    adapt_beam_live_branches: int = 1,
+    adapt_beam_children_per_parent: int | None = None,
+    adapt_beam_terminated_keep: int | None = None,
     adapt_continuation_mode: str = "phase3_v1",
     phase1_lambda_F: float = 1.0,
     phase1_lambda_compile: float = 0.05,
@@ -1050,6 +1053,17 @@ def _run_internal_adapt_paop(
         adapt_window_topk=int(adapt_window_topk),
         adapt_full_refit_every=int(adapt_full_refit_every),
         adapt_final_full_refit=bool(adapt_final_full_refit),
+        adapt_beam_live_branches=int(adapt_beam_live_branches),
+        adapt_beam_children_per_parent=(
+            int(adapt_beam_children_per_parent)
+            if adapt_beam_children_per_parent is not None
+            else None
+        ),
+        adapt_beam_terminated_keep=(
+            int(adapt_beam_terminated_keep)
+            if adapt_beam_terminated_keep is not None
+            else None
+        ),
         adapt_continuation_mode=str(adapt_continuation_mode),
         phase1_lambda_F=float(phase1_lambda_F),
         phase1_lambda_compile=float(phase1_lambda_compile),

@@ -66,6 +66,7 @@ _apply_pauli_polynomial_uncached = _adapt_mod._apply_pauli_polynomial_uncached
 _commutator_gradient = _adapt_mod._commutator_gradient
 _resolve_reopt_active_indices = _adapt_mod._resolve_reopt_active_indices
 _make_reduced_objective = _adapt_mod._make_reduced_objective
+_resolve_beam_capacity_policy = _adapt_mod._resolve_beam_capacity_policy
 _VALID_REOPT_POLICIES = _adapt_mod._VALID_REOPT_POLICIES
 
 
@@ -367,6 +368,84 @@ class TestAdaptCLIParsing:
         args = _adapt_mod.parse_args()
         assert int(args.adapt_eps_energy_min_extra_depth) == 6
         assert int(args.adapt_eps_energy_patience) == 4
+
+    def test_parse_defaults_beam_capacity_knobs(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(sys, "argv", ["adapt_pipeline.py"])
+        args = _adapt_mod.parse_args()
+        assert int(args.adapt_beam_live_branches) == 1
+        assert args.adapt_beam_children_per_parent is None
+        assert args.adapt_beam_terminated_keep is None
+
+    def test_parse_accepts_beam_capacity_knobs(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "adapt_pipeline.py",
+                "--adapt-beam-live-branches", "4",
+                "--adapt-beam-children-per-parent", "3",
+                "--adapt-beam-terminated-keep", "5",
+            ],
+        )
+        args = _adapt_mod.parse_args()
+        assert int(args.adapt_beam_live_branches) == 4
+        assert int(args.adapt_beam_children_per_parent) == 3
+        assert int(args.adapt_beam_terminated_keep) == 5
+
+    def test_parse_accepts_powell_inner_optimizer(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["adapt_pipeline.py", "--adapt-inner-optimizer", "Powell"],
+        )
+        args = _adapt_mod.parse_args()
+        assert str(args.adapt_inner_optimizer) == "Powell"
+
+
+class TestBeamCapacityPolicy:
+    def test_single_branch_mode_clamps_effective_caps(self) -> None:
+        policy = _resolve_beam_capacity_policy(
+            adapt_beam_live_branches=1,
+            adapt_beam_children_per_parent=7,
+            adapt_beam_terminated_keep=9,
+        )
+        assert policy.beam_enabled is False
+        assert policy.live_branches_effective == 1
+        assert policy.children_per_parent_effective == 1
+        assert policy.terminated_keep_effective == 1
+
+    def test_multi_branch_defaults_children_to_two_and_terminated_to_live(self) -> None:
+        policy = _resolve_beam_capacity_policy(
+            adapt_beam_live_branches=4,
+            adapt_beam_children_per_parent=None,
+            adapt_beam_terminated_keep=None,
+        )
+        assert policy.beam_enabled is True
+        assert policy.live_branches_effective == 4
+        assert policy.children_per_parent_effective == 2
+        assert policy.terminated_keep_effective == 4
+
+    def test_children_cap_is_bounded_by_live_branches(self) -> None:
+        policy = _resolve_beam_capacity_policy(
+            adapt_beam_live_branches=3,
+            adapt_beam_children_per_parent=8,
+            adapt_beam_terminated_keep=6,
+        )
+        assert policy.children_per_parent_effective == 3
+        assert policy.terminated_keep_effective == 6
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"adapt_beam_live_branches": 0, "adapt_beam_children_per_parent": None, "adapt_beam_terminated_keep": None},
+            {"adapt_beam_live_branches": 2, "adapt_beam_children_per_parent": 0, "adapt_beam_terminated_keep": None},
+            {"adapt_beam_live_branches": 2, "adapt_beam_children_per_parent": None, "adapt_beam_terminated_keep": 0},
+        ],
+    )
+    def test_invalid_values_raise(self, kwargs: dict[str, int | None]) -> None:
+        with pytest.raises(ValueError):
+            _resolve_beam_capacity_policy(**kwargs)
+
 
 class TestPoolBuilders:
     """Verify pool builders return non-empty pools of AnsatzTerm."""
@@ -1735,6 +1814,47 @@ class TestAdaptReoptPolicyFull:
             )
 
 
+def test_powell_inner_optimizer_runs(monkeypatch: pytest.MonkeyPatch):
+    h_poly = build_hubbard_hamiltonian(
+        dims=2, t=1.0, U=4.0, v=0.0,
+        repr_mode="JW", indexing="blocked", pbc=True,
+    )
+    original_ai_log = _adapt_mod._ai_log
+    monkeypatch.setattr(_adapt_mod, "_ai_log", lambda event, **kw: None)
+    try:
+        payload, _ = _run_hardcoded_adapt_vqe(
+            h_poly=h_poly,
+            num_sites=2,
+            ordering="blocked",
+            problem="hubbard",
+            adapt_pool="uccsd",
+            t=1.0,
+            u=4.0,
+            dv=0.0,
+            boundary="periodic",
+            omega0=0.0,
+            g_ep=0.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            max_depth=2,
+            eps_grad=1e-6,
+            eps_energy=1e-10,
+            maxiter=25,
+            seed=7,
+            adapt_inner_optimizer="Powell",
+            allow_repeats=True,
+            finite_angle_fallback=True,
+            finite_angle=0.1,
+            finite_angle_min_improvement=1e-12,
+            adapt_reopt_policy="append_only",
+        )
+        assert payload["success"] is True
+        assert str(payload.get("adapt_inner_optimizer", "")) == "POWELL"
+        assert all(str(row.get("opt_method", "")) == "POWELL" for row in payload.get("history", []))
+    finally:
+        monkeypatch.setattr(_adapt_mod, "_ai_log", original_ai_log)
+
+
 class TestAdaptReoptPolicyWrapperPassthrough:
     """hubbard_pipeline._run_internal_adapt_paop must accept and forward adapt_reopt_policy."""
 
@@ -1751,6 +1871,14 @@ class TestAdaptReoptPolicyWrapperPassthrough:
             f"Expected default='append_only', got default={param.default!r}"
         )
 
+    def test_wrapper_signature_accepts_beam_capacity_knobs(self) -> None:
+        import inspect
+        from pipelines.hardcoded import hubbard_pipeline as hp_mod
+        sig = inspect.signature(hp_mod._run_internal_adapt_paop)
+        assert sig.parameters["adapt_beam_live_branches"].default == 1
+        assert sig.parameters["adapt_beam_children_per_parent"].default is None
+        assert sig.parameters["adapt_beam_terminated_keep"].default is None
+
 
 # ============================================================================
 # Edge cases
@@ -1758,6 +1886,178 @@ class TestAdaptReoptPolicyWrapperPassthrough:
 
 class TestAdaptEdgeCases:
     """Edge case and error handling tests."""
+
+    @staticmethod
+    def _strip_history_timing(history: list[dict[str, object]]) -> list[dict[str, object]]:
+        drop_keys = {"gradient_eval_elapsed_s", "optimizer_elapsed_s", "iter_elapsed_s"}
+
+        def _normalize(value: object) -> object:
+            if isinstance(value, dict):
+                return {
+                    str(k): _normalize(v)
+                    for k, v in value.items()
+                    if str(k) not in drop_keys
+                }
+            if isinstance(value, list):
+                return [_normalize(v) for v in value]
+            if isinstance(value, tuple):
+                return tuple(_normalize(v) for v in value)
+            if isinstance(value, (float, np.floating)):
+                return round(float(value), 12)
+            return value
+
+        return [_normalize(row) for row in history]
+
+    def test_true_beam_rejects_non_hh_or_non_staged_modes(self) -> None:
+        h_poly = build_hubbard_hamiltonian(
+            dims=2, t=1.0, U=4.0, v=0.0,
+            repr_mode="JW", indexing="blocked", pbc=True,
+        )
+        with pytest.raises(ValueError, match="HH staged continuation"):
+            _run_hardcoded_adapt_vqe(
+                h_poly=h_poly,
+                num_sites=2,
+                ordering="blocked",
+                problem="hubbard",
+                adapt_pool="uccsd",
+                t=1.0,
+                u=4.0,
+                dv=0.0,
+                boundary="periodic",
+                omega0=0.0,
+                g_ep=0.0,
+                n_ph_max=1,
+                boson_encoding="binary",
+                max_depth=1,
+                eps_grad=1e-2,
+                eps_energy=1e-6,
+                maxiter=5,
+                seed=7,
+                allow_repeats=True,
+                finite_angle_fallback=False,
+                finite_angle=0.1,
+                finite_angle_min_improvement=0.0,
+                adapt_beam_live_branches=2,
+            )
+
+    def test_true_beam_staged_hh_returns_single_winner_payload(self) -> None:
+        h_poly = build_hubbard_holstein_hamiltonian(
+            dims=2,
+            J=1.0,
+            U=2.0,
+            omega0=1.0,
+            g=1.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            v_t=None,
+            v0=0.0,
+            t_eval=None,
+            repr_mode="JW",
+            indexing="blocked",
+            pbc=False,
+        )
+        payload, _psi = _run_hardcoded_adapt_vqe(
+            h_poly=h_poly,
+            num_sites=2,
+            ordering="blocked",
+            problem="hh",
+            adapt_pool="paop_lf_std",
+            t=1.0,
+            u=2.0,
+            dv=0.0,
+            boundary="open",
+            omega0=1.0,
+            g_ep=1.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            max_depth=1,
+            eps_grad=1e-2,
+            eps_energy=1e-6,
+            maxiter=5,
+            seed=7,
+            allow_repeats=True,
+            finite_angle_fallback=False,
+            finite_angle=0.1,
+            finite_angle_min_improvement=0.0,
+            adapt_continuation_mode="phase3_v1",
+            adapt_beam_live_branches=2,
+        )
+
+        assert payload["success"] is True
+        assert payload["continuation_mode"] == "phase3_v1"
+        assert payload["adapt_beam_enabled"] is True
+        assert int(payload["adapt_beam_live_branches"]) == 2
+        assert int(payload["adapt_beam_children_per_parent"]) == 2
+        assert int(payload["adapt_beam_terminated_keep"]) == 2
+        assert isinstance(payload["operators"], list)
+        assert isinstance(payload["optimal_point"], list)
+        assert len(payload["optimal_point"]) == len(payload["operators"])
+        for row in payload.get("history", []):
+            assert row["selected_positions"] == [row["selected_position"]]
+            assert bool(row["batch_selected"]) is False
+
+    def test_single_branch_beam_clamp_matches_default_payload(self) -> None:
+        h_poly = build_hubbard_holstein_hamiltonian(
+            dims=2,
+            J=1.0,
+            U=2.0,
+            omega0=1.0,
+            g=1.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            v_t=None,
+            v0=0.0,
+            t_eval=None,
+            repr_mode="JW",
+            indexing="blocked",
+            pbc=False,
+        )
+        kwargs = dict(
+            h_poly=h_poly,
+            num_sites=2,
+            ordering="blocked",
+            problem="hh",
+            adapt_pool="paop_lf_std",
+            t=1.0,
+            u=2.0,
+            dv=0.0,
+            boundary="open",
+            omega0=1.0,
+            g_ep=1.0,
+            n_ph_max=1,
+            boson_encoding="binary",
+            max_depth=2,
+            eps_grad=1e-2,
+            eps_energy=1e-6,
+            maxiter=5,
+            seed=7,
+            allow_repeats=True,
+            finite_angle_fallback=False,
+            finite_angle=0.1,
+            finite_angle_min_improvement=0.0,
+            adapt_continuation_mode="phase3_v1",
+        )
+        payload_default, _ = _run_hardcoded_adapt_vqe(**kwargs)
+        payload_clamped, _ = _run_hardcoded_adapt_vqe(
+            **kwargs,
+            adapt_beam_live_branches=1,
+            adapt_beam_children_per_parent=7,
+            adapt_beam_terminated_keep=9,
+        )
+
+        assert payload_clamped["adapt_beam_enabled"] is False
+        assert int(payload_clamped["adapt_beam_live_branches"]) == 1
+        assert int(payload_clamped["adapt_beam_children_per_parent"]) == 1
+        assert int(payload_clamped["adapt_beam_terminated_keep"]) == 1
+        assert payload_default["operators"] == payload_clamped["operators"]
+        assert payload_default["optimal_point"] == payload_clamped["optimal_point"]
+        assert payload_default["energy"] == pytest.approx(payload_clamped["energy"])
+        assert payload_default["abs_delta_e"] == pytest.approx(payload_clamped["abs_delta_e"])
+        assert payload_default["stop_reason"] == payload_clamped["stop_reason"]
+        assert payload_default["continuation_mode"] == payload_clamped["continuation_mode"]
+        assert self._strip_history_timing(payload_default["history"]) == self._strip_history_timing(
+            payload_clamped["history"]
+        )
 
     def test_hubbard_pool_hva_raises(self):
         """Using pool='hva' with problem='hubbard' should raise ValueError."""

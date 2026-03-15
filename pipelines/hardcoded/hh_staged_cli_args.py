@@ -34,7 +34,7 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     )
     p.add_argument(
         "--warm-method",
-        choices=["SPSA"],
+        choices=["SPSA", "Powell"],
         default="SPSA",
     )
     p.add_argument("--warm-seed", type=int, default=7)
@@ -70,7 +70,7 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--seed-refine-maxiter", type=int, default=None)
     p.add_argument(
         "--seed-refine-optimizer",
-        choices=["SPSA"],
+        choices=["SPSA", "Powell"],
         default=None,
         help="Optimizer for optional seed-refine conventional VQE (default: SPSA).",
     )
@@ -107,7 +107,7 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--adapt-drop-min-depth", type=int, default=None)
     p.add_argument("--adapt-grad-floor", type=float, default=None)
     p.add_argument("--adapt-seed", type=int, default=11)
-    p.add_argument("--adapt-inner-optimizer", choices=["COBYLA", "SPSA"], default="SPSA")
+    p.add_argument("--adapt-inner-optimizer", choices=["COBYLA", "Powell", "SPSA"], default="SPSA")
     p.set_defaults(adapt_allow_repeats=True)
     p.add_argument("--adapt-allow-repeats", dest="adapt_allow_repeats", action="store_true")
     p.add_argument("--adapt-no-repeats", dest="adapt_allow_repeats", action="store_false")
@@ -133,6 +133,9 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--adapt-window-size", type=int, default=3)
     p.add_argument("--adapt-window-topk", type=int, default=0)
     p.add_argument("--adapt-full-refit-every", type=int, default=0)
+    p.add_argument("--adapt-beam-live-branches", type=int, default=1)
+    p.add_argument("--adapt-beam-children-per-parent", type=int, default=None)
+    p.add_argument("--adapt-beam-terminated-keep", type=int, default=None)
     p.set_defaults(adapt_final_full_refit=True)
     p.add_argument("--adapt-final-full-refit", dest="adapt_final_full_refit", action="store_true")
     p.add_argument("--adapt-no-final-full-refit", dest="adapt_final_full_refit", action="store_false")
@@ -186,7 +189,7 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--final-maxiter", type=int, default=None)
     p.add_argument(
         "--final-method",
-        choices=["SPSA"],
+        choices=["SPSA", "Powell"],
         default="SPSA",
     )
     p.add_argument("--final-seed", type=int, default=19)
@@ -202,6 +205,19 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
         choices=["auto", "legacy", "phase1_v1", "phase2_v1", "phase3_v1"],
         default="auto",
     )
+    p.set_defaults(run_replay=False)
+    p.add_argument(
+        "--run-replay",
+        dest="run_replay",
+        action="store_true",
+        help="Opt in to the matched-family conventional replay stage after ADAPT.",
+    )
+    p.add_argument(
+        "--no-run-replay",
+        dest="run_replay",
+        action="store_false",
+        help="Skip the matched-family conventional replay stage (default).",
+    )
     p.add_argument("--replay-wallclock-cap-s", type=int, default=43200)
     p.add_argument("--replay-freeze-fraction", type=float, default=0.2)
     p.add_argument("--replay-unfreeze-fraction", type=float, default=0.3)
@@ -216,13 +232,28 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
     p.add_argument("--trotter-steps", type=int, default=None)
     p.add_argument("--exact-steps-multiplier", type=int, default=None)
     p.add_argument("--fidelity-subspace-energy-tol", type=float, default=1e-9)
+    p.set_defaults(run_dynamics=False)
+    p.add_argument(
+        "--run-dynamics",
+        dest="run_dynamics",
+        action="store_true",
+        help="Opt in to noiseless time-dynamics profiles after state preparation.",
+    )
+    p.add_argument(
+        "--no-run-dynamics",
+        dest="run_dynamics",
+        action="store_false",
+        help="Skip noiseless time-dynamics profiles (default).",
+    )
     p.add_argument(
         "--fixed-final-state-json",
         type=Path,
         default=None,
         help=(
             "Skip warm/ADAPT/replay and import the time-dynamics seed from "
-            "initial_state.amplitudes_qn_to_q0 in an existing HH JSON."
+            "initial_state.amplitudes_qn_to_q0 in an existing HH JSON. Can also "
+            "accept a top-level hh_staged_*.json workflow payload and auto-follow "
+            "its saved adapt_handoff_json sidecar."
         ),
     )
     p.set_defaults(fixed_final_state_strict_match=True)
@@ -273,7 +304,12 @@ def add_staged_hh_base_args(p: argparse.ArgumentParser) -> argparse.ArgumentPars
 
     # Gates and artifacts
     p.add_argument("--ecut-1", type=float, default=None, help="Diagnostic warm->ADAPT handoff gate; recorded, not hard-fail.")
-    p.add_argument("--ecut-2", type=float, default=None, help="Diagnostic final replay gate; recorded, not hard-fail.")
+    p.add_argument(
+        "--ecut-2",
+        type=float,
+        default=None,
+        help="Diagnostic replay gate when --run-replay is enabled; recorded, not hard-fail.",
+    )
     p.add_argument("--tag", type=str, default=None)
     p.add_argument("--state-export-dir", type=Path, default=None)
     p.add_argument("--state-export-prefix", type=str, default=None)

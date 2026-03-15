@@ -138,7 +138,9 @@ def test_section_writer_emits_representative_and_expanded_views(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    cfg = wf.resolve_staged_hh_config(parse_staged_args(["--L", "2", "--skip-pdf"]))
+    cfg = wf.resolve_staged_hh_config(
+        parse_staged_args(["--L", "2", "--skip-pdf", "--run-replay", "--run-dynamics"])
+    )
     stage_result = _simple_stage_result()
     manifest_calls: list[dict[str, object]] = []
     page_calls: list[tuple[str, str, bool]] = []
@@ -199,7 +201,9 @@ def test_section_writer_emits_representative_and_expanded_views(
 
 
 def test_build_stage_circuit_report_artifacts_skip_cfqm_when_stage_exp_is_numerical_only(monkeypatch) -> None:
-    cfg = wf.resolve_staged_hh_config(parse_staged_args(["--L", "2", "--skip-pdf"]))
+    cfg = wf.resolve_staged_hh_config(
+        parse_staged_args(["--L", "2", "--skip-pdf", "--run-replay", "--run-dynamics"])
+    )
     stage_result = _simple_stage_result()
 
     monkeypatch.setattr(
@@ -228,6 +232,8 @@ def test_build_stage_circuit_report_artifacts_include_trajectory_transpile_metri
                 "--L",
                 "2",
                 "--skip-pdf",
+                "--run-replay",
+                "--run-dynamics",
                 "--circuit-backend-name",
                 "FakeGuadalupeV2",
                 "--circuit-use-fake-backend",

@@ -25,6 +25,7 @@ from docs.reports.pdf_utils import (
     render_text_page,
     require_matplotlib,
 )
+from docs.reports.qiskit_circuit_report import build_time_dynamics_circuit, transpile_circuit_metrics
 from pipelines.hardcoded.hh_staged_noiseless import parse_args as parse_staged_args
 from pipelines.hardcoded.hh_staged_workflow import resolve_staged_hh_config, run_staged_hh_noiseless
 
@@ -37,6 +38,7 @@ _DEFAULT_TAG = "hh_fixed_seed_qpu_prep_sweep"
 _DEFAULT_SUZUKI_STEPS = (16, 32, 48, 64, 96, 128)
 _DEFAULT_CFQM_STEPS = (8, 16, 24, 32, 48, 64)
 _DEFAULT_BACKEND_NAME = "FakeGuadalupeV2"
+_DEFAULT_BUDGET_MODE = "full_trajectory"
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class SweepConfig:
     drive_pattern: str
     drive_t0: float
     drive_time_sampling: str
+    budget_mode: str
     cfqm_stage_exp: str
     cfqm_coeff_drop_abs_tol: float
     cfqm_normalize: bool
@@ -135,6 +138,63 @@ def _load_seed_settings(path: Path) -> dict[str, Any]:
     if missing:
         raise ValueError(f"Seed JSON {path} is missing required settings fields: {missing}")
     return dict(settings)
+
+
+def _collect_hardcoded_terms_exyz(h_poly: Any) -> tuple[list[str], dict[str, complex]]:
+    coeff_map: dict[str, complex] = {}
+    native_order: list[str] = []
+    for term in h_poly.return_polynomial():
+        label = str(term.pw2strng())
+        coeff = complex(term.p_coeff)
+        if label not in coeff_map:
+            native_order.append(label)
+            coeff_map[label] = coeff
+        else:
+            coeff_map[label] = coeff_map[label] + coeff
+    return native_order, coeff_map
+
+
+def _build_drive_provider(
+    *,
+    num_sites: int,
+    nq_total: int,
+    ordering: str,
+    cfg: SweepConfig,
+) -> Any:
+    from src.quantum.drives_time_potential import build_gaussian_sinusoid_density_drive
+
+    drive = build_gaussian_sinusoid_density_drive(
+        n_sites=int(num_sites),
+        nq_total=int(nq_total),
+        indexing=str(ordering),
+        A=float(cfg.drive_A),
+        omega=float(cfg.drive_omega),
+        tbar=float(cfg.drive_tbar),
+        phi=float(cfg.drive_phi),
+        pattern_mode=str(cfg.drive_pattern),
+        include_identity=False,
+        coeff_tol=0.0,
+    )
+    return drive.coeff_map_exyz
+
+
+def _build_snapshot_budget_context(cfg: SweepConfig, *, seed_settings: Mapping[str, Any]) -> dict[str, Any]:
+    from pipelines.hardcoded.hh_vqe_from_adapt_family import build_replay_sequence_from_input_json
+
+    replay_ctx = build_replay_sequence_from_input_json(cfg.fixed_final_state_json)
+    ordered_labels_exyz, static_coeff_map_exyz = _collect_hardcoded_terms_exyz(replay_ctx["h_poly"])
+    drive_provider_exyz = _build_drive_provider(
+        num_sites=int(seed_settings["L"]),
+        nq_total=int(replay_ctx["nq"]),
+        ordering=str(seed_settings["ordering"]),
+        cfg=cfg,
+    )
+    return {
+        "num_qubits": int(replay_ctx["nq"]),
+        "ordered_labels_exyz": list(ordered_labels_exyz),
+        "static_coeff_map_exyz": dict(static_coeff_map_exyz),
+        "drive_provider_exyz": drive_provider_exyz,
+    }
 
 
 def _build_candidate_args(
@@ -231,12 +291,76 @@ def _extract_drive_profile(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return drive_profile
 
 
+def _snapshot_budget_details(
+    *,
+    cfg: SweepConfig,
+    snapshot_ctx: Mapping[str, Any],
+    method: str,
+    trotter_steps: int,
+    times: Sequence[float],
+) -> dict[str, Any]:
+    from qiskit import QuantumCircuit
+
+    rows: list[dict[str, Any]] = []
+    max_row: dict[str, Any] | None = None
+    final_row: dict[str, Any] | None = None
+    for time_idx, time_value in enumerate(times):
+        qc = build_time_dynamics_circuit(
+            method=str(method),
+            initial_circuit=QuantumCircuit(int(snapshot_ctx["num_qubits"])),
+            ordered_labels_exyz=list(snapshot_ctx["ordered_labels_exyz"]),
+            static_coeff_map_exyz=dict(snapshot_ctx["static_coeff_map_exyz"]),
+            drive_provider_exyz=snapshot_ctx["drive_provider_exyz"],
+            time_value=float(time_value),
+            trotter_steps=int(trotter_steps),
+            drive_t0=float(cfg.drive_t0),
+            drive_time_sampling=str(cfg.drive_time_sampling),
+            cfqm_stage_exp=str(cfg.cfqm_stage_exp),
+            cfqm_coeff_drop_abs_tol=float(cfg.cfqm_coeff_drop_abs_tol),
+        )
+        metrics = transpile_circuit_metrics(
+            qc,
+            backend_name=str(cfg.backend_name),
+            use_fake_backend=bool(cfg.use_fake_backend),
+            optimization_level=int(cfg.circuit_optimization_level),
+            seed_transpiler=int(cfg.circuit_seed_transpiler),
+        )
+        tx = metrics.get("transpiled", {})
+        row = {
+            "time_index": int(time_idx),
+            "time": float(time_value),
+            "count_2q": int(tx.get("count_2q", 0)),
+            "cx_count": int(tx.get("cx_count", 0)),
+            "depth": int(tx.get("depth", 0)),
+            "size": int(tx.get("size", 0)),
+        }
+        rows.append(dict(row))
+        final_row = dict(row)
+        if max_row is None or (
+            int(row["count_2q"]),
+            int(row["depth"]),
+            int(row["time_index"]),
+        ) > (
+            int(max_row["count_2q"]),
+            int(max_row["depth"]),
+            int(max_row["time_index"]),
+        ):
+            max_row = dict(row)
+    return {
+        "transpile_rows": rows,
+        "max": (max_row or {}),
+        "final": (final_row or {}),
+    }
+
+
 def _candidate_row(
     payload: Mapping[str, Any],
     *,
     method: str,
     trotter_steps: int,
     run_dir: Path,
+    cfg: SweepConfig,
+    snapshot_budget: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     drive_profile = _extract_drive_profile(payload)
     method_payload = drive_profile.get("methods", {}).get(str(method), {})
@@ -269,13 +393,35 @@ def _candidate_row(
         abs(float(row.get("energy_total_trotter", float("nan"))) - float(row.get("energy_total_exact", float("nan"))))
         for row in trajectory
     )
+    budget_mode = str(cfg.budget_mode)
+    if budget_mode == "snapshot":
+        snap_max = dict((snapshot_budget or {}).get("max", {}))
+        snap_final = dict((snapshot_budget or {}).get("final", {}))
+        budget_source = "snapshot_max_dynamics_only"
+        budget_count_2q = snap_max.get("count_2q")
+        budget_cx_count = snap_max.get("cx_count")
+        budget_depth = snap_max.get("depth")
+    else:
+        snap_max = {}
+        snap_final = {}
+        budget_source = "full_trajectory_dynamics_only"
+        budget_count_2q = dyn_transpiled.get("count_2q")
+        budget_cx_count = dyn_transpiled.get("cx_count")
+        budget_depth = dyn_transpiled.get("depth")
     return {
         "method": str(method),
         "trotter_steps": int(trotter_steps),
         "hardware_diagnostic_only": bool(int(trotter_steps) < 128),
+        "budget_mode": budget_mode,
+        "budget_scope": "dynamics_only",
+        "budget_source": str(budget_source),
+        "budget_count_2q": budget_count_2q,
+        "budget_cx_count": budget_cx_count,
+        "budget_depth": budget_depth,
         "run_dir": str(run_dir),
         "workflow_json": str(run_dir / "workflow.json"),
         "workflow_pdf": str(run_dir / "workflow.pdf"),
+        "snapshot_metrics_json": (str(run_dir / "snapshot_metrics.json") if snapshot_budget is not None else None),
         "transpile_backend": circuit_payload.get("transpile_target", {}).get("backend_name"),
         "dynamics_only_count_2q": dyn_transpiled.get("count_2q"),
         "dynamics_only_cx_count": dyn_transpiled.get("cx_count"),
@@ -283,6 +429,12 @@ def _candidate_row(
         "prep_plus_dynamics_count_2q": prep_transpiled.get("count_2q") if isinstance(prep_tx, Mapping) and "skipped" not in prep_tx else None,
         "prep_plus_dynamics_cx_count": prep_transpiled.get("cx_count") if isinstance(prep_tx, Mapping) and "skipped" not in prep_tx else None,
         "prep_plus_dynamics_depth": prep_transpiled.get("depth") if isinstance(prep_tx, Mapping) and "skipped" not in prep_tx else None,
+        "snapshot_max_count_2q": snap_max.get("count_2q"),
+        "snapshot_max_cx_count": snap_max.get("cx_count"),
+        "snapshot_max_depth": snap_max.get("depth"),
+        "snapshot_final_count_2q": snap_final.get("count_2q"),
+        "snapshot_final_cx_count": snap_final.get("cx_count"),
+        "snapshot_final_depth": snap_final.get("depth"),
         "cx_proxy_total": proxy_total.get("cx_proxy_total"),
         "depth_proxy_total": proxy_total.get("depth_proxy_total"),
         "final_fidelity": float(final.get("fidelity", float("nan"))),
@@ -301,12 +453,12 @@ def _candidate_row(
 
 
 def _is_dominated(row_i: Mapping[str, Any], row_j: Mapping[str, Any]) -> bool:
-    if row_i.get("dynamics_only_count_2q") is None or row_i.get("dynamics_only_depth") is None:
+    if row_i.get("budget_count_2q") is None or row_i.get("budget_depth") is None:
         return False
-    if row_j.get("dynamics_only_count_2q") is None or row_j.get("dynamics_only_depth") is None:
+    if row_j.get("budget_count_2q") is None or row_j.get("budget_depth") is None:
         return False
-    pair_i = (int(row_i["dynamics_only_count_2q"]), int(row_i["dynamics_only_depth"]))
-    pair_j = (int(row_j["dynamics_only_count_2q"]), int(row_j["dynamics_only_depth"]))
+    pair_i = (int(row_i["budget_count_2q"]), int(row_i["budget_depth"]))
+    pair_j = (int(row_j["budget_count_2q"]), int(row_j["budget_depth"]))
     return pair_j[0] <= pair_i[0] and pair_j[1] <= pair_i[1] and pair_j != pair_i
 
 
@@ -318,8 +470,8 @@ def _pareto_shortlist(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
         shortlist.append(dict(row))
     shortlist.sort(
         key=lambda rec: (
-            int(rec.get("dynamics_only_count_2q", 10**9) or 10**9),
-            int(rec.get("dynamics_only_depth", 10**9) or 10**9),
+            int(rec.get("budget_count_2q", 10**9) or 10**9),
+            int(rec.get("budget_depth", 10**9) or 10**9),
             float(rec.get("max_abs_energy_total_error", float("inf"))),
         )
     )
@@ -413,9 +565,17 @@ def _write_summary_pdf(
                 "drive_tbar": float(cfg.drive_tbar),
                 "drive_phi": float(cfg.drive_phi),
                 "drive_pattern": str(cfg.drive_pattern),
+                "budget_mode": str(cfg.budget_mode),
                 "cfqm_stage_exp": str(cfg.cfqm_stage_exp),
             },
             command=run_command,
+        )
+        budget_line = (
+            "Pareto shortlist is computed on the max per-snapshot transpiled dynamics circuit "
+            "(count_2q/depth over sampled times). Full-trajectory dynamics-only counts remain in CSV/JSON."
+            if str(cfg.budget_mode) == "snapshot"
+            else "Pareto shortlist is computed on the full-trajectory dynamics-only transpiled circuit "
+            "(single circuit to t_final)."
         )
         render_text_page(
             pdf,
@@ -425,8 +585,9 @@ def _write_summary_pdf(
                 f"fixed_final_state_json: {cfg.fixed_final_state_json}",
                 f"run_root: {cfg.run_root}",
                 f"transpile_target: {cfg.backend_name} (fake_backend={cfg.use_fake_backend})",
+                f"budget_mode: {cfg.budget_mode}",
                 "",
-                "Pareto shortlist is computed on dynamics_only_count_2q and dynamics_only_depth only.",
+                budget_line,
                 "Accuracy selection remains visual: inspect the driven energy overlays and fidelity overlays.",
             ],
             fontsize=10,
@@ -438,8 +599,8 @@ def _write_summary_pdf(
             [
                 str(row.get("method", "")),
                 str(row.get("trotter_steps", "")),
-                str(row.get("dynamics_only_cx_count", "")),
-                str(row.get("dynamics_only_depth", "")),
+                str(row.get("budget_cx_count", "")),
+                str(row.get("budget_depth", "")),
                 f"{float(row.get('final_fidelity', float('nan'))):.6f}",
                 f"{float(row.get('min_fidelity', float('nan'))):.6f}",
                 f"{float(row.get('max_abs_energy_total_error', float('nan'))):.3e}",
@@ -449,7 +610,7 @@ def _write_summary_pdf(
         render_compact_table(
             axes[0],
             title="Driven scoreboard",
-            col_labels=["Method", "S", "CX", "Depth", "Final F", "Min F", "Max |dE|"],
+            col_labels=["Method", "S", "Budget CX", "Budget depth", "Final F", "Min F", "Max |dE|"],
             rows=scoreboard_rows or [["(none)", "", "", "", "", "", ""]],
             fontsize=8,
         )
@@ -457,8 +618,8 @@ def _write_summary_pdf(
             [
                 str(row.get("method", "")),
                 str(row.get("trotter_steps", "")),
-                str(row.get("dynamics_only_cx_count", "")),
-                str(row.get("dynamics_only_depth", "")),
+                str(row.get("budget_cx_count", "")),
+                str(row.get("budget_depth", "")),
                 f"{float(row.get('max_abs_energy_total_error', float('nan'))):.3e}",
             ]
             for row in pareto_shortlist
@@ -466,7 +627,7 @@ def _write_summary_pdf(
         render_compact_table(
             axes[1],
             title="Pareto shortlist",
-            col_labels=["Method", "S", "CX", "Depth", "Max |dE|"],
+            col_labels=["Method", "S", "Budget CX", "Budget depth", "Max |dE|"],
             rows=pareto_rows or [["(none)", "", "", "", ""]],
             fontsize=8,
         )
@@ -506,6 +667,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drive-pattern", choices=["staggered", "dimer_bias", "custom"], default="staggered")
     parser.add_argument("--drive-t0", type=float, default=0.0)
     parser.add_argument("--drive-time-sampling", choices=["midpoint", "left", "right"], default="midpoint")
+    parser.add_argument(
+        "--budget-mode",
+        choices=["full_trajectory", "snapshot"],
+        default=_DEFAULT_BUDGET_MODE,
+        help=(
+            "Budget surface for Pareto/scoreboard fields: "
+            "full_trajectory = one dynamics circuit to t_final; "
+            "snapshot = max per-sampled-time dynamics circuit when each sampled time is a separate job."
+        ),
+    )
     parser.add_argument("--cfqm-stage-exp", choices=["pauli_suzuki2"], default="pauli_suzuki2")
     parser.add_argument("--cfqm-coeff-drop-abs-tol", type=float, default=0.0)
     parser.add_argument("--cfqm-normalize", action="store_true")
@@ -537,6 +708,7 @@ def parse_args(argv: list[str] | None = None) -> SweepConfig:
         drive_pattern=str(args.drive_pattern),
         drive_t0=float(args.drive_t0),
         drive_time_sampling=str(args.drive_time_sampling),
+        budget_mode=str(args.budget_mode),
         cfqm_stage_exp=str(args.cfqm_stage_exp),
         cfqm_coeff_drop_abs_tol=float(args.cfqm_coeff_drop_abs_tol),
         cfqm_normalize=bool(args.cfqm_normalize),
@@ -549,6 +721,11 @@ def run_sweep(cfg: SweepConfig, *, run_command: str | None = None) -> dict[str, 
     cfg.run_root.mkdir(parents=True, exist_ok=True)
     candidates: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
+    snapshot_ctx = (
+        _build_snapshot_budget_context(cfg, seed_settings=seed_settings)
+        if str(cfg.budget_mode) == "snapshot"
+        else None
+    )
     method_grids = [(method, steps_grid) for method, steps_grid in (("suzuki2", cfg.suzuki_steps), ("cfqm4", cfg.cfqm_steps)) if steps_grid]
     if not method_grids:
         raise ValueError("At least one non-empty step grid is required.")
@@ -569,7 +746,38 @@ def run_sweep(cfg: SweepConfig, *, run_command: str | None = None) -> dict[str, 
                 staged_cfg,
                 run_command=f"{run_command_str}::{method}_S{int(trotter_steps)}",
             )
-            row = _candidate_row(payload, method=method, trotter_steps=int(trotter_steps), run_dir=run_dir)
+            snapshot_budget = None
+            if snapshot_ctx is not None:
+                drive_profile = _extract_drive_profile(payload)
+                method_payload = drive_profile.get("methods", {}).get(str(method), {})
+                trajectory = method_payload.get("trajectory", []) if isinstance(method_payload, Mapping) else []
+                if not isinstance(trajectory, Sequence) or not trajectory:
+                    raise ValueError(f"Drive trajectory for method {method} is empty.")
+                times = [float(item.get("time", 0.0)) for item in trajectory]
+                snapshot_budget = _snapshot_budget_details(
+                    cfg=cfg,
+                    snapshot_ctx=snapshot_ctx,
+                    method=method,
+                    trotter_steps=int(trotter_steps),
+                    times=times,
+                )
+                _write_json(
+                    run_dir / "snapshot_metrics.json",
+                    {
+                        "budget_mode": str(cfg.budget_mode),
+                        "method": str(method),
+                        "trotter_steps": int(trotter_steps),
+                        **dict(snapshot_budget),
+                    },
+                )
+            row = _candidate_row(
+                payload,
+                method=method,
+                trotter_steps=int(trotter_steps),
+                run_dir=run_dir,
+                cfg=cfg,
+                snapshot_budget=snapshot_budget,
+            )
             rows.append(dict(row))
             candidates.append(
                 {

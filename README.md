@@ -343,6 +343,15 @@ CFQM propagation status (hardcoded pipeline):
 - Honest compiled/transpiled/CX/QPU artifacts exist only for `pauli_suzuki2`; dense/sparse CFQM remain numerical-only and are rejected or skipped by report/transpile/hardware-facing paths.
 - Pitfall: a `compiled/transpiled CFQM4 circuit` in this repo can describe the `pauli_suzuki2` surrogate profile rather than the true numerical CFQM4 implementation.
 
+Hardware-budget surfaces for driven Suzuki/CFQM comparisons:
+- **full-trajectory propagator budget** = one compiled/transpiled dynamics circuit to `t_final`
+- **snapshot propagator budget** = max compiled/transpiled dynamics circuit over sampled `t_i` when each sampled time is a separate job
+- **checkpoint-fit / local-fit budget** = max per-snapshot fitted surrogate circuit; this is **not** a Suzuki/CFQM propagator budget
+- `pipelines/exact_bench/hh_fixed_seed_qpu_prep_sweep.py --budget-mode full_trajectory|snapshot` is the fixed-seed propagator comparison surface.
+- `pipelines/exact_bench/hh_fixed_seed_local_checkpoint_fit.py` is intentionally different: it fits each sampled checkpoint independently to the exact driven state using a shallow local Pauli circuit on top of the imported seed. It is often a better practical low-depth QPU target, but it is not an honest sequential propagator.
+- Practical rule: if each sampled time is run as its own QPU job, the snapshot propagator budget is usually the closer hardware cost model. But checkpoint-fit/local-fit CX counts must still not be compared directly against propagator CX counts without saying that the circuit family changed.
+- Important nuance: for propagated Suzuki/CFQM circuits, snapshot budgeting does **not** automatically shrink the max CX/depth. If every sampled snapshot uses the same macro-step count `S`, the worst propagated snapshot circuit can stay equal to the `t_final` circuit. Snapshot mode changes the hardware-job interpretation; it is not a free gate-count reduction.
+
 CFQM6 command:
 
 ```bash

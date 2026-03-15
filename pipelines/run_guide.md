@@ -110,7 +110,7 @@ Notes:
 | Final conventional VQE (agent policy) | `ΔE_abs < 1e-4` | AGENTS/run-guide default policy for this stage |
 | Active shorthand runner (`pipelines/shell/run_drive_accurate.sh`) | `ΔE_abs < 1e-7` | Current CLI behavior (hardcoded in this checkout) |
 | HH staged handoff (`ecut_1`) | `ΔE_ws <= 1e-2` | Diagnostic handoff guidance (pre-VQE) |
-| HH staged final (`ecut_2`) | `ΔE_final <= 1e-4` | Diagnostic stage target before final replay |
+| HH staged final (`ecut_2`) | `ΔE_final <= 1e-4` | Diagnostic replay-stage target when replay is enabled |
 | HH production pass gate (runbook) | `ΔE_abs <= 1e-2` | Practical quality indicator, not default hard stop |
 
 ### Policy-vs-code note
@@ -145,7 +145,7 @@ For agent-run HH workflows, use this stage contract:
    plateau diagnosis.
    - Canonical stage selection mode for new HH agent-directed runs is `phase3_v1` (phase1_v1 and phase2_v1 remain opt-in).
 4. ADAPT -> final VQE switch: apply an energy-drop switching criterion (see "ADAPT continuation stop policy (energy-first, mandatory for agent runs)").
-5. Final VQE replay: initialize from ADAPT state and replay with the same variational generator family ADAPT used (`--generator-family match_adapt`, fallback `full_meta`), using `vqe_reps=L` by default.
+5. Optional final VQE replay: when `--run-replay` is enabled, initialize from ADAPT state and replay with the same variational generator family ADAPT used (`--generator-family match_adapt`, fallback `full_meta`), using `vqe_reps=L` by default.
 
 Pool curriculum transition note:
 - `AGENTS target`: for this HH pool-curriculum transition, treat
@@ -173,7 +173,7 @@ CLI note:
 Opt-in phase-3 follow-ons (keep defaults off unless explicitly requested):
 - `--phase3-runtime-split-mode shortlist_pauli_children_v1` is an optional continuation aid for HH staged ADAPT/hardcoded paths: shortlisted macro generators may be probed as single-term children, with parent/child provenance exported in continuation metadata.
 - `--phase3-symmetry-mitigation-mode {off,verify_only,postselect_diag_v1,projector_renorm_v1}` is an optional phase-3 continuation hook. On raw ADAPT / hardcoded / replay paths it is a metadata-and-telemetry surface; active counts-based symmetry mitigation is enforced only in the oracle-backed noise runners.
-- These follow-ons do **not** change the canonical HH contract above: narrow-core first, no depth-0 `full_meta` for new agent-directed runs, and matched-family replay via `--generator-family match_adapt` with `full_meta` fallback.
+- These follow-ons do **not** change the canonical HH contract above: narrow-core first, no depth-0 `full_meta` for new agent-directed runs, and opt-in matched-family replay via `--generator-family match_adapt` with `full_meta` fallback.
 
 ### Symbols
 
@@ -594,6 +594,13 @@ Diagnostics summary:
 Budgeting rule:
 - Honest CX/transpile/QPU budgets exist only for `--cfqm-stage-exp pauli_suzuki2`.
 - If you need true numerical CFQM4/CFQM6 order, stay on `expm_multiply_sparse` or `dense_expm` and do not quote compiled-circuit budgets as if they belong to the numerical backend.
+- There are two honest propagator budget surfaces in this repo:
+  - **full-trajectory propagator budget**: one compiled/transpiled dynamics circuit to `t_final`
+  - **snapshot propagator budget**: max compiled/transpiled dynamics circuit over sampled `t_i` when each timepoint is a separate job
+- `pipelines/exact_bench/hh_fixed_seed_qpu_prep_sweep.py --budget-mode full_trajectory|snapshot` is the fixed-seed driver for these two propagator surfaces.
+- `pipelines/exact_bench/hh_fixed_seed_local_checkpoint_fit.py` is different: it fits each sampled checkpoint independently to the exact driven state and reports the max fitted-snapshot circuit cost. It is a practical low-depth surrogate surface, not an honest Suzuki/CFQM propagator surface.
+- Operationally, the snapshot propagator budget is often closer to the actual QPU job model because each sampled time is a separate circuit submission. But the checkpoint-fit/local-fit surface is still a different algorithmic object and must not be merged into Suzuki/CFQM propagator tables without explicit labeling.
+- Important nuance: for propagated Suzuki/CFQM circuits, `--budget-mode snapshot` does **not** guarantee lower max CX/depth than `full_trajectory`. If each sampled `t_i` uses the same macro-step count `S`, the worst propagated snapshot circuit can remain equal to the `t_final` circuit. Treat snapshot mode as a different job-cost interpretation, not as a free gate reduction.
 
 CFQM baseline commands (production-safe, JSON-only):
 
@@ -1367,9 +1374,9 @@ Notes:
 
 ### 5i) One-shot staged HH noiseless wrapper
 
-For the full noiseless chain in one command
+For the staged HH state-prep chain in one command
 (HF -> `hh_hva_ptw` warm-start -> optional explicit-family seed refine ->
-staged ADAPT -> matched-family replay -> Suzuki/CFQM dynamics from replay seed),
+staged ADAPT, with replay and dynamics opt-in),
 use:
 
 ```bash
@@ -1378,11 +1385,16 @@ python pipelines/hardcoded/hh_staged_noiseless.py --L 2
 # Optional refine insertion:
 python pipelines/hardcoded/hh_staged_noiseless.py --L 2 \
   --seed-refine-family uccsd_otimes_paop_lf_std
+
+# Opt in to replay and noiseless dynamics:
+python pipelines/hardcoded/hh_staged_noiseless.py --L 2 \
+  --run-replay --run-dynamics
 ```
 
 Wrapper contract:
-- drive stays **opt-in** (`--enable-drive`); static profile is always produced,
-- final conventional stage uses **matched-family replay** from the ADAPT handoff,
+- replay is **opt-in** (`--run-replay`); default staged endpoint is the ADAPT handoff,
+- noiseless dynamics are **opt-in** (`--run-dynamics`); no static/drive trajectory work is done unless requested,
+- drive stays **opt-in** (`--enable-drive`) inside the dynamics branch,
 - default stage effort is resolved from the HH scaling formulas in this guide,
 - when this guide does not specify separate replay optimizer effort, the wrapper reuses the warm-stage restart/maxiter scaling for replay,
 - default replay continuation mode follows ADAPT continuation mode unless explicitly overridden,
@@ -1400,7 +1412,7 @@ Wrapper contract:
   warm ansatz, refine family, family kind, motif families, and refine reps;
   readers must treat a missing block as “no refine stage”,
 - replay `match_adapt` / `full_meta` resolution ignores `seed_provenance`; it is provenance only,
-- staged energy-error plots/tables use the replay exact-sector ground-state baseline, while fidelity remains against the seeded exact-reference trajectory,
+- when dynamics are enabled, staged energy-error plots/tables use the terminal prepared-state exact-sector baseline (replay if run, otherwise ADAPT), while fidelity remains against the seeded exact-reference trajectory,
 - diagnostics record `ecut_1` / `ecut_2` in the workflow payload instead of stopping mid-run.
 
 Primary artifacts:
@@ -1408,7 +1420,40 @@ Primary artifacts:
 - warm checkpoints/log: `<state-export-dir>/<state-export-prefix>_warm_checkpoint_state.json`, `<state-export-dir>/<state-export-prefix>_warm_cutover_state.json`, `artifacts/logs/<tag>.log`
 - optional refine state JSON: `<state-export-dir>/<state-export-prefix>_seed_refine_state.json`
 - ADAPT handoff JSON: `artifacts/json/<tag>_adapt_handoff.json`
-- replay sidecars: `artifacts/json/<tag>_replay.{json,csv}`, `artifacts/useful/L{L}/<tag>_replay.md`, `artifacts/logs/<tag>_replay.log`
+- replay sidecars (only when `--run-replay`): `artifacts/json/<tag>_replay.{json,csv}`, `artifacts/useful/L{L}/<tag>_replay.md`, `artifacts/logs/<tag>_replay.log`
+
+#### Reuse an existing staged HH run for local fake-backend noise
+
+To take an already-good staged HH prepared state and run the local noisy
+final-only dynamics extension, use:
+
+```bash
+python pipelines/hardcoded/hh_staged_noise.py \
+  --fixed-final-state-json artifacts/json/<tag>.json \
+  --use-fake-backend --backend-name FakeManilaV2 \
+  --noise-modes backend_scheduled \
+  --noisy-methods cfqm4 \
+  --shots 4096 --oracle-repeats 8 --oracle-aggregate mean \
+  --symmetry-mitigation-mode postselect_diag_v1
+```
+
+Reuse contract:
+- `--fixed-final-state-json` may point either to:
+  - a direct handoff-style bundle with top-level `initial_state`, or
+  - a top-level `hh_staged_*.json` workflow payload; the runner will auto-follow
+    its saved `artifacts.intermediate.adapt_handoff_json` sidecar.
+- local fake-backend compiled-circuit modes are `backend_basic`,
+  `backend_scheduled`, and `patch_snapshot`;
+  `backend_scheduled` is the standard “compile to a fake backend noisy circuit”
+  path.
+- local fake-backend mitigation is currently the symmetry path:
+  `--symmetry-mitigation-mode {off,verify_only,postselect_diag_v1,projector_renorm_v1}`.
+- `--mitigation readout`, `--mitigation zne`, `--mitigation dd`, and runtime
+  twirling flags remain Runtime-only and are **not** executed on local Aer /
+  fake-backend paths in the current repo.
+- output artifacts follow the staged-noise tag:
+  `artifacts/json/<noise_tag>.json`, `artifacts/pdf/<noise_tag>.pdf`, plus fresh
+  `*_adapt_handoff.json` / `*_replay.json` sidecars for the imported run.
 
 ### 5j) Combined staged HH circuit PDF (`L=2,3`)
 
@@ -1434,9 +1479,9 @@ Per-`L` section contents:
 - stage summary,
 - warm HH-HVA circuit,
 - ADAPT circuit,
-- matched-family replay circuit,
-- Suzuki2 dynamics circuit,
-- CFQM4 dynamics section.
+- matched-family replay circuit (only when replay is enabled),
+- Suzuki2 dynamics circuit (only when dynamics are enabled),
+- CFQM4 dynamics section (only when dynamics are enabled).
 
 Circuit rendering semantics:
 - each stage/method includes a representative view that keeps high-level `PauliEvolutionGate` blocks intact,
@@ -1446,8 +1491,9 @@ Circuit rendering semantics:
 - numerical-only CFQM (`dense_expm`, `expm_multiply_sparse`) is marked unsupported for circuit artifacts and skips representative/expanded circuit pages plus transpile/proxy summaries to avoid misleading circuit claims.
 
 Current default scope:
-- static / no-drive dynamics by default,
-- drive remains opt-in through the shared staged HH flags, but the report still uses the same macro-step rendering contract.
+- replay disabled by default,
+- noiseless dynamics disabled by default,
+- drive remains opt-in through the shared staged HH flags inside the dynamics branch.
 
 #### Replay seed policy (`--replay-seed-policy`)
 

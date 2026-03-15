@@ -128,3 +128,31 @@ def test_stage_controller_seed_to_core_to_residual() -> None:
     )
     assert stage == "residual"
     assert reason == "plateau_without_trough"
+
+
+def test_stage_controller_clone_isolated_from_parent() -> None:
+    ctrl = StageController(StageControllerConfig(plateau_patience=2))
+    ctrl.start_with_seed()
+    clone = ctrl.clone()
+
+    clone.resolve_stage_transition(
+        drop_plateau_hits=0,
+        trough_detected=False,
+        residual_opened=False,
+    )
+
+    assert ctrl.stage_name == "seed"
+    assert clone.stage_name == "core"
+
+
+def test_stage_controller_snapshot_roundtrip() -> None:
+    ctrl = StageController(StageControllerConfig(plateau_patience=3))
+    ctrl.begin_core()
+    ctrl.resolve_stage_transition(
+        drop_plateau_hits=3,
+        trough_detected=False,
+        residual_opened=False,
+    )
+    restored = StageController.from_snapshot(ctrl.snapshot())
+    assert restored.stage_name == ctrl.stage_name
+    assert restored.cfg == ctrl.cfg

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -502,6 +503,145 @@ def test_run_staged_hh_noise_merges_base_payload_and_writes(
     assert bool(writes["pdf_called"]) is True
 
 
+def test_run_staged_hh_noise_reuses_fixed_state_from_workflow_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    nq_total = int(base_wf._hh_nq_total(2, 1, "binary"))
+    dim = 1 << nq_total
+    psi_hf = _basis(dim, 0)
+    psi_seed = _basis(dim, 5)
+    handoff_json = tmp_path / "handoff_seed.json"
+    handoff_json.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "L": 2,
+                    "problem": "hh",
+                    "ordering": "blocked",
+                    "boundary": "open",
+                    "t": 1.0,
+                    "u": 2.0,
+                    "dv": 0.0,
+                    "omega0": 1.0,
+                    "g_ep": 1.0,
+                    "n_ph_max": 1,
+                    "boson_encoding": "binary",
+                },
+                "initial_state": {
+                    "source": "fixed_final_state_import",
+                    "amplitudes_qn_to_q0": {
+                        format(5, f"0{nq_total}b"): {"re": 1.0, "im": 0.0},
+                    },
+                },
+                "adapt_vqe": {
+                    "energy": -1.015,
+                    "exact_gs_energy": -1.02,
+                },
+                "ground_state": {
+                    "exact_energy_filtered": -1.02,
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    workflow_json = tmp_path / "staged_workflow.json"
+    workflow_json.write_text(
+        json.dumps(
+            {
+                "artifacts": {
+                    "intermediate": {
+                        "adapt_handoff_json": str(handoff_json),
+                    }
+                },
+                "stage_pipeline": {
+                    "adapt_vqe": {
+                        "handoff_json": str(handoff_json),
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        noise_wf.base_wf,
+        "_build_hh_context",
+        lambda _cfg: (
+            object(),
+            np.eye(dim, dtype=complex),
+            ["eeeeee"],
+            {"eeeeee": 1.0 + 0.0j},
+            np.array(psi_hf, copy=True),
+        ),
+    )
+    monkeypatch.setattr(
+        noise_wf.base_wf,
+        "_run_warm_start_stage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("warm stage should be skipped")),
+    )
+    monkeypatch.setattr(
+        noise_wf.base_wf.adapt_mod,
+        "_run_hardcoded_adapt_vqe",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ADAPT should be skipped")),
+    )
+    monkeypatch.setattr(
+        noise_wf.base_wf.replay_mod,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("replay should be skipped")),
+    )
+    monkeypatch.setattr(noise_wf.base_wf, "run_noiseless_profiles", lambda stage_result, staged_cfg: {"profiles": {}})
+    monkeypatch.setattr(noise_wf.base_wf, "build_stage_circuit_report_artifacts", lambda stage_result, staged_cfg: None)
+    monkeypatch.setattr(noise_wf.base_wf, "_write_json", lambda path, payload: None)
+    monkeypatch.setattr(noise_wf, "write_staged_hh_noise_pdf", lambda payload, cfg_arg, run_command: None)
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_noisy_profiles(
+        stage_result: base_wf.StageExecutionResult,
+        cfg_arg: noise_wf.StagedHHNoiseConfig,
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+        captured["psi_final"] = np.array(stage_result.psi_final, copy=True)
+        captured["fixed_import"] = dict(stage_result.fixed_final_state_import or {})
+        return {"profiles": {}}, {"profiles": {}}, {"rows": []}
+
+    monkeypatch.setattr(noise_wf, "run_noisy_profiles", _fake_run_noisy_profiles)
+
+    cfg = noise_wf.resolve_staged_hh_noise_config(
+        parse_args(
+            [
+                "--L",
+                "2",
+                "--skip-pdf",
+                "--fixed-final-state-json",
+                str(workflow_json),
+                "--noise-modes",
+                "ideal",
+                "--noisy-methods",
+                "cfqm4",
+                "--output-json",
+                str(tmp_path / "hh_staged_noise.json"),
+                "--output-pdf",
+                str(tmp_path / "hh_staged_noise.pdf"),
+            ]
+        )
+    )
+
+    payload = noise_wf.run_staged_hh_noise(
+        cfg,
+        run_command="python pipelines/hardcoded/hh_staged_noise.py --fixed-final-state-json staged_workflow.json",
+    )
+
+    assert payload["pipeline"] == "hh_staged_noise"
+    assert np.allclose(captured["psi_final"], psi_seed)
+    fixed_import = payload["stage_pipeline"]["fixed_final_state_import"]
+    assert fixed_import["source_json"] == str(workflow_json)
+    assert fixed_import["resolved_json"] == str(handoff_json)
+    assert fixed_import["resolved_via"] == "artifacts.intermediate.adapt_handoff_json"
+
+
 def test_noise_cli_main_print_contract(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     fake_cfg = SimpleNamespace(staged=SimpleNamespace(artifacts=SimpleNamespace(skip_pdf=True)))
     fake_payload = {
@@ -523,5 +663,4 @@ def test_noise_cli_main_print_contract(monkeypatch: pytest.MonkeyPatch, capsys: 
     assert lines == [
         "workflow_json=artifacts/json/hh_staged_noise.json",
         "adapt_handoff_json=artifacts/json/hh_staged_noise_adapt_handoff.json",
-        "replay_json=artifacts/json/hh_staged_noise_replay.json",
     ]

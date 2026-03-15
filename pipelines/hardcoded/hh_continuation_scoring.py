@@ -140,6 +140,37 @@ class MeasurementCacheAudit:
         self._plan_version = str(plan_version)
         self._grouping_mode = str(grouping_mode)
 
+    def clone(self) -> "MeasurementCacheAudit":
+        cloned = MeasurementCacheAudit(
+            nominal_shots_per_group=int(self._nominal_shots),
+            plan_version=str(self._plan_version),
+            grouping_mode=str(self._grouping_mode),
+        )
+        cloned._seen_groups = set(self._seen_groups)
+        return cloned
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "seen_groups": sorted(str(x) for x in self._seen_groups),
+            "nominal_shots_per_group": int(self._nominal_shots),
+            "plan_version": str(self._plan_version),
+            "grouping_mode": str(self._grouping_mode),
+        }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: Mapping[str, Any]) -> "MeasurementCacheAudit":
+        cloned = cls(
+            nominal_shots_per_group=int(snapshot.get("nominal_shots_per_group", 1)),
+            plan_version=str(snapshot.get("plan_version", "phase1_grouped_label_reuse")),
+            grouping_mode=str(snapshot.get("grouping_mode", "grouped_label_reuse")),
+        )
+        cloned._seen_groups = {
+            str(x)
+            for x in snapshot.get("seen_groups", [])
+            if str(x) != ""
+        }
+        return cloned
+
     def plan_for(self, group_keys: Iterable[str]) -> MeasurementPlan:
         keys = [str(k) for k in group_keys if str(k) != ""]
         unique_keys: list[str] = []
